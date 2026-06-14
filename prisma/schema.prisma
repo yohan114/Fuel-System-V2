@@ -1,0 +1,257 @@
+datasource db {
+  provider = "sqlite"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id               String        @id @default(uuid())
+  username         String        @unique
+  email            String?
+  name             String
+  passwordHash     String
+  role             String        // "ADMIN" | "USER" | "ALLOCATOR" | "WORKSHOP"
+  active           Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  createdById      String?
+  createdBy        User?         @relation("CreatedByUser", fields: [createdById], references: [id])
+  createdUsers     User[]        @relation("CreatedByUser")
+
+  projectId        String?
+  project          Project?      @relation(fields: [projectId], references: [id])
+
+  bulkTankId       String?
+  bulkTank         BulkTank?     @relation(fields: [bulkTankId], references: [id])
+
+  enteredPrices    FuelPrice[]
+  fuelRequests     FuelRequest[] @relation("RequestedBy")
+  reviewedRequests FuelRequest[] @relation("ReviewedBy")
+  fuelIssues       FuelIssue[]   @relation("IssuedBy")
+  meterReadings    MeterReading[] @relation("RecordedBy")
+  dailyConditions  DailyCondition[] @relation("RecordedBy")
+  auditLogs        AuditLog[]    @relation("Actor")
+
+  bulkRequests     BulkRequest[] @relation("BulkRequestedBy")
+  reviewedBulk     BulkRequest[] @relation("BulkReviewedBy")
+}
+
+model Category {
+  id               String        @id @default(uuid())
+  code             String        @unique // e.g. DT, HEX, VR
+  name             String
+  defaultMeterType String        // "KM" | "HOURS"
+  fleetGroup       String        // "ROAD_VEHICLE" | "MACHINERY_GENSET"
+  assets           Asset[]
+}
+
+model Asset {
+  id            String         @id @default(uuid())
+  code          String         @unique // E&C number (e.g. DT-123)
+  brand         String?
+  typeLabel     String?        // e.g. SANY, TATA
+  model         String?
+  regNo         String?
+  capacity      String?
+  yom           Int?
+  chassisNo     String?
+  engineNo      String?
+  serialNo      String?
+  site          String?
+  status        String         @default("ACTIVE") // "ACTIVE" | "INACTIVE" | "DISPOSED"
+  meterType     String         // "KM" | "HOURS"
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  categoryId    String
+  category      Category       @relation(fields: [categoryId], references: [id])
+
+  projectId     String?
+  project       Project?       @relation(fields: [projectId], references: [id])
+
+  fuelRequests  FuelRequest[]
+  fuelIssues    FuelIssue[]
+  meterReadings MeterReading[]
+  dailyConditions DailyCondition[]
+}
+
+model FuelPrice {
+  id             String      @id @default(uuid())
+  fuelKind       String      // "AUTO_DIESEL" | "SUPER_DIESEL"
+  pricePerLitre  Int         // in LKR cents
+  effectiveFrom  DateTime
+  source         String      // "CEYPETCO" | "MANUAL"
+  note           String?
+  createdAt      DateTime    @default(now())
+
+  enteredById    String
+  enteredBy      User        @relation(fields: [enteredById], references: [id])
+
+  fuelIssues     FuelIssue[]
+
+  @@unique([fuelKind, effectiveFrom])
+  @@index([fuelKind, effectiveFrom])
+}
+
+model FuelRequest {
+  id             String      @id @default(uuid())
+  fuelKind       String      // "AUTO_DIESEL" | "SUPER_DIESEL"
+  requestedLitres Float
+  meterReading   Float?
+  readingType    String?     // "KM" | "HOURS"
+  reason         String?
+  status         String      @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  assetId        String
+  asset          Asset       @relation(fields: [assetId], references: [id])
+
+  requestedById  String
+  requestedBy    User        @relation("RequestedBy", fields: [requestedById], references: [id])
+
+  reviewedById   String?
+  reviewedBy     User?       @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt     DateTime?
+  reviewNote     String?
+
+  issue          FuelIssue?
+}
+
+model FuelIssue {
+  id             String       @id @default(uuid())
+  fuelKind       String       // "AUTO_DIESEL" | "SUPER_DIESEL"
+  litres         Float
+  meterReading   Float?
+  readingType    String?      // "KM" | "HOURS"
+  pricePerLitre  Int          // in LKR cents snapshot
+  totalCost      Int          // in LKR cents calculated
+  source         String       // "STATION" | "BOWSER"
+  issueDate      DateTime
+  createdAt      DateTime     @default(now())
+
+  assetId        String
+  asset          Asset        @relation(fields: [assetId], references: [id])
+
+  issuedById     String
+  issuedBy       User         @relation("IssuedBy", fields: [issuedById], references: [id])
+
+  fuelPriceId    String?
+  fuelPrice      FuelPrice?   @relation(fields: [fuelPriceId], references: [id])
+
+  linkedRequestId String?     @unique
+  linkedRequest   FuelRequest? @relation(fields: [linkedRequestId], references: [id])
+
+  meterReadingRecordId String? @unique
+  meterReadingRecord   MeterReading? @relation("LinkedIssueMeterReading")
+
+  bulkTankId      String?
+  bulkTank        BulkTank?    @relation("TankIssues", fields: [bulkTankId], references: [id])
+}
+
+model MeterReading {
+  id             String     @id @default(uuid())
+  value          Float      // cumulative odometer or hour meter
+  readingType    String     // "KM" | "HOURS"
+  readingDate    DateTime
+  source         String     // "MANUAL" | "FUEL_ISSUE"
+  createdAt      DateTime   @default(now())
+
+  assetId        String
+  asset          Asset      @relation(fields: [assetId], references: [id])
+
+  recordedById   String
+  recordedBy     User       @relation("RecordedBy", fields: [recordedById], references: [id])
+
+  linkedIssueId  String?    @unique
+  linkedIssue    FuelIssue? @relation("LinkedIssueMeterReading", fields: [linkedIssueId], references: [id])
+}
+
+model AuditLog {
+  id             String    @id @default(uuid())
+  action         String    // "CREATE" | "UPDATE" | "DELETE" | "APPROVE" | "REJECT" | "LOGIN" | "PRICE_REFRESH" | "BACKUP"
+  entity         String    // e.g. "Asset", "FuelIssue"
+  entityId       String?
+  summary        String
+  metaJson       String?   // JSON payload details
+  createdAt      DateTime  @default(now())
+
+  actorId        String?
+  actor          User?     @relation("Actor", fields: [actorId], references: [id])
+}
+
+model Setting {
+  id             String    @id @default(uuid())
+  key            String    @unique
+  value          String
+  updatedAt      DateTime  @updatedAt
+}
+
+model Project {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  code      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+  assets    Asset[]
+  bulkTanks BulkTank[]
+}
+
+model DailyCondition {
+  id           String   @id @default(uuid())
+  status       String   // "WORKING" | "BREAKDOWN"
+  logDate      DateTime // truncated to midnight YYYY-MM-DD
+  note         String?
+  createdAt    DateTime @default(now())
+
+  assetId      String
+  asset        Asset    @relation(fields: [assetId], references: [id])
+
+  recordedById String
+  recordedBy   User     @relation("RecordedBy", fields: [recordedById], references: [id])
+
+  @@unique([assetId, logDate])
+  @@index([assetId, logDate])
+}
+
+model BulkTank {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  fuelKind  String   // "AUTO_DIESEL" | "SUPER_DIESEL"
+  capacity  Float
+  balance   Float    @default(0.0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projectId String?
+  project   Project?      @relation(fields: [projectId], references: [id])
+
+  users     User[]
+  requests  BulkRequest[]
+  issues    FuelIssue[]   @relation("TankIssues")
+}
+
+model BulkRequest {
+  id              String    @id @default(uuid())
+  fuelKind        String    // "AUTO_DIESEL" | "SUPER_DIESEL"
+  requestedLitres Float
+  status          String    @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  bulkTankId      String
+  bulkTank        BulkTank  @relation(fields: [bulkTankId], references: [id])
+
+  requestedById   String
+  requestedBy     User      @relation("BulkRequestedBy", fields: [requestedById], references: [id])
+
+  reviewedById    String?
+  reviewedBy      User?     @relation("BulkReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+  reviewNote      String?
+}
