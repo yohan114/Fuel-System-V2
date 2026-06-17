@@ -30,7 +30,7 @@ function main() {
         console.log(`Row ${idx} has External:`, r.slice(0, 10));
       }
       
-      const containsTotals = r.some(c => typeof c === "string" && c.toLowerCase() === "totals" || c.toLowerCase() === "total");
+      const containsTotals = r.some(c => typeof c === "string" && (c.toLowerCase() === "totals" || c.toLowerCase() === "total"));
       if (containsTotals) {
         console.log(`Row ${idx} has Totals:`, r.slice(0, 10));
       }
