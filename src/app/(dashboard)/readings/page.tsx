@@ -1,6 +1,7 @@
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { visibleAssetIdsForUser } from "@/lib/assignments";
 import Link from "next/link";
 import { Search, Gauge, Calendar, User, CornerDownRight } from "lucide-react";
 
@@ -23,11 +24,11 @@ export default async function ReadingsPage(props: PageProps) {
     };
   }
 
-  if (session.role === "USER" && session.projectId) {
-    if (!where.asset) {
-      where.asset = {};
-    }
-    where.asset.projectId = session.projectId;
+  // Project-scoped users see readings only for vehicles currently assigned to
+  // their site (plus any legacy-pinned, never-assigned vehicles).
+  const visible = await visibleAssetIdsForUser(session);
+  if (visible) {
+    where.assetId = { in: [...visible] };
   }
 
   // 2. Query readings

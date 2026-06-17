@@ -39,6 +39,7 @@ model User {
   reviewedBulk     BulkRequest[] @relation("BulkReviewedBy")
 
   generatedBills   Bill[]        @relation("BillGeneratedBy")
+  createdAssignments AssetAssignment[] @relation("AssignmentCreatedBy")
 }
 
 model Category {
@@ -78,9 +79,41 @@ model Asset {
   fuelIssues    FuelIssue[]
   meterReadings MeterReading[]
   dailyConditions DailyCondition[]
+  assignments   AssetAssignment[]
 
   rentalRate    RentalRate?
   bills         Bill[]
+}
+
+// A saved, time-bounded posting of one asset to one project/site. This is the
+// authoritative record of "which vehicle was assigned where, and when" — it
+// replaces guessing a vehicle's site from its fuel/reading source strings.
+//
+// A vehicle can hold several assignments across a month (e.g. week 1 at site X,
+// week 2 at site Y, weeks 3-4 at site Z); billing splits the month along these
+// segments. Dates are Colombo local-midnight day markers. endDate is the
+// inclusive last day; a null endDate means the posting is still open/ongoing.
+model AssetAssignment {
+  id          String    @id @default(uuid())
+
+  assetId     String
+  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id])
+
+  startDate   DateTime  // inclusive first day (Colombo midnight)
+  endDate     DateTime? // inclusive last day; null = ongoing
+  note        String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  createdById String?
+  createdBy   User?     @relation("AssignmentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([assetId, startDate])
+  @@index([projectId, startDate])
 }
 
 model FuelPrice {
@@ -204,9 +237,10 @@ model Project {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  users     User[]
-  assets    Asset[]
-  bulkTanks BulkTank[]
+  users       User[]
+  assets      Asset[]
+  bulkTanks   BulkTank[]
+  assignments AssetAssignment[]
 }
 
 model DailyCondition {
@@ -403,6 +437,12 @@ model BillLineItem {
   unit        String  // "hr" | "km" | "day" | "L" | "—"
   unitRateCents Int
   amountCents Int
+
+  // Per-site attribution. When a vehicle works several sites in one month the
+  // bill carries one RENTAL (+ optional FUEL) line per site; these record which
+  // site the line belongs to. Null for single-site / legacy bills.
+  projectId   String?
+  projectName String?
 
   @@index([billId])
 }

@@ -1,6 +1,7 @@
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { visibleAssetIdsForUser } from "@/lib/assignments";
 import Link from "next/link";
 import { Search, Fuel, Coins, Calendar, User, CornerDownRight } from "lucide-react";
 
@@ -28,11 +29,9 @@ export default async function FuelIssuesPage(props: PageProps) {
     };
   }
 
-  if (session.role === "USER" && session.projectId) {
-    where.asset = {
-      ...where.asset,
-      projectId: session.projectId,
-    };
+  const visible = await visibleAssetIdsForUser(session);
+  if (visible) {
+    where.assetId = { in: [...visible] };
   }
 
   // 2. Query dispatches

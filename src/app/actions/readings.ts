@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
+import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
 
 export async function addReadingAction(formData: FormData) {
@@ -82,9 +83,14 @@ export async function addReadingAction(formData: FormData) {
         }
       });
     } else {
-      // Check project user scope
-      if (user.role === "USER" && user.projectId && asset.projectId !== user.projectId) {
-        return { error: "Asset does not belong to your assigned project" };
+      // Project-scoped users may only log against vehicles assigned to their
+      // site for the working day (falls back to the legacy pin for vehicles that
+      // have never been assigned).
+      if (user.role === "USER" && user.projectId) {
+        const ok = await canUserAccessAsset(user, asset.id, readingDate);
+        if (!ok) {
+          return { error: "This vehicle is not assigned to your site for the selected day." };
+        }
       }
     }
 

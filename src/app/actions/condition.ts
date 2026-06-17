@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
+import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
 
 export async function logDailyConditionAction(assetId: string, status: string, note: string | null = null) {
@@ -43,9 +44,13 @@ export async function logDailyConditionAction(assetId: string, status: string, n
       return { error: "Asset not found" };
     }
 
-    // Check project user scope
-    if (user.role === "USER" && user.projectId && asset.projectId !== user.projectId) {
-      return { error: "Asset does not belong to your assigned project" };
+    // Project-scoped users may only log conditions for vehicles assigned to
+    // their site today (legacy pin honored for never-assigned vehicles).
+    if (user.role === "USER" && user.projectId) {
+      const ok = await canUserAccessAsset(user, asset.id, logDate);
+      if (!ok) {
+        return { error: "This vehicle is not assigned to your site today." };
+      }
     }
 
     // Only ADMIN can restore a machine from INACTIVE (breakdown) to WORKING

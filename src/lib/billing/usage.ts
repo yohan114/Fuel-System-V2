@@ -110,6 +110,69 @@ export async function computeRunningDelta(
   };
 }
 
+// Cumulative meter growth across an arbitrary [start, end] window, source-
+// agnostic. Used for per-site billing segments: a vehicle is one physical meter,
+// so its growth while posted to a site is simply closing(window) − opening(window)
+// regardless of which site's sheet recorded each reading. Attribution to the
+// right site comes from the assignment date window, not the reading source.
+export async function computeWindowDelta(
+  assetId: string,
+  meterType: "KM" | "HOURS",
+  start: Date,
+  end: Date
+): Promise<RunningDelta> {
+  let opening = await prisma.meterReading.findFirst({
+    where: { assetId, readingType: meterType, readingDate: { lte: start } },
+    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
+  });
+
+  // If there is no anchor close to the window start, fall back to the earliest
+  // reading inside the window so a brand-new segment still measures its growth.
+  const threshold = new Date(start.getTime() - 31 * 24 * 60 * 60 * 1000);
+  if (!opening || opening.readingDate < threshold) {
+    opening = await prisma.meterReading.findFirst({
+      where: { assetId, readingType: meterType, readingDate: { gte: start, lte: end } },
+      orderBy: [{ readingDate: "asc" }, { value: "asc" }],
+    });
+  }
+
+  const closing = await prisma.meterReading.findFirst({
+    where: { assetId, readingType: meterType, readingDate: { lte: end } },
+    orderBy: [{ value: "desc" }, { readingDate: "desc" }],
+  });
+
+  let delta = 0;
+  if (opening && closing && closing.value > opening.value) {
+    delta = closing.value - opening.value;
+  }
+  return {
+    opening: opening ? opening.value : null,
+    closing: closing ? closing.value : null,
+    delta,
+  };
+}
+
+// Total fuel issued + cost for the asset within an arbitrary [start, end]
+// window, source-agnostic. "Fuel follows the vehicle": an issue drawn from the
+// Badalgama main pump (or anywhere) counts for whichever site the vehicle was
+// assigned to on the issue date, so it is attributed purely by date here.
+export async function sumFuelForWindow(
+  assetId: string,
+  start: Date,
+  end: Date
+): Promise<FuelSummary> {
+  const agg = await prisma.fuelIssue.aggregate({
+    where: { assetId, issueDate: { gte: start, lte: end } },
+    _sum: { litres: true, totalCost: true },
+    _count: true,
+  });
+  return {
+    litres: agg._sum.litres ?? 0,
+    costCents: agg._sum.totalCost ?? 0,
+    count: agg._count ?? 0,
+  };
+}
+
 // Number of days the asset was logged as WORKING within the period.
 export async function countWorkingDays(
   assetId: string,

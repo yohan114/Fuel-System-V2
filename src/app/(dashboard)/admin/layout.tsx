@@ -1,7 +1,7 @@
 import React from "react";
 import { requireAdmin } from "@/lib/auth";
 import Link from "next/link";
-import { Coins, Database, Users2, ShieldAlert, FolderGit2, Receipt } from "lucide-react";
+import { Coins, Database, Users2, ShieldAlert, FolderGit2, Receipt, CalendarRange } from "lucide-react";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -28,6 +28,7 @@ export default async function AdminLayout({ children }: AdminLayoutProps) {
   const subLinks = [
     { label: "Fuel Prices", href: "/admin/prices", icon: Coins },
     { label: "Project Sites", href: "/admin/projects", icon: FolderGit2 },
+    { label: "Vehicle Assignments", href: "/admin/assignments", icon: CalendarRange },
     { label: "Database Backups", href: "/admin/backups", icon: Database },
     { label: "User Accounts", href: "/admin/users", icon: Users2 },
     { label: "Billing Settings", href: "/admin/billing", icon: Receipt },
