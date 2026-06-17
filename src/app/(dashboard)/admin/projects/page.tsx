@@ -109,6 +109,30 @@ export default async function AdminProjectsPage() {
                 />
               </div>
 
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  Billing Contact Name
+                </label>
+                <input
+                  type="text"
+                  name="contactName"
+                  placeholder="e.g. Site Accounts Officer"
+                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  Billing Contact Email
+                </label>
+                <input
+                  type="email"
+                  name="contactEmail"
+                  placeholder="invoices@site.example"
+                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
+                />
+              </div>
+
               <button
                 type="submit"
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs py-2.5 rounded-xl active:scale-95 transition-all shadow-md"

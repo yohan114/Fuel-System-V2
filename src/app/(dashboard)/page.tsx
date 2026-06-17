@@ -365,6 +365,7 @@ export default async function DashboardPage() {
         initialAssets={assets}
         isLocked={isConditionLocked}
         lockMessage={lockMessage}
+        isAdmin={isAdmin}
       />
 
       {/* Visual Analytics Charts */}

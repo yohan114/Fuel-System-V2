@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import AssetCharts from "./components/AssetCharts";
 import AssetEditor from "./components/AssetEditor";
+import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
 import { 
   ArrowLeft, 
   Gauge, 
@@ -36,7 +37,7 @@ export default async function AssetDetailPage(props: PageProps) {
   // 1. Query the asset
   const asset = await prisma.asset.findUnique({
     where: { code },
-    include: { category: true },
+    include: { category: true, rentalRate: true },
   });
 
   if (!asset || asset.status === "DISPOSED") {
@@ -205,11 +206,22 @@ export default async function AssetDetailPage(props: PageProps) {
       </div>
 
       {/* Visual Analytics */}
-      <AssetCharts 
-        readingsData={readingsChartData} 
-        issuesData={issuesChartData} 
-        meterType={asset.meterType} 
+      <AssetCharts
+        readingsData={readingsChartData}
+        issuesData={issuesChartData}
+        meterType={asset.meterType}
       />
+
+      {/* Admin: fuel consumption rate for fuel-derived billing */}
+      {isAdmin && (
+        <FuelConsumptionEditor
+          assetId={asset.id}
+          meterType={asset.meterType}
+          fuelConsEcon={asset.rentalRate?.fuelConsEcon ?? null}
+          fuelConsTyp={asset.rentalRate?.fuelConsTyp ?? null}
+          fuelConsBasis={asset.rentalRate?.fuelConsBasis ?? null}
+        />
+      )}
 
       {/* Historical Logs & Tabs */}
       <div className="bg-[#121420] border border-white/5 rounded-2xl shadow-xl overflow-hidden">

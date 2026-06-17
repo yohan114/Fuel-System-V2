@@ -9,11 +9,12 @@ import {
   Car, 
   FileCheck, 
   FileText, 
-  Gauge, 
-  Settings, 
+  Gauge,
+  Settings,
   LogOut,
   Menu,
-  Database
+  Database,
+  Receipt
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -54,7 +55,8 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck }
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Billing", href: "/billing", icon: Receipt }
     );
   } else if (isAllocator) {
     navItems.push(
@@ -77,7 +79,8 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck }
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Billing", href: "/billing", icon: Receipt }
     );
   }
 

@@ -1,12 +1,12 @@
 @echo off
 title Fuel System Server
-cd /d "D:\Yohan\Fuel System"
-echo Checking if port 6600 is already in use...
-netstat -aon | findstr :6600 | findstr LISTENING >nul
+cd /d "d:\new testing fuel server"
+echo Checking if port 3300 is already in use...
+netstat -aon | findstr :3300 | findstr LISTENING >nul
 if %errorlevel% equ 0 (
-    echo Port 6600 is already in use! The server might already be running.
+    echo Port 3300 is already in use! The server might already be running.
     timeout /t 5 >nul
     exit /b
 )
-echo Starting Fuel System Server on port 6600...
+echo Starting Fuel System Server on port 3300...
 npm run start

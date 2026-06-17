@@ -16,6 +16,23 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Environment variables
+
+Set these in `.env` (not committed):
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | SQLite database path |
+| `AUTH_SECRET` | JWT signing secret |
+| `CRON_SECRET` | Auth for `/api/cron/billing` |
+| `SMTP_HOST` | SMTP server host (email invoices) |
+| `SMTP_PORT` | SMTP port (587 STARTTLS, 465 implicit TLS) |
+| `SMTP_USER` | SMTP username |
+| `SMTP_PASS` | SMTP password |
+| `SMTP_FROM` | From address, e.g. `"E&C Billing <billing@example.com>"` |
+
+Email invoices require all five `SMTP_*` vars. Without them, the **Email Invoice** button reports that email is not configured (it never throws). Each site's recipient comes from the project's **Billing Contact Email** (set on `/admin/projects`).
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

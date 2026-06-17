@@ -15,6 +15,8 @@ export async function createProjectAction(formData: FormData) {
 
   const name = formData.get("name")?.toString().trim();
   const code = formData.get("code")?.toString().trim().toUpperCase();
+  const contactName = formData.get("contactName")?.toString().trim() || null;
+  const contactEmail = formData.get("contactEmail")?.toString().trim() || null;
 
   if (!name || !code) {
     return { error: "Project Name and Code are required" };
@@ -36,7 +38,7 @@ export async function createProjectAction(formData: FormData) {
     }
 
     const project = await prisma.project.create({
-      data: { name, code },
+      data: { name, code, contactName, contactEmail },
     });
 
     await prisma.auditLog.create({
@@ -123,6 +125,8 @@ export async function updateProjectAction(projectId: string, formData: FormData)
 
   const name = formData.get("name")?.toString().trim();
   const code = formData.get("code")?.toString().trim().toUpperCase();
+  const contactName = formData.get("contactName")?.toString().trim() || null;
+  const contactEmail = formData.get("contactEmail")?.toString().trim() || null;
 
   if (!name || !code) {
     return { error: "Project Name and Code are required" };
@@ -151,7 +155,7 @@ export async function updateProjectAction(projectId: string, formData: FormData)
 
     const project = await prisma.project.update({
       where: { id: projectId },
-      data: { name, code },
+      data: { name, code, contactName, contactEmail },
     });
 
     await prisma.auditLog.create({

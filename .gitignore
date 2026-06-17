@@ -47,4 +47,7 @@ next-env.d.ts
 # local sqlite database and backups
 /data/
 /backups/
+/temp-uploads/
+/scan_out.txt
+/verify_out.txt
 

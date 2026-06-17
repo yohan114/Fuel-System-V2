@@ -120,56 +120,78 @@ async function main() {
     },
   });
 
-  // 3. Seed Default Fuel Prices (Effective 2026-05-30)
+  // 3. Seed Default Fuel Prices (Effective 2025 January to 2026 June)
   // Prices in cents (LKR * 100)
-  console.log("Seeding default fuel prices...");
-  const effectiveDate = new Date("2026-05-30T00:00:00Z");
-  
-  await prisma.fuelPrice.upsert({
-    where: {
-      fuelKind_effectiveFrom: {
-        fuelKind: "AUTO_DIESEL",
-        effectiveFrom: effectiveDate,
-      },
-    },
-    update: {
-      pricePerLitre: 40700, // Rs. 407.00
-      source: "MANUAL",
-      enteredById: adminUser.id,
-      note: "Initial seeded price",
-    },
-    create: {
-      fuelKind: "AUTO_DIESEL",
-      pricePerLitre: 40700,
-      effectiveFrom: effectiveDate,
-      source: "MANUAL",
-      enteredById: adminUser.id,
-      note: "Initial seeded price",
-    },
-  });
+  console.log("Seeding historical fuel prices...");
+  const historicalPrices = [
+    { date: "2025-01-05", lad: 28600, lsd: 31300 },
+    { date: "2025-02-01", lad: 28600, lsd: 33100 },
+    { date: "2025-04-01", lad: 28600, lsd: 33100 },
+    { date: "2025-04-30", lad: 27400, lsd: 32500 },
+    { date: "2025-05-05", lad: 27400, lsd: 32500 },
+    { date: "2025-07-01", lad: 28900, lsd: 32500 },
+    { date: "2025-07-05", lad: 28900, lsd: 32500 },
+    { date: "2025-09-01", lad: 28300, lsd: 31300 },
+    { date: "2025-10-01", lad: 27700, lsd: 31300 },
+    { date: "2025-11-01", lad: 27700, lsd: 31800 },
+    { date: "2026-01-06", lad: 27900, lsd: 32300 },
+    { date: "2026-02-01", lad: 27700, lsd: 32300 },
+    { date: "2026-03-10", lad: 30300, lsd: 35300 },
+    { date: "2026-03-22", lad: 38200, lsd: 44300 },
+    { date: "2026-04-01", lad: 38200, lsd: 44300 },
+    { date: "2026-05-03", lad: 39200, lsd: 45800 },
+    { date: "2026-05-31", lad: 40700, lsd: 47800 }
+  ];
 
-  await prisma.fuelPrice.upsert({
-    where: {
-      fuelKind_effectiveFrom: {
-        fuelKind: "SUPER_DIESEL",
-        effectiveFrom: effectiveDate,
+  for (const fp of historicalPrices) {
+    const effectiveDate = new Date(`${fp.date}T00:00:00Z`);
+
+    await prisma.fuelPrice.upsert({
+      where: {
+        fuelKind_effectiveFrom: {
+          fuelKind: "AUTO_DIESEL",
+          effectiveFrom: effectiveDate,
+        },
       },
-    },
-    update: {
-      pricePerLitre: 47800, // Rs. 478.00
-      source: "MANUAL",
-      enteredById: adminUser.id,
-      note: "Initial seeded price",
-    },
-    create: {
-      fuelKind: "SUPER_DIESEL",
-      pricePerLitre: 47800,
-      effectiveFrom: effectiveDate,
-      source: "MANUAL",
-      enteredById: adminUser.id,
-      note: "Initial seeded price",
-    },
-  });
+      update: {
+        pricePerLitre: fp.lad,
+        source: "CEYPETCO",
+        enteredById: adminUser.id,
+        note: "Historical Ceypetco price",
+      },
+      create: {
+        fuelKind: "AUTO_DIESEL",
+        pricePerLitre: fp.lad,
+        effectiveFrom: effectiveDate,
+        source: "CEYPETCO",
+        enteredById: adminUser.id,
+        note: "Historical Ceypetco price",
+      },
+    });
+
+    await prisma.fuelPrice.upsert({
+      where: {
+        fuelKind_effectiveFrom: {
+          fuelKind: "SUPER_DIESEL",
+          effectiveFrom: effectiveDate,
+        },
+      },
+      update: {
+        pricePerLitre: fp.lsd,
+        source: "CEYPETCO",
+        enteredById: adminUser.id,
+        note: "Historical Ceypetco price",
+      },
+      create: {
+        fuelKind: "SUPER_DIESEL",
+        pricePerLitre: fp.lsd,
+        effectiveFrom: effectiveDate,
+        source: "CEYPETCO",
+        enteredById: adminUser.id,
+        note: "Historical Ceypetco price",
+      },
+    });
+  }
 
   // 4. Seed Settings defaults
   console.log("Seeding settings...");
@@ -178,6 +200,17 @@ async function main() {
     { key: "scraper.cron", value: "0 0 1 * *" },
     { key: "backup.cron", value: "30 2 * * *" },
     { key: "backup.retentionDays", value: "7" },
+    // Monthly billing defaults
+    { key: "billing.enabled", value: "true" },
+    { key: "billing.cron", value: "0 3 1 * *" },
+    { key: "billing.minHours", value: "120" },
+    { key: "billing.minKm", value: "3000" },
+    { key: "billing.minDays", value: "26" },
+    { key: "billing.ssclRate", value: "0.025" },
+    { key: "billing.vatRate", value: "0.18" },
+    { key: "billing.dueDays", value: "30" },
+    { key: "billing.invoicePrefix", value: "EC-INV" },
+    { key: "billing.fuelRateFallbackCents", value: "0" },
   ];
   for (const s of settingsDefaults) {
     await prisma.setting.upsert({

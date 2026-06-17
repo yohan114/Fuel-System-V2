@@ -48,6 +48,11 @@ export async function logDailyConditionAction(assetId: string, status: string, n
       return { error: "Asset does not belong to your assigned project" };
     }
 
+    // Only ADMIN can restore a machine from INACTIVE (breakdown) to WORKING
+    if (status === "WORKING" && asset.status === "INACTIVE" && user.role !== "ADMIN") {
+      return { error: "Only an admin can mark a machine as Working when it is in Breakdown." };
+    }
+
     // Upsert condition log for this asset and date
     const condition = await prisma.dailyCondition.upsert({
       where: {

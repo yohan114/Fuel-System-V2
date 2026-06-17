@@ -1,7 +1,7 @@
 import React from "react";
 import { requireAdmin } from "@/lib/auth";
 import Link from "next/link";
-import { Coins, Database, Users2, ShieldAlert, FolderGit2 } from "lucide-react";
+import { Coins, Database, Users2, ShieldAlert, FolderGit2, Receipt } from "lucide-react";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -30,6 +30,7 @@ export default async function AdminLayout({ children }: AdminLayoutProps) {
     { label: "Project Sites", href: "/admin/projects", icon: FolderGit2 },
     { label: "Database Backups", href: "/admin/backups", icon: Database },
     { label: "User Accounts", href: "/admin/users", icon: Users2 },
+    { label: "Billing Settings", href: "/admin/billing", icon: Receipt },
   ];
 
   return (

@@ -8,6 +8,8 @@ interface ProjectProp {
   id: string;
   name: string;
   code: string;
+  contactName?: string | null;
+  contactEmail?: string | null;
   createdAt: Date | string;
   _count?: {
     users: number;
@@ -83,10 +85,12 @@ export default function ManageProjectsClient({ initialProjects }: ManageProjects
         // Update local state
         const name = formData.get("name")?.toString().trim() || editingProject.name;
         const code = formData.get("code")?.toString().trim().toUpperCase() || editingProject.code;
+        const contactName = formData.get("contactName")?.toString().trim() || null;
+        const contactEmail = formData.get("contactEmail")?.toString().trim() || null;
 
-        setProjects(prev => prev.map(p => 
-          p.id === targetId 
-            ? { ...p, name, code }
+        setProjects(prev => prev.map(p =>
+          p.id === targetId
+            ? { ...p, name, code, contactName, contactEmail }
             : p
         ));
 
@@ -124,6 +128,11 @@ export default function ManageProjectsClient({ initialProjects }: ManageProjects
                   </span>
                 </div>
                 <h4 className="text-sm font-bold text-white tracking-wide">{proj.name}</h4>
+                {proj.contactEmail && (
+                  <p className="text-[10px] text-gray-500 mt-1 truncate">
+                    {proj.contactName ? `${proj.contactName} · ` : ""}{proj.contactEmail}
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-col gap-4 mt-6 pt-4 border-t border-white/5">
@@ -217,6 +226,33 @@ export default function ManageProjectsClient({ initialProjects }: ManageProjects
                   defaultValue={editingProject.code}
                   className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-indigo-500/50 font-bold uppercase tracking-wider"
                 />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  Billing Contact Name
+                </label>
+                <input
+                  type="text"
+                  name="contactName"
+                  defaultValue={editingProject.contactName || ""}
+                  placeholder="e.g. Site Accounts Officer"
+                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-indigo-500/50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  Billing Contact Email
+                </label>
+                <input
+                  type="email"
+                  name="contactEmail"
+                  defaultValue={editingProject.contactEmail || ""}
+                  placeholder="invoices@site.example"
+                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:border-indigo-500/50"
+                />
+                <p className="text-[10px] text-gray-500 mt-1.5">Invoices are emailed to this address.</p>
               </div>
 
               <button

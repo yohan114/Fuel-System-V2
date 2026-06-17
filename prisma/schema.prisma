@@ -37,6 +37,8 @@ model User {
 
   bulkRequests     BulkRequest[] @relation("BulkRequestedBy")
   reviewedBulk     BulkRequest[] @relation("BulkReviewedBy")
+
+  generatedBills   Bill[]        @relation("BillGeneratedBy")
 }
 
 model Category {
@@ -76,6 +78,9 @@ model Asset {
   fuelIssues    FuelIssue[]
   meterReadings MeterReading[]
   dailyConditions DailyCondition[]
+
+  rentalRate    RentalRate?
+  bills         Bill[]
 }
 
 model FuelPrice {
@@ -191,11 +196,13 @@ model Setting {
 }
 
 model Project {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  code      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid())
+  name         String   @unique
+  code         String   @unique
+  contactName  String?
+  contactEmail String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   users     User[]
   assets    Asset[]
@@ -254,4 +261,148 @@ model BulkRequest {
   reviewedBy      User?     @relation("BulkReviewedBy", fields: [reviewedById], references: [id])
   reviewedAt      DateTime?
   reviewNote      String?
+}
+
+// Per-asset machine rental rate card, imported from the E&C Machine Rental
+// Calculator. Rates are stored in LKR cents (whole-LKR source × 100). A null
+// tier means that combination is not available for the machine.
+model RentalRate {
+  id            String   @id @default(uuid())
+
+  assetId       String   @unique
+  asset         Asset    @relation(fields: [assetId], references: [id])
+
+  sourceLabel   String?  // original "label" from the rate card
+  category      String?  // source "cat"
+  equipType     String   @default("FLEET") // "FLEET" | "PORTABLE"
+
+  fuelQtyDefault Float?  // source "fuel" hint (not used for billing fuel cost)
+  opRate         Int?    // source "op" operator rate, cents (reserved)
+
+  // Hourly tier (cents)
+  hrFwCents     Int?
+  hrWCents      Int?
+  hrDCents      Int?
+  // Per-day tier (cents)
+  dyFwCents     Int?
+  dyWCents      Int?
+  dyDCents      Int?
+  // Per-km tier (cents)
+  kmFwCents     Int?
+  kmWCents      Int?
+  kmDCents      Int?
+
+  // Portable equipment: per-day only, 2-tier (dw = day wet, dd = day dry)
+  portDwCents   Int?
+  portDdCents   Int?
+
+  // Fuel consumption rates from the Fuel Rates sheet (L/hr or L/km)
+  fuelConsEcon  Float?   // economic (light load) consumption
+  fuelConsTyp   Float?   // typical consumption
+  fuelConsBasis String?  // "hr" | "km"
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// One monthly bill per asset. Acts as both a cost statement and an invoice.
+// All money columns are LKR cents and fully snapshotted at generation time so a
+// finalized bill is immutable even if the underlying issues/readings change.
+model Bill {
+  id            String   @id @default(uuid())
+
+  // Period (Colombo month)
+  year          Int
+  month         Int      // 1-12
+  periodKey     String   // "2026-05"
+  periodStart   DateTime
+  periodEnd     DateTime
+
+  // Asset / site snapshot
+  assetId       String
+  asset         Asset    @relation(fields: [assetId], references: [id])
+  assetCode     String
+  assetRegNo    String?
+  assetLabel    String?
+  projectId     String?
+  projectName   String?
+  projectCode   String?
+
+  // Billing config snapshot
+  billingMode   String   // "hourly" | "perkm" | "perday"
+  rateBasis     String   // "fw" | "w" | "d"
+  rateCents     Int
+
+  // Usage derivation snapshot
+  openingMeter  Float?
+  closingMeter  Float?
+  actualUnits   Float
+  minimumUnits  Float
+  billableUnits Float
+
+  // Money (cents)
+  rentalAmountCents Int
+  fuelLitres        Float @default(0)
+  fuelCostCents     Int   @default(0)
+  subtotalCents     Int
+  ssclRate          Float
+  ssclCents         Int
+  vatRate           Float
+  vatCents          Int
+  grandTotalCents   Int
+
+  // Invoice fields
+  invoiceNumber String?  @unique
+  status        String   @default("DRAFT") // "DRAFT" | "ISSUED" | "PAID" | "OVERDUE"
+  issuedDate    DateTime?
+  dueDate       DateTime?
+  paidDate      DateTime?
+  paidAmountCents Int?
+  paymentRef    String?
+  paymentNote   String?
+
+  notes         String?
+
+  // Fuel-derived units (when no meter readings exist)
+  derivedFromFuel Boolean @default(false)
+  fuelConsMidRate Float?  // mid consumption rate used (L/hr or L/km)
+
+  // Fuel-derived options and raw meter units
+  actualMeterUnits     Float?
+  derivedStandardUnits Float?
+  derivedEconUnits     Float?
+  fuelConsEconSnapshot Float?
+  fuelConsTypSnapshot  Float?
+
+  // Breakdown deduction
+  breakdownDays        Int @default(0)
+  breakdownDeductCents Int @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  generatedById String?
+  generatedBy   User?    @relation("BillGeneratedBy", fields: [generatedById], references: [id])
+
+  lineItems     BillLineItem[]
+
+  @@unique([assetId, year, month])
+  @@index([periodKey, status])
+  @@index([projectId, periodKey])
+}
+
+model BillLineItem {
+  id          String  @id @default(uuid())
+
+  billId      String
+  bill        Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  kind        String  // "RENTAL" | "FUEL" | "ADJUSTMENT"
+  description String
+  quantity    Float
+  unit        String  // "hr" | "km" | "day" | "L" | "—"
+  unitRateCents Int
+  amountCents Int
+
+  @@index([billId])
 }
