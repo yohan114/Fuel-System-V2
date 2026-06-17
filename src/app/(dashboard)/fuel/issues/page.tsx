@@ -2,6 +2,7 @@ import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { visibleAssetIdsForUser } from "@/lib/assignments";
+import CorrectionButton from "./CorrectionButton";
 import Link from "next/link";
 import { Search, Fuel, Coins, Calendar, User, CornerDownRight } from "lucide-react";
 
@@ -48,10 +49,18 @@ export default async function FuelIssuesPage(props: PageProps) {
 
 
 
-  // 3. Compute sums
+  // Mark issues that already have a pending correction request.
+  const pendingCorr = await prisma.fuelIssueCorrection.findMany({
+    where: { fuelIssueId: { in: issues.map((i) => i.id) }, status: "PENDING" },
+    select: { fuelIssueId: true },
+  });
+  const pendingSet = new Set(pendingCorr.map((c) => c.fuelIssueId));
+
+  // 3. Compute sums (voided issues don't count toward the filter totals)
   let totalLitres = 0;
   let totalCostCents = 0;
   issues.forEach((issue) => {
+    if (issue.voided) return;
     totalLitres += issue.litres;
     totalCostCents += issue.totalCost;
   });
@@ -152,21 +161,25 @@ export default async function FuelIssuesPage(props: PageProps) {
                 <th className="px-6 py-4 font-semibold">Total Cost</th>
                 <th className="px-6 py-4 font-semibold">Issued By</th>
                 <th className="px-6 py-4 font-semibold">Source</th>
+                <th className="px-6 py-4 font-semibold text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {issues.map((issue) => (
-                <tr key={issue.id} className="hover:bg-white/[0.02] transition-colors">
+                <tr key={issue.id} className={`hover:bg-white/[0.02] transition-colors ${issue.voided ? "opacity-50" : ""}`}>
                   <td className="px-6 py-4 text-gray-300 font-medium whitespace-nowrap">
                     {new Date(issue.issueDate).toLocaleString("en-US", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </td>
                   <td className="px-6 py-4">
                     <Link
                       href={`/fleet/${issue.asset.code}`}
-                      className="font-bold text-white hover:text-indigo-400 tracking-wide transition-colors"
+                      className={`font-bold tracking-wide transition-colors ${issue.voided ? "text-gray-500 line-through" : "text-white hover:text-indigo-400"}`}
                     >
                       {issue.asset.code}
                     </Link>
+                    {issue.voided && (
+                      <span className="ml-2 bg-red-500/10 text-red-300 border border-red-500/10 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">Voided</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-gray-400 capitalize">
                     {issue.fuelKind.replace("_", " ").toLowerCase()}
@@ -187,6 +200,27 @@ export default async function FuelIssuesPage(props: PageProps) {
                     <span className="bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400 border border-white/5">
                       {issue.source}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    {issue.voided ? (
+                      <span className="text-[10px] text-gray-600">—</span>
+                    ) : pendingSet.has(issue.id) ? (
+                      <span className="text-[10px] font-semibold text-amber-300/80 bg-amber-500/5 border border-amber-500/10 rounded-lg px-2.5 py-1.5">
+                        Correction pending
+                      </span>
+                    ) : (
+                      <CorrectionButton
+                        issue={{
+                          id: issue.id,
+                          assetCode: issue.asset.code,
+                          litres: issue.litres,
+                          meterReading: issue.meterReading,
+                          readingType: issue.readingType,
+                          fuelKind: issue.fuelKind,
+                          issueDateISO: issue.issueDate.toISOString(),
+                        }}
+                      />
+                    )}
                   </td>
                 </tr>
               ))}

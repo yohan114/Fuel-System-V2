@@ -40,6 +40,9 @@ model User {
 
   generatedBills   Bill[]        @relation("BillGeneratedBy")
   createdAssignments AssetAssignment[] @relation("AssignmentCreatedBy")
+
+  fuelCorrections     FuelIssueCorrection[] @relation("CorrectionRequestedBy")
+  reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
 }
 
 model Category {
@@ -188,6 +191,72 @@ model FuelIssue {
 
   bulkTankId      String?
   bulkTank        BulkTank?    @relation("TankIssues", fields: [bulkTankId], references: [id])
+
+  // Soft-void: a wrong/duplicate issue is voided (not deleted) via an approved
+  // correction. Voided issues are excluded from billing, fuel sums and reports
+  // but kept for the audit trail.
+  voided          Boolean      @default(false)
+  voidedAt        DateTime?
+
+  corrections     FuelIssueCorrection[]
+}
+
+// An admin-approved error-correction request against a fuel issue. A site user
+// submits it with a mandatory signed running-chart document (stored inline so
+// it travels with DB backups); an admin approves (applies the edit / voids the
+// issue) or rejects. Every request is a permanent, site-stamped log entry.
+model FuelIssueCorrection {
+  id            String    @id @default(uuid())
+
+  fuelIssueId   String
+  fuelIssue     FuelIssue @relation(fields: [fuelIssueId], references: [id], onDelete: Cascade)
+
+  type          String    // "EDIT" | "VOID"
+  status        String    @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
+  reason        String
+
+  // Proposed new values (EDIT only; null = leave that field unchanged).
+  newLitres        Float?
+  newMeterReading  Float?
+  newReadingType   String?
+  newFuelKind      String?
+  newIssueDate     DateTime?
+
+  // Original values snapshotted at request time, for the before/after log.
+  origLitres       Float
+  origMeterReading Float?
+  origFuelKind     String
+  origIssueDate    DateTime
+  origSource       String
+
+  // Site snapshot (so the activity log sorts/filters site-wise even if the
+  // vehicle is later reassigned).
+  assetId       String
+  assetCode     String
+  projectId     String?
+  projectName   String?
+  projectCode   String?
+
+  // Required evidence document (photo/PDF of the signed running chart), stored
+  // as a BLOB so it is captured by the existing database backups.
+  docData       Bytes
+  docName       String
+  docMime       String
+
+  requestedById String
+  requestedBy   User      @relation("CorrectionRequestedBy", fields: [requestedById], references: [id])
+
+  reviewedById  String?
+  reviewedBy    User?     @relation("CorrectionReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  reviewNote    String?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, projectCode])
+  @@index([projectCode, createdAt])
+  @@index([fuelIssueId])
 }
 
 model MeterReading {

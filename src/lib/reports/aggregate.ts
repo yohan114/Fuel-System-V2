@@ -11,8 +11,9 @@ export interface ReportFilter {
 export async function aggregateFuelData(filter: ReportFilter) {
   const { from, to, fuelKind, categoryId, assetId } = filter;
 
-  // Build where clause for FuelIssue
+  // Build where clause for FuelIssue (voided issues are excluded from reports)
   const issueWhere: any = {
+    voided: false,
     issueDate: {
       gte: from,
       lte: to,

@@ -162,7 +162,7 @@ export async function sumFuelForWindow(
   end: Date
 ): Promise<FuelSummary> {
   const agg = await prisma.fuelIssue.aggregate({
-    where: { assetId, issueDate: { gte: start, lte: end } },
+    where: { assetId, issueDate: { gte: start, lte: end }, voided: false },
     _sum: { litres: true, totalCost: true },
     _count: true,
   });
@@ -206,9 +206,10 @@ export async function sumFuelForMonth(
   const fuelSource = projectCodeVal === "BADAL" ? "BADALGAMA" : projectCodeVal;
 
   const agg = await prisma.fuelIssue.aggregate({
-    where: { 
-      assetId, 
+    where: {
+      assetId,
       issueDate: { gte: start, lte: end },
+      voided: false,
       ...(fuelSource ? { source: fuelSource } : {})
     },
     _sum: { litres: true, totalCost: true },

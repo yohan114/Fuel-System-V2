@@ -15,6 +15,8 @@ const nextConfig: NextConfig = {
   ],
   experimental: {
     serverActions: {
+      // Correction requests carry a signed running-chart photo/PDF.
+      bodySizeLimit: "12mb",
       allowedOrigins: [
         "fuel-portal.ec-workshops.online",
         "https://fuel-portal.ec-workshops.online",
