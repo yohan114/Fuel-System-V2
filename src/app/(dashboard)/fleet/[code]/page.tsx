@@ -6,6 +6,7 @@ import Link from "next/link";
 import AssetCharts from "./components/AssetCharts";
 import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
+import { recommendedUnits, varianceFlag } from "@/lib/reports/recommended";
 import { 
   ArrowLeft, 
   Gauge, 
@@ -100,6 +101,11 @@ export default async function AssetDetailPage(props: PageProps) {
       efficiency = `${value.toFixed(2)} L/hr`;
     }
   }
+
+  // Lifetime fuel-derived recommendation vs the recorded meter (reuses the
+  // totals already computed above — no extra query).
+  const recommendedLifetime = recommendedUnits(totalLitres, asset.rentalRate?.fuelConsTyp ?? null);
+  const lifetimeVariance = varianceFlag(runGrowth, recommendedLifetime);
 
   // 4. Format Chart Data (Sorted chronologically)
   const readingsChartData = readings
@@ -203,6 +209,44 @@ export default async function AssetDetailPage(props: PageProps) {
             </span>
           </div>
         </div>
+      </div>
+
+      {/* Fuel-derived recommended hrs/km vs recorded meter */}
+      <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-xl">
+        <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+          <Activity className="w-4 h-4 text-indigo-400" /> Fuel vs Meter — System-Recommended ({asset.meterType})
+        </h3>
+        {asset.rentalRate?.fuelConsTyp ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Actual Meter</span>
+              <span className="text-md font-bold text-white block mt-1">{runGrowth.toLocaleString()} {asset.meterType}</span>
+            </div>
+            <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Recommended (fuel)</span>
+              <span className="text-md font-bold text-indigo-400 block mt-1">
+                {recommendedLifetime != null ? `${recommendedLifetime.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${asset.meterType}` : "—"}
+              </span>
+            </div>
+            <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Variance</span>
+              <span className={`text-md font-bold block mt-1 ${
+                lifetimeVariance.flag === "METER_LOW" ? "text-red-400" : lifetimeVariance.flag === "METER_HIGH" ? "text-amber-400" : "text-white"
+              }`}>
+                {lifetimeVariance.variancePct != null ? `${lifetimeVariance.variancePct > 0 ? "+" : ""}${(lifetimeVariance.variancePct * 100).toFixed(0)}%` : "—"}
+              </span>
+              <span className="text-[10px] text-gray-500 block mt-0.5">
+                {lifetimeVariance.flag === "METER_LOW" ? "meter under-recorded?" : lifetimeVariance.flag === "METER_HIGH" ? "meter high" : "within tolerance"}
+              </span>
+            </div>
+            <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Typical Rate</span>
+              <span className="text-md font-bold text-white block mt-1">{asset.rentalRate.fuelConsTyp} L/{asset.meterType === "KM" ? "km" : "hr"}</span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-500">No typical consumption rate set{isAdmin ? " — add one above" : ""} to compute the fuel-derived recommendation.</p>
+        )}
       </div>
 
       {/* Visual Analytics */}

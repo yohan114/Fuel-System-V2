@@ -152,6 +152,14 @@ export default async function BillDetailPage(props: PageProps) {
   const unit = unitLabel(bill.billingMode as BillingMode);
   const monthLabel = new Date(bill.year, bill.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
 
+  // Actual entered meter vs system-recommended (fuel-derived) variance.
+  const isMetered = bill.billingMode === "hourly" || bill.billingMode === "perkm";
+  const actualMeterVal = bill.actualMeterUnits ?? (bill.derivedFromFuel ? 0 : bill.actualUnits);
+  const variancePct =
+    isMetered && bill.derivedStandardUnits != null
+      ? ((bill.derivedStandardUnits - actualMeterVal) / Math.max(actualMeterVal, 1)) * 100
+      : null;
+
   return (
     <div className="space-y-6">
       <Link href="/billing" className="inline-flex items-center gap-2 text-xs text-gray-400 hover:text-white">
@@ -239,12 +247,21 @@ export default async function BillDetailPage(props: PageProps) {
                 />
                 <Row
                   label={`Actual economy ${unit} (fuel-derived)`}
-                  value={bill.derivedEconUnits != null 
+                  value={bill.derivedEconUnits != null
                     ? bill.derivedEconUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })
                     : "—"
                   }
                   active={bill.derivedFromFuel && bill.derivedEconUnits != null && Math.abs(bill.actualUnits - bill.derivedEconUnits) < 0.1}
                 />
+                {variancePct != null && (
+                  <div className="flex items-center justify-between">
+                    <dt className="text-gray-400">Meter vs recommended variance</dt>
+                    <dd className={`font-bold ${Math.abs(variancePct) >= 20 ? (variancePct > 0 ? "text-red-400" : "text-amber-400") : "text-gray-300"}`}>
+                      {variancePct > 0 ? "+" : ""}{variancePct.toFixed(0)}%
+                      {Math.abs(variancePct) >= 20 ? (variancePct > 0 ? " · meter low" : " · meter high") : ""}
+                    </dd>
+                  </div>
+                )}
               </>
             ) : (
               <Row
