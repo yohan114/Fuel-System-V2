@@ -8,6 +8,7 @@ import { unitLabel, basisLabel, modeLabel, type BillingMode, type RateBasis } fr
 import { getWetRateCents } from "@/lib/billing/rate";
 import BillActions from "./BillActions";
 import BillingRunningChart from "../components/BillingRunningChart";
+import { createCreditNoteAction, issueCreditNoteAction } from "@/app/actions/finance";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -148,6 +149,15 @@ export default async function BillDetailPage(props: PageProps) {
         include: { recordedBy: { select: { name: true } } },
       })
     : [];
+
+  // Credit notes against this invoice.
+  const creditNotes = await prisma.creditNote.findMany({
+    where: { billId: bill.id },
+    orderBy: { createdAt: "desc" },
+  });
+  const issuedCreditCents = creditNotes
+    .filter((c) => c.status === "ISSUED")
+    .reduce((a, c) => a + c.amountCents, 0);
 
   const unit = unitLabel(bill.billingMode as BillingMode);
   const monthLabel = new Date(bill.year, bill.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
@@ -369,6 +379,55 @@ export default async function BillDetailPage(props: PageProps) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Credit notes (issued/overdue/paid invoices only) */}
+      {bill.status !== "DRAFT" && (
+        <div className="bg-[#121420] border border-white/5 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Credit Notes</h3>
+            {issuedCreditCents > 0 && (
+              <span className="text-xs text-amber-300 font-semibold">Net outstanding: {rs(bill.grandTotalCents - issuedCreditCents)}</span>
+            )}
+          </div>
+          {creditNotes.length === 0 ? (
+            <p className="text-xs text-gray-500">No credit notes raised.</p>
+          ) : (
+            <div className="space-y-2 mb-4">
+              {creditNotes.map((c) => (
+                <div key={c.id} className="flex items-center justify-between text-xs bg-white/5 rounded-xl px-3 py-2.5">
+                  <div>
+                    <span className="font-bold text-white">{c.number || "DRAFT"}</span>
+                    <span className="text-gray-400 ml-2">{c.reason}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-white">− {rs(c.amountCents)}</span>
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${c.status === "ISSUED" ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>{c.status}</span>
+                    {isAdmin && c.status === "DRAFT" && (
+                      <form action={async () => { "use server"; await issueCreditNoteAction(c.id); }}>
+                        <button type="submit" className="text-indigo-400 hover:text-indigo-300 font-semibold underline text-[10px]">Issue</button>
+                      </form>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {isAdmin && (
+            <form action={async (fd) => { "use server"; await createCreditNoteAction(fd); }} className="flex flex-wrap items-end gap-2 border-t border-white/5 pt-4">
+              <input type="hidden" name="billId" value={bill.id} />
+              <div>
+                <label className="block text-[10px] text-gray-400 uppercase tracking-wider mb-1">Amount (LKR)</label>
+                <input name="amount" type="number" step="0.01" min="0" required className="bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs w-32" />
+              </div>
+              <div className="flex-1 min-w-[180px]">
+                <label className="block text-[10px] text-gray-400 uppercase tracking-wider mb-1">Reason</label>
+                <input name="reason" type="text" required placeholder="e.g. billing correction, goodwill" className="w-full bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+              </div>
+              <button type="submit" className="bg-white/10 hover:bg-white/20 text-white text-xs font-semibold rounded-lg px-4 py-2">Add credit note</button>
+            </form>
+          )}
         </div>
       )}
 

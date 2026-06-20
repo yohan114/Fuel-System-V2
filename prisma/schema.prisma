@@ -324,6 +324,7 @@ model Project {
   assets      Asset[]
   bulkTanks   BulkTank[]
   assignments AssetAssignment[]
+  budgets     Budget[]
 }
 
 model DailyCondition {
@@ -524,7 +525,12 @@ model Bill {
   generatedById String?
   generatedBy   User?    @relation("BillGeneratedBy", fields: [generatedById], references: [id])
 
+  // Invoice email dispatch stamp.
+  emailedAt     DateTime?
+  emailedTo     String?
+
   lineItems     BillLineItem[]
+  creditNotes   CreditNote[]
 
   @@unique([assetId, year, month])
   @@index([periodKey, status])
@@ -549,6 +555,48 @@ model BillLineItem {
   // site the line belongs to. Null for single-site / legacy bills.
   projectId   String?
   projectName String?
+
+  @@index([billId])
+}
+
+// Per-site monthly fuel budget, for budget-vs-actual tracking and month-end
+// run-rate forecasting.
+model Budget {
+  id                String   @id @default(uuid())
+
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id])
+
+  year              Int
+  month             Int      // 1-12
+  budgetLitres      Float?
+  budgetAmountCents Int?
+  note              String?
+
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectId, year, month])
+  @@index([year, month])
+}
+
+// A credit note against an issued bill (correction/discount/goodwill). Reduces
+// the outstanding receivable for that invoice once issued.
+model CreditNote {
+  id          String   @id @default(uuid())
+
+  billId      String
+  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  number      String?  @unique
+  reason      String
+  amountCents Int      // positive amount credited back to the customer
+  status      String   @default("DRAFT") // "DRAFT" | "ISSUED"
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  issuedDate  DateTime?
 
   @@index([billId])
 }

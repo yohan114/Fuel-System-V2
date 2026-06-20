@@ -21,7 +21,9 @@ import {
   Bell,
   Activity,
   ScrollText,
-  DatabaseZap
+  DatabaseZap,
+  Wallet,
+  Target
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -69,6 +71,8 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
       { label: "Alerts", href: "/alerts", icon: Bell },
+      { label: "Receivables", href: "/billing/aging", icon: Wallet },
+      { label: "Fuel Budgets", href: "/admin/budgets", icon: Target },
       { label: "Audit Log", href: "/admin/audit", icon: ScrollText },
       { label: "Data Quality", href: "/admin/data-quality", icon: DatabaseZap }
     );
@@ -100,6 +104,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Receivables", href: "/billing/aging", icon: Wallet },
       { label: "Alerts", href: "/alerts", icon: Bell }
     );
   }
