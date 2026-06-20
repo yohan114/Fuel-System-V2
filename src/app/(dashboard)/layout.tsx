@@ -17,7 +17,11 @@ import {
   Receipt,
   Wrench,
   ShieldAlert,
-  Droplets
+  Droplets,
+  Bell,
+  Activity,
+  ScrollText,
+  DatabaseZap
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -62,14 +66,20 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
-      { label: "Billing", href: "/billing", icon: Receipt }
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Alerts", href: "/alerts", icon: Bell },
+      { label: "Audit Log", href: "/admin/audit", icon: ScrollText },
+      { label: "Data Quality", href: "/admin/data-quality", icon: DatabaseZap }
     );
   } else if (isAllocator) {
     navItems.push(
       { label: "Allocator Console", href: "/allocator", icon: Car },
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck }
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else if (isWorkshop) {
     navItems.push(
@@ -88,7 +98,9 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
-      { label: "Billing", href: "/billing", icon: Receipt }
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   }
 
