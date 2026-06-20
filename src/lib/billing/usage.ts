@@ -9,7 +9,14 @@ function getMeterSourcesForProject(projectCode?: string | null): string[] {
   if (projectCode === "CEP-03") {
     return ["DAILY_SHEET_START", "DAILY_SHEET_END"];
   }
-  return ["SUMMARY_START", "SUMMARY_END"];
+  return [
+    `SUMMARY_${projectCode}_START`,
+    `SUMMARY_${projectCode}_END`,
+    "SUMMARY_START",
+    "SUMMARY_END",
+    "MANUAL",
+    "FUEL_ISSUE"
+  ];
 }
 
 // Per-asset monthly usage derivation. The running-delta logic mirrors
@@ -65,29 +72,6 @@ export async function computeRunningDelta(
 
   const allowedSources = getMeterSourcesForProject(projectCode || asset?.project?.code);
 
-  let opening = await prisma.meterReading.findFirst({
-    where: { 
-      assetId, 
-      readingType: meterType, 
-      readingDate: { lte: start },
-      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {})
-    },
-    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
-  });
-
-  const thresholdDate = new Date(start.getTime() - 31 * 24 * 60 * 60 * 1000);
-  if (!opening || opening.readingDate < thresholdDate) {
-    opening = await prisma.meterReading.findFirst({
-      where: { 
-        assetId, 
-        readingType: meterType, 
-        readingDate: { gte: start, lte: end },
-        ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {})
-      },
-      orderBy: [{ readingDate: "asc" }, { value: "asc" }],
-    });
-  }
-
   const closing = await prisma.meterReading.findFirst({
     where: { 
       assetId, 
@@ -95,8 +79,45 @@ export async function computeRunningDelta(
       readingDate: { lte: end },
       ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {})
     },
-    orderBy: [{ value: "desc" }, { readingDate: "desc" }],
+    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
   });
+
+  if (!closing) {
+    return { opening: null, closing: null, delta: 0 };
+  }
+
+  const isClosingAbc = closing.source?.startsWith("CEP-03-ABC") ?? false;
+  const compatibilityFilter = isClosingAbc
+    ? { source: { startsWith: "CEP-03-ABC" } }
+    : { NOT: { source: { startsWith: "CEP-03-ABC" } } };
+
+  let opening = await prisma.meterReading.findFirst({
+    where: { 
+      assetId, 
+      readingType: meterType, 
+      readingDate: { lte: start },
+      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
+      ...compatibilityFilter
+    },
+    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
+  });
+
+  const thresholdDate = new Date(start.getTime() - 31 * 24 * 60 * 60 * 1000);
+  if (!opening || opening.readingDate < thresholdDate) {
+    const fallback = await prisma.meterReading.findFirst({
+      where: { 
+        assetId, 
+        readingType: meterType, 
+        readingDate: { gte: start, lte: end },
+        ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
+        ...compatibilityFilter
+      },
+      orderBy: [{ readingDate: "asc" }, { value: "asc" }],
+    });
+    if (fallback) {
+      opening = fallback;
+    }
+  }
 
   let delta = 0;
   if (opening && closing && closing.value > opening.value) {
@@ -111,35 +132,64 @@ export async function computeRunningDelta(
 }
 
 // Cumulative meter growth across an arbitrary [start, end] window, source-
-// agnostic. Used for per-site billing segments: a vehicle is one physical meter,
+// aware. Used for per-site billing segments: a vehicle is one physical meter,
 // so its growth while posted to a site is simply closing(window) − opening(window)
-// regardless of which site's sheet recorded each reading. Attribution to the
-// right site comes from the assignment date window, not the reading source.
+// calculated within its compatible/allowed site sources.
 export async function computeWindowDelta(
   assetId: string,
   meterType: "KM" | "HOURS",
   start: Date,
-  end: Date
+  end: Date,
+  projectCode?: string | null
 ): Promise<RunningDelta> {
-  let opening = await prisma.meterReading.findFirst({
-    where: { assetId, readingType: meterType, readingDate: { lte: start } },
+  const allowedSources = getMeterSourcesForProject(projectCode);
+
+  const closing = await prisma.meterReading.findFirst({
+    where: { 
+      assetId, 
+      readingType: meterType, 
+      readingDate: { lte: end },
+      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {})
+    },
     orderBy: [{ readingDate: "desc" }, { value: "desc" }],
   });
 
-  // If there is no anchor close to the window start, fall back to the earliest
-  // reading inside the window so a brand-new segment still measures its growth.
-  const threshold = new Date(start.getTime() - 31 * 24 * 60 * 60 * 1000);
-  if (!opening || opening.readingDate < threshold) {
-    opening = await prisma.meterReading.findFirst({
-      where: { assetId, readingType: meterType, readingDate: { gte: start, lte: end } },
-      orderBy: [{ readingDate: "asc" }, { value: "asc" }],
-    });
+  if (!closing) {
+    return { opening: null, closing: null, delta: 0 };
   }
 
-  const closing = await prisma.meterReading.findFirst({
-    where: { assetId, readingType: meterType, readingDate: { lte: end } },
-    orderBy: [{ value: "desc" }, { readingDate: "desc" }],
+  const isClosingAbc = closing.source?.startsWith("CEP-03-ABC") ?? false;
+  const compatibilityFilter = isClosingAbc
+    ? { source: { startsWith: "CEP-03-ABC" } }
+    : { NOT: { source: { startsWith: "CEP-03-ABC" } } };
+
+  let opening = await prisma.meterReading.findFirst({
+    where: { 
+      assetId, 
+      readingType: meterType, 
+      readingDate: { lte: start },
+      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
+      ...compatibilityFilter
+    },
+    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
   });
+
+  const threshold = new Date(start.getTime() - 31 * 24 * 60 * 60 * 1000);
+  if (!opening || opening.readingDate < threshold) {
+    const fallback = await prisma.meterReading.findFirst({
+      where: { 
+        assetId, 
+        readingType: meterType, 
+        readingDate: { gte: start, lte: end },
+        ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
+        ...compatibilityFilter
+      },
+      orderBy: [{ readingDate: "asc" }, { value: "asc" }],
+    });
+    if (fallback) {
+      opening = fallback;
+    }
+  }
 
   let delta = 0;
   if (opening && closing && closing.value > opening.value) {

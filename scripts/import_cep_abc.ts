@@ -324,6 +324,24 @@ async function main() {
     stats.fuel++;
     stats.litres += litres;
 
+    // Create month-bounded AssetAssignment
+    const startD = monthStartDate(year, month);
+    const endD = monthEndDate(year, month);
+    const existingAssign = await prisma.assetAssignment.findFirst({
+      where: { assetId: asset.id, projectId: project.id, startDate: startD }
+    });
+    if (!existingAssign) {
+      await prisma.assetAssignment.create({
+        data: {
+          assetId: asset.id,
+          projectId: project.id,
+          startDate: startD,
+          endDate: endD,
+          note: `CEP-03-ABC Summary Import`
+        }
+      });
+    }
+
     // Record cumulative meter readings (always created, even if units is 0, to preserve continuity)
     if (asset.meterType === "HOURS" && units >= 0) {
       const startVal = cumHours.get(asset.id) || 0;

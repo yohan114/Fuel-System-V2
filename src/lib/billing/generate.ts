@@ -201,36 +201,34 @@ export async function generateBillForAsset(
   if (
     fuel.litres > 0 &&
     (billingMode === "hourly" || billingMode === "perkm") &&
-    asset.rentalRate.fuelConsEcon != null &&
-    asset.rentalRate.fuelConsTyp != null
+    asset.rentalRate.fuelConsTyp != null &&
+    asset.rentalRate.fuelConsTyp > 0
   ) {
-    const fuelConsEcon = asset.rentalRate.fuelConsEcon;
     const fuelConsTyp = asset.rentalRate.fuelConsTyp;
-
-    if (fuelConsTyp > 0) {
-      derivedStandardUnits = fuel.litres / fuelConsTyp;
-    }
-    if (fuelConsEcon > 0) {
-      derivedEconUnits = fuel.litres / fuelConsEcon;
+    derivedStandardUnits = fuel.litres / fuelConsTyp;
+    if (asset.rentalRate.fuelConsEcon && asset.rentalRate.fuelConsEcon > 0) {
+      derivedEconUnits = fuel.litres / asset.rentalRate.fuelConsEcon;
     }
 
-    const compareValues = [
-      actualMeterUnits,
-      derivedStandardUnits ?? 0,
-      derivedEconUnits ?? 0,
-    ];
-    const highestVal = Math.max(...compareValues);
-
-    if (highestVal > actualMeterUnits) {
-      actualUnits = highestVal;
+    const tolerance = billingMode === "hourly" ? 10 : 50;
+    if (Math.abs(actualMeterUnits - derivedStandardUnits) <= tolerance) {
+      actualUnits = actualMeterUnits;
+    } else {
+      actualUnits = derivedStandardUnits;
       derivedFromFuel = true;
+      fuelConsMidRate = fuelConsTyp;
+    }
+  }
 
-      // Determine which rate yielded the highest value
-      if (highestVal === derivedEconUnits) {
-        fuelConsMidRate = fuelConsEcon;
-      } else {
-        fuelConsMidRate = fuelConsTyp;
-      }
+  if (billingMode === "hourly" && actualUnits > 720) {
+    actualUnits = 720;
+  }
+
+  if (billingMode === "perkm") {
+    const daysInMonth = new Date(period.year, period.month, 0).getDate();
+    const maxKm = 200 * daysInMonth;
+    if (actualUnits > maxKm) {
+      actualUnits = maxKm;
     }
   }
 
@@ -436,7 +434,7 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     let rawSeg = 0;
     let actualSeg = 0;
     if (isMeter) {
-      const rd = await computeWindowDelta(asset.id, meterType, seg.start, seg.end);
+      const rd = await computeWindowDelta(asset.id, meterType, seg.start, seg.end, seg.projectCode);
       rawSeg = rd.delta;
       actualSeg = rd.delta;
       if (openingMeter === null && rd.opening != null) openingMeter = rd.opening;
@@ -454,15 +452,40 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     let dStd: number | null = null;
     let dEcon: number | null = null;
     let segDerived = false;
-    if (isMeter && fuelSeg.litres > 0 && rentalRate.fuelConsEcon != null && rentalRate.fuelConsTyp != null) {
-      if (rentalRate.fuelConsTyp > 0) dStd = fuelSeg.litres / rentalRate.fuelConsTyp;
-      if (rentalRate.fuelConsEcon > 0) dEcon = fuelSeg.litres / rentalRate.fuelConsEcon;
-      const hi = Math.max(actualSeg, dStd ?? 0, dEcon ?? 0);
-      if (hi > actualSeg) {
-        actualSeg = hi;
+    if (
+      isMeter &&
+      fuelSeg.litres > 0 &&
+      rentalRate.fuelConsTyp != null &&
+      rentalRate.fuelConsTyp > 0
+    ) {
+      dStd = fuelSeg.litres / rentalRate.fuelConsTyp;
+      if (rentalRate.fuelConsEcon && rentalRate.fuelConsEcon > 0) {
+        dEcon = fuelSeg.litres / rentalRate.fuelConsEcon;
+      }
+
+      const tolerance = billingMode === "hourly" ? 10 : 50;
+      if (Math.abs(actualSeg - dStd) <= tolerance) {
+        // Within tolerance - keep actual
+      } else {
+        // Outside tolerance - override
+        actualSeg = dStd;
         segDerived = true;
         derivedFromFuel = true;
-        fuelConsMidRate = hi === dEcon ? rentalRate.fuelConsEcon : rentalRate.fuelConsTyp;
+        fuelConsMidRate = rentalRate.fuelConsTyp;
+      }
+    }
+
+    if (billingMode === "hourly") {
+      const maxSegHours = 720 * (seg.days / totalDays);
+      if (actualSeg > maxSegHours) {
+        actualSeg = maxSegHours;
+      }
+    }
+
+    if (billingMode === "perkm") {
+      const maxSegKm = 200 * seg.days;
+      if (actualSeg > maxSegKm) {
+        actualSeg = maxSegKm;
       }
     }
 

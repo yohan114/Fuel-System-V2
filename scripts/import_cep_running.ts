@@ -59,6 +59,11 @@ function parseDate(raw: unknown): Date | null {
   return new Date(`${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}T00:00:00+05:30`);
 }
 const toFloat = (v: unknown) => { const n = parseFloat(String(v)); return isNaN(n) ? 0 : n; };
+const monthStartDate = (y: number, m: number) => new Date(`${y}-${String(m).padStart(2, "0")}-01T00:00:00+05:30`);
+function monthEndDate(y: number, m: number) {
+  const d = new Date(y, m, 0);
+  return new Date(`${y}-${String(m).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T00:00:00+05:30`);
+}
 
 // Pull the project header line + bracketed code from the first rows of a sheet.
 function readProject(rows: unknown[][]): { name: string; code: string } | null {
@@ -240,6 +245,24 @@ async function main() {
         // Assign asset to project (last project wins; CEP is the only one here)
         await prisma.asset.update({ where: { id: asset.id }, data: { projectId: p.id } });
         stats.assigned++;
+
+        // Create month-bounded AssetAssignment
+        const startD = monthStartDate(file.year, file.month);
+        const endD = monthEndDate(file.year, file.month);
+        const existingAssign = await prisma.assetAssignment.findFirst({
+          where: { assetId: asset.id, projectId: p.id, startDate: startD }
+        });
+        if (!existingAssign) {
+          await prisma.assetAssignment.create({
+            data: {
+              assetId: asset.id,
+              projectId: p.id,
+              startDate: startD,
+              endDate: endD,
+              note: `CEP Running Sheet Import`
+            }
+          });
+        }
       }
     }
   }

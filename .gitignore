@@ -23,6 +23,10 @@
 # misc
 .DS_Store
 *.pem
+*.rar
+*.zip
+*.7z
+*.tar.gz
 
 # debug
 npm-debug.log*
@@ -50,4 +54,5 @@ next-env.d.ts
 /temp-uploads/
 /scan_out.txt
 /verify_out.txt
+/billing_exports/
 

@@ -281,6 +281,24 @@ async function main() {
         const asset = await ensureAsset(rawCode, type, project.id, rateVal);
         touched.add(asset.id);
 
+        // Create month-bounded AssetAssignment
+        const startD = monthStartDate(year, month);
+        const endD = monthEndDate(year, month);
+        const existingAssign = await prisma.assetAssignment.findFirst({
+          where: { assetId: asset.id, projectId: project.id, startDate: startD }
+        });
+        if (!existingAssign) {
+          await prisma.assetAssignment.create({
+            data: {
+              assetId: asset.id,
+              projectId: project.id,
+              startDate: startD,
+              endDate: endD,
+              note: `Site Summary Import`
+            }
+          });
+        }
+
         // Monthly fuel issue (always created to record the vehicle's presence, even with 0 L)
         const issueDate = monthEndDate(year, month);
         const activePrice = getPriceForDate(issueDate);
@@ -300,8 +318,8 @@ async function main() {
           cumHours.set(asset.id, endVal);
           await prisma.meterReading.createMany({
             data: [
-              { assetId: asset.id, readingType: "HOURS", value: startVal, readingDate: monthStartDate(year, month), source: "SUMMARY_START", recordedById: sysId },
-              { assetId: asset.id, readingType: "HOURS", value: endVal, readingDate: monthEndDate(year, month), source: "SUMMARY_END", recordedById: sysId },
+              { assetId: asset.id, readingType: "HOURS", value: startVal, readingDate: monthStartDate(year, month), source: `SUMMARY_${site.code}_START`, recordedById: sysId },
+              { assetId: asset.id, readingType: "HOURS", value: endVal, readingDate: monthEndDate(year, month), source: `SUMMARY_${site.code}_END`, recordedById: sysId },
             ],
           });
           stats.readings += 2;
@@ -314,8 +332,8 @@ async function main() {
           cumKms.set(asset.id, endVal);
           await prisma.meterReading.createMany({
             data: [
-              { assetId: asset.id, readingType: "KM", value: startVal, readingDate: monthStartDate(year, month), source: "SUMMARY_START", recordedById: sysId },
-              { assetId: asset.id, readingType: "KM", value: endVal, readingDate: monthEndDate(year, month), source: "SUMMARY_END", recordedById: sysId },
+              { assetId: asset.id, readingType: "KM", value: startVal, readingDate: monthStartDate(year, month), source: `SUMMARY_${site.code}_START`, recordedById: sysId },
+              { assetId: asset.id, readingType: "KM", value: endVal, readingDate: monthEndDate(year, month), source: `SUMMARY_${site.code}_END`, recordedById: sysId },
             ],
           });
           stats.readings += 2;

@@ -36,6 +36,10 @@ const steps: { name: string; script: string; skip?: boolean }[] = [
   { name: "Import Badalgama fuel",script: "import_badalgama_fuel.ts" },
   { name: "Import CEP-03 ABC",    script: "import_cep_abc.ts" },
   { name: "Fix PV-6889 + minKm",  script: "fix_pv6889.ts" },
+  { name: "Import portable rates",script: "import_portable_rates.ts" },
+  { name: "Import daily sites",   script: "import_daily_sites.ts" },
+  { name: "Import summary sites", script: "import_summary_sites.ts" },
+  { name: "Swap HEX-27 and HEX-39", script: "fix_hex27_39.ts" },
 ];
 
 const scriptsDir = path.join(process.cwd(), "scripts");

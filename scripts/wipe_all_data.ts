@@ -35,6 +35,7 @@ async function main() {
   await prisma.fuelRequest.deleteMany();
   await prisma.bulkRequest.deleteMany();
   await prisma.auditLog.deleteMany();
+  await prisma.assetAssignment.deleteMany();
   await prisma.rentalRate.deleteMany();
   await prisma.fuelPrice.deleteMany();
   await prisma.bulkTank.deleteMany();
