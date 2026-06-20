@@ -329,6 +329,23 @@ export default function QuickActions({ assets, isAdmin, isLocked }: QuickActions
                   </div>
                 )}
 
+                {/* Pump / meter photo proof */}
+                {(activeModal === "request" || activeModal === "issue") && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                      Pump / Meter Photo (Optional)
+                    </label>
+                    <input
+                      type="file"
+                      name="photo"
+                      accept="image/*"
+                      capture="environment"
+                      className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-2.5 text-white text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600 file:px-3 file:py-1.5 file:text-white file:text-xs focus:outline-none"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1">Photo of the pump receipt / odometer as proof.</p>
+                  </div>
+                )}
+
                 {/* Additional details for Direct Issue */}
                 {activeModal === "issue" && (
                   <div className="grid grid-cols-2 gap-4">

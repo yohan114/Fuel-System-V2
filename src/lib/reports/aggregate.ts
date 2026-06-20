@@ -29,9 +29,10 @@ export async function aggregateFuelData(filter: ReportFilter) {
   if (projectId) assetFilter.projectId = projectId;
   if (Object.keys(assetFilter).length > 0) issueWhere.asset = assetFilter;
 
-  // Fetch all matching issues
+  // Fetch all matching issues (never load the photo BLOB into aggregates).
   const issues = await prisma.fuelIssue.findMany({
     where: issueWhere,
+    omit: { photoData: true },
     include: {
       asset: {
         include: {

@@ -15,7 +15,9 @@ import {
   Menu,
   Database,
   Receipt,
-  Wrench
+  Wrench,
+  ShieldAlert,
+  Droplets
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -56,6 +58,8 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
+      { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
+      { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Billing", href: "/billing", icon: Receipt }

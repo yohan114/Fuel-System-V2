@@ -54,12 +54,14 @@ export default async function AssetDetailPage(props: PageProps) {
   const issues = await prisma.fuelIssue.findMany({
     where: { assetId: asset.id },
     orderBy: { issueDate: "desc" },
+    omit: { photoData: true },
     include: { issuedBy: true },
   });
 
   const requests = await prisma.fuelRequest.findMany({
     where: { assetId: asset.id },
     orderBy: { createdAt: "desc" },
+    omit: { photoData: true },
     include: { requestedBy: true, reviewedBy: true },
   });
 
@@ -325,6 +327,7 @@ export default async function AssetDetailPage(props: PageProps) {
                       <th className="py-3">Total Cost</th>
                       <th className="py-3">Issued By</th>
                       <th className="py-3">Source</th>
+                      <th className="py-3">Proof</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -345,6 +348,15 @@ export default async function AssetDetailPage(props: PageProps) {
                         </td>
                         <td className="py-3.5 text-gray-400">{issue.issuedBy.name}</td>
                         <td className="py-3.5"><span className="bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400">{issue.source}</span></td>
+                        <td className="py-3.5">
+                          {issue.photoName ? (
+                            <a href={`/api/fuel-issues/${issue.id}/photo`} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 text-[10px] font-semibold underline">
+                              View
+                            </a>
+                          ) : (
+                            <span className="text-gray-600 text-[10px]">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

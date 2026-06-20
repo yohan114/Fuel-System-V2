@@ -43,6 +43,8 @@ model User {
 
   fuelCorrections     FuelIssueCorrection[] @relation("CorrectionRequestedBy")
   reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
+
+  tankDips         TankDip[]     @relation("TankDipRecordedBy")
 }
 
 model Category {
@@ -159,6 +161,12 @@ model FuelRequest {
   reviewedAt     DateTime?
   reviewNote     String?
 
+  // Optional pump/meter photo proof captured by the site PM at request time;
+  // copied onto the resulting FuelIssue when the request is approved.
+  photoData      Bytes?
+  photoName      String?
+  photoMime      String?
+
   issue          FuelIssue?
 }
 
@@ -197,6 +205,12 @@ model FuelIssue {
   // but kept for the audit trail.
   voided          Boolean      @default(false)
   voidedAt        DateTime?
+
+  // Optional pump/meter photo proof for the issue (carried from the request,
+  // or attached directly on a direct issue).
+  photoData       Bytes?
+  photoName       String?
+  photoMime       String?
 
   corrections     FuelIssueCorrection[]
 }
@@ -344,6 +358,29 @@ model BulkTank {
   users     User[]
   requests  BulkRequest[]
   issues    FuelIssue[]   @relation("TankIssues")
+  dips      TankDip[]
+}
+
+// A physical bulk-tank dip/count, recorded periodically to reconcile the
+// measured fuel level against the system-computed balance (top-ups − issues).
+// A persistent gap flags shrinkage, leakage or unrecorded draws.
+model TankDip {
+  id              String   @id @default(uuid())
+
+  bulkTankId      String
+  bulkTank        BulkTank @relation(fields: [bulkTankId], references: [id], onDelete: Cascade)
+
+  dipLitres       Float    // physically measured litres in the tank
+  computedBalance Float    // system balance snapshot at dip time
+  variance        Float    // dipLitres − computedBalance (negative = shortfall)
+  dipDate         DateTime
+  note            String?
+  createdAt       DateTime @default(now())
+
+  recordedById    String
+  recordedBy      User     @relation("TankDipRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([bulkTankId, dipDate])
 }
 
 model BulkRequest {
