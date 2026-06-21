@@ -23,7 +23,8 @@ import {
   ScrollText,
   DatabaseZap,
   Wallet,
-  Target
+  Target,
+  ClipboardList
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -67,6 +68,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
       { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Service Records", href: "/service/records", icon: ClipboardList },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },
@@ -84,6 +86,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Service Records", href: "/service/records", icon: ClipboardList },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Alerts", href: "/alerts", icon: Bell }
     );
@@ -105,6 +108,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Service Records", href: "/service/records", icon: ClipboardList },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
       { label: "Receivables", href: "/billing/aging", icon: Wallet },

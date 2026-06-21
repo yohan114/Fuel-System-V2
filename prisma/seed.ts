@@ -4,6 +4,12 @@ import * as XLSX from "xlsx";
 import bcrypt from "bcryptjs";
 import path from "path";
 import fs from "fs";
+import {
+  DEFAULT_OILS,
+  DEFAULT_FILTER_CATEGORIES,
+  SERVICE_SETTING_KEYS,
+  DEFAULT_SERVICE_RATES,
+} from "../src/lib/service/defaults";
 
 const adapter = new PrismaBetterSqlite3({
   url: process.env.DATABASE_URL || "file:./data/app.db",
@@ -119,6 +125,37 @@ async function main() {
       active: true,
     },
   });
+
+  // 2b. Seed service-sheet master data (Fuel + Service merge): the oils &
+  // filter-category lines that make up a service sheet, plus the labour/sundry
+  // charge rates. Idempotent — admin edits to prices/rates are preserved.
+  console.log("Seeding service master data...");
+  for (let i = 0; i < DEFAULT_OILS.length; i++) {
+    const o = DEFAULT_OILS[i];
+    await prisma.oilType.upsert({
+      where: { name: o.name },
+      update: { unit: o.unit, sortOrder: i },
+      create: { name: o.name, unit: o.unit, sortOrder: i },
+    });
+  }
+  for (let i = 0; i < DEFAULT_FILTER_CATEGORIES.length; i++) {
+    const name = DEFAULT_FILTER_CATEGORIES[i];
+    await prisma.filterCategoryRef.upsert({
+      where: { name },
+      update: { sortOrder: i },
+      create: { name, sortOrder: i },
+    });
+  }
+  const serviceRateSeed: Array<[string, string]> = [
+    [SERVICE_SETTING_KEYS.labourRateLow, String(DEFAULT_SERVICE_RATES.labourRateLow)],
+    [SERVICE_SETTING_KEYS.labourRateHigh, String(DEFAULT_SERVICE_RATES.labourRateHigh)],
+    [SERVICE_SETTING_KEYS.labourThresholdCents, String(DEFAULT_SERVICE_RATES.labourThresholdCents)],
+    [SERVICE_SETTING_KEYS.sundryRate, String(DEFAULT_SERVICE_RATES.sundryRate)],
+  ];
+  for (const [key, value] of serviceRateSeed) {
+    // update:{} keeps any value an admin has already changed.
+    await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value } });
+  }
 
   // 3. Seed Default Fuel Prices (Effective 2025 January to 2026 June)
   // Prices in cents (LKR * 100)

@@ -628,6 +628,12 @@ model ServiceInterval {
 
 // A logged completed service. The countdown to the next service resets at the
 // latest record's date (and meterAtService when supplied).
+//
+// Phase 1 of the Fuel + Service merge deepens this into a full service sheet
+// (merged from the standalone Service Record system): a header, an oils matrix,
+// a filters matrix, free-form cost lines and the labour/sundry money breakdown.
+// All money is stored in LKR cents to match the rest of the system. `costCents`
+// is kept as a mirror of `grandTotalCents` so existing displays keep working.
 model ServiceRecord {
   id             String   @id @default(uuid())
 
@@ -638,13 +644,105 @@ model ServiceRecord {
   meterAtService Float?
   meterType      String   // "HOURS" | "KM"
   serviceType    String?
-  costCents      Int?
+  costCents      Int?     // legacy/grand-total mirror (kept for existing displays)
   note           String?
+
+  // --- Detailed service-sheet header (merged from the Service Record system) ---
+  jobNo            String?
+  siteLocation     String?
+  nextServiceMeter Float?
+  upkeepingStatus  String?  // e.g. "GOOD" | "NEEDS_REPAIR"
+  repairDetails    String?
+
+  // --- Money breakdown (LKR cents) ---
+  partsSubtotalCents Int   @default(0)
+  labourRatePct      Float @default(0) // % actually applied (low/high band)
+  labourChargeCents  Int   @default(0)
+  sundryRatePct      Float @default(0)
+  sundryAmountCents  Int   @default(0)
+  grandTotalCents    Int   @default(0)
 
   recordedById   String
   recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
 
   createdAt      DateTime @default(now())
 
+  oils      ServiceOil[]
+  filters   ServiceFilter[]
+  costLines ServiceCostLine[]
+
   @@index([assetId, serviceDate])
+  @@index([jobNo])
+}
+
+// One oil line on a service sheet (e.g. "Engine Oil" → grade "15W40-CI/04",
+// 12 L, Rs ...). `oilName` matches an OilType master row.
+model ServiceOil {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  oilName    String  // master oil-line name (e.g. "Engine Oil")
+  oilType    String? // chosen grade/code (e.g. "15W40-CI/04")
+  actionType String? // C/V marker (change / verify) — free text
+  quantity   Float   @default(0)
+  priceCents Int     @default(0)
+
+  @@index([serviceRecordId])
+}
+
+// One filter line on a service sheet. `filterCategory` matches a
+// FilterCategoryRef master row; `filterNo` is the part number fitted.
+model ServiceFilter {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  filterCategory String  // master filter-category name (e.g. "Air Filter")
+  filterNo       String? // part number fitted
+  actionType     String? // X/E marker (exchange / existing) — free text
+  quantity       Int     @default(1)
+  priceCents     Int     @default(0)
+
+  @@index([serviceRecordId])
+}
+
+// A free-form additional cost line on a service sheet (labour items, sundries
+// entered by hand, sublet work, etc.).
+model ServiceCostLine {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  description String?
+  unit        String?
+  rateCents   Int     @default(0)
+  qty         Float   @default(0)
+  amountCents Int     @default(0)
+
+  @@index([serviceRecordId])
+}
+
+// Master list of oil lines shown on the service sheet (one row per oil line).
+// Editable later; seeded with the Service Record system's defaults.
+model OilType {
+  id             String  @id @default(uuid())
+  name           String  @unique
+  unit           String  @default("L")
+  unitPriceCents Int     @default(0)
+  sortOrder      Int     @default(0)
+  active         Boolean @default(true)
+}
+
+// Master list of filter categories shown on the service sheet (one row per
+// filter line). Named *Ref to avoid clashing with the asset `Category` model.
+model FilterCategoryRef {
+  id             String  @id @default(uuid())
+  name           String  @unique
+  unitPriceCents Int     @default(0)
+  sortOrder      Int     @default(0)
+  active         Boolean @default(true)
 }
