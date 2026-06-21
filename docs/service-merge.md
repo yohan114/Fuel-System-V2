@@ -38,19 +38,32 @@ npm run seed
 # 3. Filter catalog + price book + vehicle links, then build the xref index.
 SERVICE_RECORD_DIR=/path/to/service-record npx tsx scripts/import_service_catalog.ts
 
-# 4. Historical service records (dry-run first to see the match rate).
-SERVICE_RECORD_DIR=/path/to/service-record npx tsx scripts/import_service_history.ts --dry-run
-SERVICE_RECORD_DIR=/path/to/service-record npx tsx scripts/import_service_history.ts
+# 4. Full service history + vehicle master, straight from the Service Record
+#    database (recommended — brings in every job with its oils/filters/costs and
+#    creates any missing vehicles as assets). Idempotent via ServiceRecord.sourceRef.
+SERVICE_RECORD_DIR=/path/to/service-record npx tsx scripts/import_service_db.ts
+#    (Alternative, summary-only from Excel: scripts/import_service_history.ts --dry-run)
 
 # 5. Check how well the catalog's vehicle links map to the live fleet.
 npx tsx scripts/reconcile_fleet_catalog.ts
 ```
+
+After step 4 the **Service Records** page shows **Total Services** and **This
+Month** counts, and the full history is browsable/searchable. The records live in
+the database (git-ignored) — re-run the importer against whichever DB you want
+populated; it skips rows it already imported.
 
 ## Scripts
 
 - **`import_service_catalog.ts`** — upserts `FilterCatalog` by source id (manual
   cross-references survive), **replaces** the filter price book and vehicle links,
   then rebuilds the auto cross-reference index.
+- **`import_service_db.ts`** — full import from the Service Record SQLite database
+  (`data/service.db`): brings in the vehicle master as assets (reusing existing
+  assets by code, creating only what's missing) and **every** service job with its
+  oils / filters / costs. Idempotent via `ServiceRecord.sourceRef`
+  (`servicedb:<id>`); unresolvable vehicles fall into an `SVC-UNKNOWN` bucket and
+  date-less rows get a sentinel date so the month counts stay accurate.
 - **`import_service_history.ts`** — imports the `Summery` sheet of
   `Service record.xlsx`. Each row is matched to an `Asset` by E&C code or
   registration (normalized, so `LB01` matches `LB-01`); unmatched rows are

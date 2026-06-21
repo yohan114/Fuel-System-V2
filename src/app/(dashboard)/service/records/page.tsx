@@ -27,11 +27,13 @@ export default async function ServiceRecordsPage(props: PageProps) {
   const from = (sp.from || "").trim();
   const to = (sp.to || "").trim();
 
-  const where: Prisma.ServiceRecordWhereInput = {};
   // USERs only see services for vehicles on their own project/site.
+  const baseWhere: Prisma.ServiceRecordWhereInput = {};
   if (session.role === "USER" && session.projectId) {
-    where.asset = { projectId: session.projectId };
+    baseWhere.asset = { projectId: session.projectId };
   }
+
+  const where: Prisma.ServiceRecordWhereInput = { ...baseWhere };
   if (q) {
     where.OR = [
       { asset: { code: { contains: q } } },
@@ -50,24 +52,32 @@ export default async function ServiceRecordsPage(props: PageProps) {
   }
   if (dateFilter.gte || dateFilter.lte) where.serviceDate = dateFilter;
 
-  const records = await prisma.serviceRecord.findMany({
-    where,
-    orderBy: { serviceDate: "desc" },
-    take: 300,
-    select: {
-      id: true,
-      serviceDate: true,
-      jobNo: true,
-      siteLocation: true,
-      serviceType: true,
-      meterAtService: true,
-      meterType: true,
-      grandTotalCents: true,
-      costCents: true,
-      asset: { select: { code: true, regNo: true, brand: true, model: true } },
-      recordedBy: { select: { name: true } },
-    },
-  });
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+
+  const [records, totalServices, thisMonthCount] = await Promise.all([
+    prisma.serviceRecord.findMany({
+      where,
+      orderBy: { serviceDate: "desc" },
+      take: 300,
+      select: {
+        id: true,
+        serviceDate: true,
+        jobNo: true,
+        siteLocation: true,
+        serviceType: true,
+        meterAtService: true,
+        meterType: true,
+        grandTotalCents: true,
+        costCents: true,
+        asset: { select: { code: true, regNo: true, brand: true, model: true } },
+        recordedBy: { select: { name: true } },
+      },
+    }),
+    prisma.serviceRecord.count({ where: baseWhere }),
+    prisma.serviceRecord.count({ where: { ...baseWhere, serviceDate: { gte: monthStart, lt: monthEnd } } }),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -86,6 +96,18 @@ export default async function ServiceRecordsPage(props: PageProps) {
             <Plus className="w-4 h-4" /> New service
           </Link>
         )}
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-[#121420] border border-white/5 rounded-2xl p-5">
+          <span className="text-[10px] text-gray-500 font-semibold uppercase block tracking-wider">Total Services</span>
+          <span className="text-2xl font-bold text-white block mt-1">{totalServices.toLocaleString()}</span>
+        </div>
+        <div className="bg-[#121420] border border-white/5 rounded-2xl p-5">
+          <span className="text-[10px] text-gray-500 font-semibold uppercase block tracking-wider">This Month</span>
+          <span className="text-2xl font-bold text-indigo-400 block mt-1">{thisMonthCount.toLocaleString()}</span>
+        </div>
       </div>
 
       {/* Search */}

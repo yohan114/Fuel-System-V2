@@ -668,6 +668,10 @@ model ServiceRecord {
 
   createdAt      DateTime @default(now())
 
+  // Provenance for bulk imports (e.g. "servicedb:1573"); lets re-runs skip
+  // already-imported rows. Null for records created in-app.
+  sourceRef      String?  @unique
+
   oils        ServiceOil[]
   filters     ServiceFilter[]
   costLines   ServiceCostLine[]
