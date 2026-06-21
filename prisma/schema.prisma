@@ -828,6 +828,16 @@ model FilterPrice {
   @@index([normalizedCode])
 }
 
+// On-hand stock per filter, keyed by the demand key (normalize(part no)).
+// Powers the reorder planner's "quantity to order" = coverage demand − on hand.
+model FilterStock {
+  id             String   @id @default(uuid())
+  normalizedCode String   @unique
+  filterNo       String?
+  onHand         Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
 // Editable oil-grade price list (grade code → price) — drives oil price
 // auto-fill on the service sheet.
 model OilPrice {
