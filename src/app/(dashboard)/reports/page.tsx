@@ -54,6 +54,13 @@ export default async function ReportsPage(props: PageProps) {
 
         {/* Export triggers */}
         <div className="flex items-center gap-2">
+          <Link
+            href={`/reports/tco?from=${fromStr}&to=${toStr}`}
+            className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 text-amber-300 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <Coins className="w-4 h-4" />
+            Cost of Ownership
+          </Link>
           <a
             href={`/api/reports/monthly/xlsx?year=${fromStr.slice(0, 4)}&month=${fromStr.slice(5, 7)}`}
             className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-indigo-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
