@@ -8,6 +8,7 @@ import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
 import { recommendedUnits, varianceFlag } from "@/lib/reports/recommended";
 import { computeServiceStatus } from "@/lib/service/compute";
+import { filtersForVehicle } from "@/lib/service/xref";
 import { logServiceAction, setServiceIntervalAction } from "@/app/actions/service";
 import { 
   ArrowLeft, 
@@ -79,8 +80,10 @@ export default async function AssetDetailPage(props: PageProps) {
   const serviceRecords = await prisma.serviceRecord.findMany({
     where: { assetId: asset.id },
     orderBy: { serviceDate: "desc" },
-    include: { recordedBy: { select: { name: true } } },
+    include: { recordedBy: { select: { name: true } }, _count: { select: { oils: true, filters: true, attachments: true } } },
   });
+  // Filters this vehicle uses (cross-reference engine) — only when on the tab.
+  const vehicleFilters = activeTab === "service" ? await filtersForVehicle(code) : [];
   const serviceUnit = serviceStatus?.basis === "KM" ? "km" : "hr";
 
   // 3. Compute efficiency metrics
@@ -546,6 +549,27 @@ export default async function AssetDetailPage(props: PageProps) {
                 </div>
               )}
 
+              {vehicleFilters.length > 0 && (
+                <div className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">
+                    <Wrench className="w-4 h-4 text-indigo-400" /> Filters this vehicle uses
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {vehicleFilters.map((f) => (
+                      <div key={f.catalogId} className="bg-[#121420] border border-white/5 rounded-xl p-3 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-gray-200 font-semibold">{f.category || "Filter"}</span>
+                          {f.price && <span className="text-emerald-400 text-[11px] whitespace-nowrap">Rs. {(f.price.unitCents / 100).toLocaleString("en-LK")}</span>}
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-0.5 truncate" title={f.description || ""}>{f.oem ? `OEM ${f.oem}` : f.description || ""}{f.hifi ? ` · HIFI ${f.hifi}` : ""}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <Link href={`/service/cross-reference?ec=${asset.code}`} className="text-[11px] text-indigo-400 hover:text-indigo-300 mt-3 inline-block">Open in cross-reference &rarr;</Link>
+                </div>
+              )}
+
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Service history</h4>
               <div className="overflow-x-auto">
                 {serviceRecords.length === 0 ? (
                   <div className="text-center py-8 text-xs text-gray-500">No services logged yet.</div>
@@ -554,24 +578,31 @@ export default async function AssetDetailPage(props: PageProps) {
                     <thead>
                       <tr className="text-gray-400 font-semibold border-b border-white/5">
                         <th className="py-3">Date</th>
+                        <th className="py-3">Job no.</th>
                         <th className="py-3">Meter</th>
-                        <th className="py-3">Type</th>
-                        <th className="py-3">Cost</th>
-                        <th className="py-3">Note</th>
+                        <th className="py-3">Parts</th>
+                        <th className="py-3 text-right">Total</th>
+                        <th className="py-3">Files</th>
                         <th className="py-3">Logged By</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
-                      {serviceRecords.map((s) => (
-                        <tr key={s.id} className="hover:bg-white/[0.01]">
-                          <td className="py-3 text-gray-300">{new Date(s.serviceDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
-                          <td className="py-3 text-gray-400 font-mono">{s.meterAtService != null ? `${s.meterAtService.toLocaleString()} ${s.meterType}` : "—"}</td>
-                          <td className="py-3 text-gray-300">{s.serviceType || "—"}</td>
-                          <td className="py-3 text-gray-400">{s.costCents != null ? `Rs. ${(s.costCents / 100).toLocaleString("en-LK")}` : "—"}</td>
-                          <td className="py-3 text-gray-500 max-w-[220px] truncate" title={s.note || ""}>{s.note || "—"}</td>
-                          <td className="py-3 text-gray-400">{s.recordedBy.name}</td>
-                        </tr>
-                      ))}
+                      {serviceRecords.map((s) => {
+                        const total = s.grandTotalCents || s.costCents || 0;
+                        return (
+                          <tr key={s.id} className="hover:bg-white/[0.01]">
+                            <td className="py-3">
+                              <Link href={`/service/records/${s.id}`} className="text-gray-200 hover:text-indigo-400 font-medium whitespace-nowrap">{new Date(s.serviceDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</Link>
+                            </td>
+                            <td className="py-3 text-gray-400">{s.jobNo || "—"}</td>
+                            <td className="py-3 text-gray-400 font-mono">{s.meterAtService != null ? `${s.meterAtService.toLocaleString()} ${s.meterType}` : "—"}</td>
+                            <td className="py-3 text-gray-400 whitespace-nowrap">{s._count.oils} oils · {s._count.filters} filters</td>
+                            <td className="py-3 text-right text-white font-semibold">{total ? `Rs. ${(total / 100).toLocaleString("en-LK")}` : "—"}</td>
+                            <td className="py-3 text-gray-400">{s._count.attachments || "—"}</td>
+                            <td className="py-3 text-gray-400">{s.recordedBy.name}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}

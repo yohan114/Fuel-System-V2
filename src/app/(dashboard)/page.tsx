@@ -4,6 +4,7 @@ import { getSession, requireUser } from "@/lib/auth";
 import QuickActions from "./components/QuickActions";
 import DashboardCharts from "./components/DashboardCharts";
 import ConditionWidget from "./components/ConditionWidget";
+import { getFleetServiceStatus } from "@/lib/service/fleet";
 import { approveRequestAction, rejectRequestAction } from "@/app/actions/fuel";
 import { 
   Fuel, 
@@ -228,6 +229,10 @@ export default async function DashboardPage() {
       select: { id: true, serviceDate: true, jobNo: true, grandTotalCents: true, costCents: true, asset: { select: { code: true } } },
     }),
   ]);
+
+  // Service due/overdue status (bounded to fuel-active assets, project-scoped).
+  const serviceFleet = await getFleetServiceStatus({ projectId: isScoped ? user.projectId ?? undefined : undefined });
+  const dueRows = serviceFleet.rows.filter((r) => r.state === "OVERDUE" || r.state === "DUE_SOON").slice(0, 6);
 
   return (
     <div className="space-y-8">
@@ -509,9 +514,31 @@ export default async function DashboardPage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
           <StatCard icon={<Wrench className="w-6 h-6" />} tint="indigo" label="Total Services" value={totalServices.toLocaleString()} />
           <StatCard icon={<ClipboardList className="w-6 h-6" />} tint="emerald" label="Services This Month" value={servicesThisMonth.toLocaleString()} />
-          <StatCard icon={<Repeat className="w-6 h-6" />} tint="blue" label="Filters in Catalog" value={filtersCount.toLocaleString()} />
-          <StatCard icon={<Repeat className="w-6 h-6" />} tint="amber" label="Cross-References" value={xrefCount.toLocaleString()} />
+          <StatCard icon={<AlertTriangle className="w-6 h-6" />} tint="red" label="Overdue Service" value={serviceFleet.counts.overdue.toLocaleString()} />
+          <StatCard icon={<Clock className="w-6 h-6" />} tint="amber" label="Due Soon" value={serviceFleet.counts.dueSoon.toLocaleString()} />
         </div>
+
+        {dueRows.length > 0 && (
+          <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-lg">
+            <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400" /> Due for Service
+              </h3>
+              <Link href="/service" className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold">Open planner</Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {dueRows.map((r) => (
+                <Link key={r.assetId} href={`/fleet/${r.code}?tab=service`} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5 text-xs hover:border-white/10">
+                  <div>
+                    <span className="font-bold text-white">{r.code}</span>
+                    <p className="text-[10px] text-gray-500 mt-0.5">{r.projectName || r.categoryName}</p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold border ${r.state === "OVERDUE" ? "bg-red-500/10 text-red-400 border-red-500/15" : "bg-amber-500/10 text-amber-400 border-amber-500/15"}`}>{r.state.replace("_", " ")}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Cross-reference quick search */}
@@ -519,7 +546,7 @@ export default async function DashboardPage() {
             <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
               <Repeat className="w-4 h-4 text-indigo-400" /> Filter Cross-Reference
             </h3>
-            <p className="text-[11px] text-gray-500 mb-4">Find a filter and every equivalent by any part number.</p>
+            <p className="text-[11px] text-gray-500 mb-4">Find a filter and every equivalent by any part number. {filtersCount.toLocaleString()} filters · {xrefCount.toLocaleString()} cross-references indexed.</p>
             <form action="/service/cross-reference" className="flex items-center gap-2">
               <input
                 name="q"
@@ -581,7 +608,7 @@ function StatCard({
   value,
 }: {
   icon: React.ReactNode;
-  tint: "indigo" | "emerald" | "blue" | "amber";
+  tint: "indigo" | "emerald" | "blue" | "amber" | "red";
   label: string;
   value: string;
 }) {
@@ -590,6 +617,7 @@ function StatCard({
     emerald: "bg-emerald-500/10 text-emerald-400",
     blue: "bg-blue-500/10 text-blue-400",
     amber: "bg-amber-500/10 text-amber-400",
+    red: "bg-red-500/10 text-red-400",
   };
   return (
     <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-lg flex items-center gap-5">
