@@ -35,6 +35,7 @@ export default async function OrderPlannerPage() {
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
           <Link href="/service/reorder" className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 whitespace-nowrap">Build reorder list &rarr;</Link>
+          <Link href="/service/price-gaps" className="text-xs font-semibold text-amber-400 hover:text-amber-300 whitespace-nowrap">Price gaps &rarr;</Link>
           <Link href="/service/cross-reference" className="text-xs font-semibold text-gray-400 hover:text-white flex items-center gap-1.5 whitespace-nowrap">
             <ArrowLeft className="w-4 h-4" /> Cross-Reference
           </Link>

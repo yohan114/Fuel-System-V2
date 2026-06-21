@@ -78,6 +78,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Filter Orders", href: "/service/order-planner", icon: Package },
       { label: "Reorder", href: "/service/reorder", icon: ShoppingCart },
       { label: "Service Trends", href: "/service/analytics", icon: BarChart3 },
+      { label: "Price Gaps", href: "/service/price-gaps", icon: Tags },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },
