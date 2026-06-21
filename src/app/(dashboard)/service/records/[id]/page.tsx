@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { ArrowLeft, Wrench, Paperclip, Download, Trash2, FileText, Printer } from "lucide-react";
 import AttachmentUploader from "./AttachmentUploader";
 import { deleteServiceAttachmentAction } from "@/app/actions/attachment";
+import { fmtServiceDate as fmtDate } from "@/lib/service/format";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -14,9 +15,6 @@ interface PageProps {
 function fmtRs(cents: number | null | undefined) {
   if (cents == null) return "—";
   return "Rs. " + (cents / 100).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-function fmtDate(d: Date) {
-  return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 function fmtBytes(n: number) {
   if (!n) return "0 B";

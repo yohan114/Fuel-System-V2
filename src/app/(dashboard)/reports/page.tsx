@@ -10,7 +10,8 @@ import {
   Fuel, 
   BarChart4, 
   Gauge,
-  Sparkles
+  Sparkles,
+  Wrench
 } from "lucide-react";
 import SiteConsumptionCharts from "./SiteConsumptionCharts";
 
@@ -81,6 +82,20 @@ export default async function ReportsPage(props: PageProps) {
           >
             <FileText className="w-4 h-4 text-red-400" />
             Export PDF
+          </a>
+          <a
+            href={`/api/reports/service/xlsx?from=${fromStr}&to=${toStr}`}
+            className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-amber-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <Wrench className="w-4 h-4 text-amber-400" />
+            Service Excel
+          </a>
+          <a
+            href={`/api/reports/service/pdf?from=${fromStr}&to=${toStr}`}
+            className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-amber-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <Wrench className="w-4 h-4 text-amber-400" />
+            Service PDF
           </a>
         </div>
       </div>

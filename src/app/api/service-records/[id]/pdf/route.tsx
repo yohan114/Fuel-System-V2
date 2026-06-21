@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Document, Page, Text, View, StyleSheet, renderToStream } from "@react-pdf/renderer";
+import { fmtServiceDate } from "@/lib/service/format";
 
 const styles = StyleSheet.create({
   page: { padding: 36, fontFamily: "Helvetica", fontSize: 9, color: "#222" },
@@ -26,7 +27,7 @@ const styles = StyleSheet.create({
 });
 
 const rs = (c: number | null | undefined) => "Rs. " + ((c ?? 0) / 100).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const d = (x: Date) => new Date(x).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+const d = (x: Date) => fmtServiceDate(x, { day: "2-digit", month: "short", year: "numeric" });
 
 function ServiceSheet({ rec }: { rec: any }) {
   const unit = rec.meterType === "KM" ? "km" : "hr";

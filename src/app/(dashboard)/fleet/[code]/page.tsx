@@ -9,6 +9,7 @@ import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
 import { recommendedUnits, varianceFlag } from "@/lib/reports/recommended";
 import { computeServiceStatus } from "@/lib/service/compute";
 import { filtersForVehicle } from "@/lib/service/xref";
+import { fmtServiceDate } from "@/lib/service/format";
 import { logServiceAction, setServiceIntervalAction } from "@/app/actions/service";
 import { 
   ArrowLeft, 
@@ -592,7 +593,7 @@ export default async function AssetDetailPage(props: PageProps) {
                         return (
                           <tr key={s.id} className="hover:bg-white/[0.01]">
                             <td className="py-3">
-                              <Link href={`/service/records/${s.id}`} className="text-gray-200 hover:text-indigo-400 font-medium whitespace-nowrap">{new Date(s.serviceDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</Link>
+                              <Link href={`/service/records/${s.id}`} className="text-gray-200 hover:text-indigo-400 font-medium whitespace-nowrap">{fmtServiceDate(s.serviceDate)}</Link>
                             </td>
                             <td className="py-3 text-gray-400">{s.jobNo || "—"}</td>
                             <td className="py-3 text-gray-400 font-mono">{s.meterAtService != null ? `${s.meterAtService.toLocaleString()} ${s.meterType}` : "—"}</td>
