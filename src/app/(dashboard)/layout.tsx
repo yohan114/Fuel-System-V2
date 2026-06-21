@@ -28,7 +28,8 @@ import {
   Repeat,
   Tags,
   Package,
-  ShoppingCart
+  ShoppingCart,
+  BarChart3
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -76,6 +77,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
       { label: "Filter Orders", href: "/service/order-planner", icon: Package },
       { label: "Reorder", href: "/service/reorder", icon: ShoppingCart },
+      { label: "Service Trends", href: "/service/analytics", icon: BarChart3 },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },

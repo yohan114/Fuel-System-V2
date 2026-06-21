@@ -21,6 +21,7 @@ export async function aggregateServiceData({ from, to, projectId }: ServiceRepor
     where: recordWhere,
     select: {
       assetId: true,
+      serviceDate: true,
       grandTotalCents: true,
       costCents: true,
       serviceType: true,
@@ -44,6 +45,7 @@ export async function aggregateServiceData({ from, to, projectId }: ServiceRepor
   let labourCents = 0;
   let sundryCents = 0;
   const vehicles = new Set<string>();
+  const byMonthMap = new Map<string, { cents: number; count: number }>();
   const bySite = new Map<string, { name: string; code: string; cents: number; count: number }>();
   const byCategory = new Map<string, { name: string; cents: number; count: number }>();
   const byType = new Map<string, { type: string; cents: number; count: number }>();
@@ -56,6 +58,10 @@ export async function aggregateServiceData({ from, to, projectId }: ServiceRepor
     labourCents += r.labourChargeCents || 0;
     sundryCents += r.sundryAmountCents || 0;
     vehicles.add(r.assetId);
+
+    const mk = `${r.serviceDate.getUTCFullYear()}-${String(r.serviceDate.getUTCMonth() + 1).padStart(2, "0")}`;
+    const mm = byMonthMap.get(mk) ?? { cents: 0, count: 0 };
+    mm.cents += cents; mm.count += 1; byMonthMap.set(mk, mm);
 
     const siteCode = r.asset.project?.code || "GLOBAL";
     const siteName = r.asset.project?.name || "Unassigned / Global Pool";
@@ -88,6 +94,17 @@ export async function aggregateServiceData({ from, to, projectId }: ServiceRepor
     filterMap.set(key, e);
   }
 
+  // Contiguous monthly buckets across the window (zero-filled) for trend charts.
+  const byMonth: { month: string; label: string; cents: number; count: number }[] = [];
+  const cur = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), 1));
+  while (cur <= end) {
+    const key = `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, "0")}`;
+    const e = byMonthMap.get(key) ?? { cents: 0, count: 0 };
+    byMonth.push({ month: key, label: cur.toLocaleDateString("en-GB", { month: "short", year: "2-digit", timeZone: "UTC" }), cents: e.cents, count: e.count });
+    cur.setUTCMonth(cur.getUTCMonth() + 1);
+  }
+
   return {
     totalCents,
     partsCents,
@@ -95,6 +112,7 @@ export async function aggregateServiceData({ from, to, projectId }: ServiceRepor
     sundryCents,
     recordCount: records.length,
     vehicleCount: vehicles.size,
+    byMonth,
     bySite: Array.from(bySite.values()).sort((a, b) => b.cents - a.cents),
     byCategory: Array.from(byCategory.values()).sort((a, b) => b.cents - a.cents),
     byType: Array.from(byType.values()).sort((a, b) => b.cents - a.cents),
