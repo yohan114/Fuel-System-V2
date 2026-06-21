@@ -125,7 +125,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
     <div className="min-h-screen flex flex-col md:flex-row bg-[#090a0f] text-gray-200">
       
       {/* 1. Desktop Sidebar */}
-      <aside className="hidden md:flex flex-col w-64 bg-[#121420] border-r border-white/5 p-6 flex-shrink-0">
+      <aside className="hidden md:flex flex-col w-64 bg-[#121420] border-r border-white/5 p-6 flex-shrink-0 md:h-screen md:sticky md:top-0 overflow-hidden">
         {/* Brand / Logo */}
         <div className="flex items-center gap-3 mb-10 px-2">
           <div className="w-10 h-10 bg-gradient-to-tr from-indigo-500 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/10">
@@ -138,7 +138,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
         </div>
 
         {/* Navigation Links */}
-        <nav className="flex-1 space-y-1">
+        <nav className="flex-1 space-y-1 overflow-y-auto min-h-0 -mr-3 pr-3">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (

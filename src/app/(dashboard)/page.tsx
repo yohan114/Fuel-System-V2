@@ -11,11 +11,15 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   FileClock, 
-  Coins, 
-  Gauge, 
+  Coins,
+  Gauge,
   PlusCircle,
   Clock,
-  UserCheck
+  UserCheck,
+  Wrench,
+  ClipboardList,
+  Repeat,
+  Search
 } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -208,6 +212,22 @@ export default async function DashboardPage() {
     },
     orderBy: { createdAt: "desc" },
   });
+
+  // 8. Service & maintenance metrics (cheap counts — the planner holds the
+  // heavier per-asset due/overdue computation).
+  const serviceScope = isScoped ? { asset: { projectId: user.projectId! } } : {};
+  const [totalServices, servicesThisMonth, filtersCount, xrefCount, recentServices] = await Promise.all([
+    prisma.serviceRecord.count({ where: serviceScope }),
+    prisma.serviceRecord.count({ where: { ...serviceScope, serviceDate: { gte: startOfMonth, lte: endOfMonth } } }),
+    prisma.filterCatalog.count(),
+    prisma.filterCrossRef.count(),
+    prisma.serviceRecord.findMany({
+      where: serviceScope,
+      take: 5,
+      orderBy: { serviceDate: "desc" },
+      select: { id: true, serviceDate: true, jobNo: true, grandTotalCents: true, costCents: true, asset: { select: { code: true } } },
+    }),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -474,6 +494,109 @@ export default async function DashboardPage() {
           </div>
         </div>
         
+      </div>
+
+      {/* Service & Maintenance */}
+      <div className="space-y-6">
+        <div className="flex items-center justify-between border-b border-white/5 pb-3">
+          <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-indigo-400" /> Service &amp; Maintenance
+          </h2>
+          <Link href="/service" className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold">Open planner &rarr;</Link>
+        </div>
+
+        {/* Service KPIs */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <StatCard icon={<Wrench className="w-6 h-6" />} tint="indigo" label="Total Services" value={totalServices.toLocaleString()} />
+          <StatCard icon={<ClipboardList className="w-6 h-6" />} tint="emerald" label="Services This Month" value={servicesThisMonth.toLocaleString()} />
+          <StatCard icon={<Repeat className="w-6 h-6" />} tint="blue" label="Filters in Catalog" value={filtersCount.toLocaleString()} />
+          <StatCard icon={<Repeat className="w-6 h-6" />} tint="amber" label="Cross-References" value={xrefCount.toLocaleString()} />
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Cross-reference quick search */}
+          <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-lg">
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
+              <Repeat className="w-4 h-4 text-indigo-400" /> Filter Cross-Reference
+            </h3>
+            <p className="text-[11px] text-gray-500 mb-4">Find a filter and every equivalent by any part number.</p>
+            <form action="/service/cross-reference" className="flex items-center gap-2">
+              <input
+                name="q"
+                placeholder="e.g. FF5045, P550410"
+                className="flex-1 bg-white/5 border border-white/5 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500/40"
+              />
+              <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-3 py-2"><Search className="w-4 h-4" /></button>
+            </form>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link href="/service/records" className="text-[11px] bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-1.5 text-gray-300">Service Records</Link>
+              <Link href="/service/cross-reference" className="text-[11px] bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-1.5 text-gray-300">Browse Filters</Link>
+              {isAdmin && <Link href="/admin/service-prices" className="text-[11px] bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-1.5 text-gray-300">Price Books</Link>}
+              {isAdmin && <Link href="/service/new" className="text-[11px] bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 rounded-lg px-3 py-1.5 text-indigo-300">+ New Service</Link>}
+            </div>
+          </div>
+
+          {/* Recent services */}
+          <div className="lg:col-span-2 bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-lg">
+            <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">Recent Services</h3>
+              <Link href="/service/records" className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold">View All</Link>
+            </div>
+            <div className="space-y-3">
+              {recentServices.length === 0 ? (
+                <div className="py-8 text-center text-xs text-gray-500">No services recorded yet.</div>
+              ) : (
+                recentServices.map((s) => {
+                  const total = s.grandTotalCents || s.costCents || 0;
+                  return (
+                    <Link
+                      key={s.id}
+                      href={`/service/records/${s.id}`}
+                      className="flex items-center justify-between p-3.5 bg-white/5 rounded-xl border border-white/5 text-xs hover:border-white/10"
+                    >
+                      <div>
+                        <span className="font-bold text-white">{s.asset.code}</span>
+                        {s.jobNo && <span className="text-[10px] text-gray-500 ml-2">Job {s.jobNo}</span>}
+                        <p className="text-[10px] text-gray-500 mt-0.5">
+                          {new Date(s.serviceDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                        </p>
+                      </div>
+                      <span className="font-bold text-white">{total ? `Rs. ${(total / 100).toLocaleString("en-LK")}` : "—"}</span>
+                    </Link>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({
+  icon,
+  tint,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  tint: "indigo" | "emerald" | "blue" | "amber";
+  label: string;
+  value: string;
+}) {
+  const tints: Record<string, string> = {
+    indigo: "bg-indigo-500/10 text-indigo-400",
+    emerald: "bg-emerald-500/10 text-emerald-400",
+    blue: "bg-blue-500/10 text-blue-400",
+    amber: "bg-amber-500/10 text-amber-400",
+  };
+  return (
+    <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-lg flex items-center gap-5">
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${tints[tint]}`}>{icon}</div>
+      <div>
+        <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider block">{label}</span>
+        <span className="text-lg font-bold text-white block mt-0.5">{value}</span>
       </div>
     </div>
   );
