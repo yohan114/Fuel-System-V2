@@ -3,7 +3,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { ArrowLeft, Wrench } from "lucide-react";
+import { ArrowLeft, Wrench, Paperclip, Download, Trash2, FileText } from "lucide-react";
+import AttachmentUploader from "./AttachmentUploader";
+import { deleteServiceAttachmentAction } from "@/app/actions/attachment";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -15,6 +17,12 @@ function fmtRs(cents: number | null | undefined) {
 }
 function fmtDate(d: Date) {
   return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+function fmtBytes(n: number) {
+  if (!n) return "0 B";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const UPKEEP_LABEL: Record<string, string> = {
@@ -36,12 +44,14 @@ export default async function ServiceRecordDetailPage(props: PageProps) {
       oils: true,
       filters: true,
       costLines: true,
+      attachments: { orderBy: { uploadedAt: "desc" }, include: { uploadedBy: { select: { name: true } } } },
     },
   });
   if (!rec) notFound();
   // USERs can only open records for vehicles on their own project/site.
   if (session.role === "USER" && session.projectId && rec.asset.projectId !== session.projectId) notFound();
 
+  const isAdmin = session.role === "ADMIN";
   const meterUnit = rec.meterType === "KM" ? "km" : "hr";
   const hasBreakdown = rec.oils.length || rec.filters.length || rec.costLines.length || rec.grandTotalCents > 0;
 
@@ -182,6 +192,51 @@ export default async function ServiceRecordDetailPage(props: PageProps) {
           </div>
         </div>
       )}
+
+      {/* Attachments */}
+      <div className="bg-[#121420] border border-white/5 rounded-2xl p-5">
+        <h2 className="text-xs font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">
+          <Paperclip className="w-4 h-4 text-indigo-400" /> Attachments <span className="text-gray-600 font-normal">({rec.attachments.length})</span>
+        </h2>
+        {rec.attachments.length === 0 ? (
+          <div className="text-xs text-gray-500">No files attached.</div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {rec.attachments.map((a) => {
+              const url = `/api/service-attachments/${a.id}`;
+              const isImage = (a.mimeType || "").startsWith("image/");
+              return (
+                <div key={a.id} className="bg-[#1b1e30] border border-white/5 rounded-xl p-3 flex flex-col gap-2">
+                  <a href={url} target="_blank" rel="noreferrer" className="block">
+                    {isImage ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={url} alt={a.originalName} className="w-full h-24 object-cover rounded-lg border border-white/5" />
+                    ) : (
+                      <div className="w-full h-24 rounded-lg border border-white/5 bg-[#121420] flex items-center justify-center">
+                        <FileText className="w-8 h-8 text-gray-500" />
+                      </div>
+                    )}
+                  </a>
+                  <div className="min-w-0">
+                    <a href={url} target="_blank" rel="noreferrer" className="text-[11px] text-gray-200 hover:text-indigo-400 font-medium block truncate" title={a.originalName}>{a.originalName}</a>
+                    <span className="text-[10px] text-gray-500 block">{fmtBytes(a.fileSize)}{a.caption ? ` · ${a.caption}` : ""}</span>
+                    <span className="text-[10px] text-gray-600 block">{a.uploadedBy?.name ?? "—"}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <a href={`${url}?download=1`} className="text-[10px] text-gray-400 hover:text-white flex items-center gap-1"><Download className="w-3 h-3" /> Download</a>
+                    {isAdmin && (
+                      <form action={async () => { "use server"; await deleteServiceAttachmentAction(a.id); }} className="ml-auto">
+                        <button type="submit" title="Remove" className="text-gray-500 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </form>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {isAdmin && <AttachmentUploader serviceRecordId={rec.id} />}
+      </div>
 
       {rec.note && (
         <p className="text-xs text-gray-500">

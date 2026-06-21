@@ -47,6 +47,7 @@ model User {
   tankDips         TankDip[]     @relation("TankDipRecordedBy")
 
   serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
+  serviceAttachments ServiceAttachment[] @relation("AttachmentUploadedBy")
 }
 
 model Category {
@@ -667,9 +668,10 @@ model ServiceRecord {
 
   createdAt      DateTime @default(now())
 
-  oils      ServiceOil[]
-  filters   ServiceFilter[]
-  costLines ServiceCostLine[]
+  oils        ServiceOil[]
+  filters     ServiceFilter[]
+  costLines   ServiceCostLine[]
+  attachments ServiceAttachment[]
 
   @@index([assetId, serviceDate])
   @@index([jobNo])
@@ -825,4 +827,26 @@ model OilPrice {
   code           String  @unique // e.g. "15W40-CI/04"
   description    String?
   unitPriceCents Int     @default(0)
+}
+
+// Phase 3 of the merge: file attachments on a service record (PDF / images /
+// Office docs). Stored inline as Bytes — like FuelIssue.photoData and
+// FuelIssueCorrection.docData — so they travel with the database backups.
+model ServiceAttachment {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  data         Bytes
+  originalName String
+  mimeType     String?
+  fileSize     Int      @default(0)
+  caption      String   @default("")
+
+  uploadedById String?
+  uploadedBy   User?    @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id])
+  uploadedAt   DateTime @default(now())
+
+  @@index([serviceRecordId])
 }
