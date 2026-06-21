@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { getPriceForDate } from "@/lib/pricing";
+import { extractFileField } from "@/lib/upload";
 
 // 1. Create Bulk Tank (Admin only)
 export async function createBulkTankAction(formData: FormData) {
@@ -529,6 +530,9 @@ export async function workshopIssueFuelAction(formData: FormData) {
       }
     }
 
+    // Optional pump/meter photo proof.
+    const photo = await extractFileField(formData, "photo");
+
     // Resolve price and cost based on custom issueDate
     const resolvedPrice = await getPriceForDate(tank.fuelKind, issueDate);
     const totalCost = Math.round(litres * resolvedPrice.pricePerLitre);
@@ -550,6 +554,7 @@ export async function workshopIssueFuelAction(formData: FormData) {
           issuedById: user.id,
           fuelPriceId: resolvedPrice.id,
           bulkTankId: tank.id,
+          ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
         },
       });
 

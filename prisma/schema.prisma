@@ -43,6 +43,10 @@ model User {
 
   fuelCorrections     FuelIssueCorrection[] @relation("CorrectionRequestedBy")
   reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
+
+  tankDips         TankDip[]     @relation("TankDipRecordedBy")
+
+  serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
 }
 
 model Category {
@@ -52,6 +56,7 @@ model Category {
   defaultMeterType String        // "KM" | "HOURS"
   fleetGroup       String        // "ROAD_VEHICLE" | "MACHINERY_GENSET"
   assets           Asset[]
+  serviceInterval  ServiceInterval?
 }
 
 model Asset {
@@ -86,6 +91,8 @@ model Asset {
 
   rentalRate    RentalRate?
   bills         Bill[]
+  serviceRecords ServiceRecord[]
+  serviceIntervalOverride ServiceInterval?
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -159,6 +166,12 @@ model FuelRequest {
   reviewedAt     DateTime?
   reviewNote     String?
 
+  // Optional pump/meter photo proof captured by the site PM at request time;
+  // copied onto the resulting FuelIssue when the request is approved.
+  photoData      Bytes?
+  photoName      String?
+  photoMime      String?
+
   issue          FuelIssue?
 }
 
@@ -197,6 +210,12 @@ model FuelIssue {
   // but kept for the audit trail.
   voided          Boolean      @default(false)
   voidedAt        DateTime?
+
+  // Optional pump/meter photo proof for the issue (carried from the request,
+  // or attached directly on a direct issue).
+  photoData       Bytes?
+  photoName       String?
+  photoMime       String?
 
   corrections     FuelIssueCorrection[]
 }
@@ -310,6 +329,7 @@ model Project {
   assets      Asset[]
   bulkTanks   BulkTank[]
   assignments AssetAssignment[]
+  budgets     Budget[]
 }
 
 model DailyCondition {
@@ -344,6 +364,29 @@ model BulkTank {
   users     User[]
   requests  BulkRequest[]
   issues    FuelIssue[]   @relation("TankIssues")
+  dips      TankDip[]
+}
+
+// A physical bulk-tank dip/count, recorded periodically to reconcile the
+// measured fuel level against the system-computed balance (top-ups − issues).
+// A persistent gap flags shrinkage, leakage or unrecorded draws.
+model TankDip {
+  id              String   @id @default(uuid())
+
+  bulkTankId      String
+  bulkTank        BulkTank @relation(fields: [bulkTankId], references: [id], onDelete: Cascade)
+
+  dipLitres       Float    // physically measured litres in the tank
+  computedBalance Float    // system balance snapshot at dip time
+  variance        Float    // dipLitres − computedBalance (negative = shortfall)
+  dipDate         DateTime
+  note            String?
+  createdAt       DateTime @default(now())
+
+  recordedById    String
+  recordedBy      User     @relation("TankDipRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([bulkTankId, dipDate])
 }
 
 model BulkRequest {
@@ -487,7 +530,12 @@ model Bill {
   generatedById String?
   generatedBy   User?    @relation("BillGeneratedBy", fields: [generatedById], references: [id])
 
+  // Invoice email dispatch stamp.
+  emailedAt     DateTime?
+  emailedTo     String?
+
   lineItems     BillLineItem[]
+  creditNotes   CreditNote[]
 
   @@unique([assetId, year, month])
   @@index([periodKey, status])
@@ -514,4 +562,89 @@ model BillLineItem {
   projectName String?
 
   @@index([billId])
+}
+
+// Per-site monthly fuel budget, for budget-vs-actual tracking and month-end
+// run-rate forecasting.
+model Budget {
+  id                String   @id @default(uuid())
+
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id])
+
+  year              Int
+  month             Int      // 1-12
+  budgetLitres      Float?
+  budgetAmountCents Int?
+  note              String?
+
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectId, year, month])
+  @@index([year, month])
+}
+
+// A credit note against an issued bill (correction/discount/goodwill). Reduces
+// the outstanding receivable for that invoice once issued.
+model CreditNote {
+  id          String   @id @default(uuid())
+
+  billId      String
+  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  number      String?  @unique
+  reason      String
+  amountCents Int      // positive amount credited back to the customer
+  status      String   @default("DRAFT") // "DRAFT" | "ISSUED"
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  issuedDate  DateTime?
+
+  @@index([billId])
+}
+
+// Service interval config. One row per category (the editable default) and/or
+// one per asset (an override). Resolution precedence: asset → category →
+// hard-coded fleet-group default (machinery 500 hr / road 5,000 km).
+model ServiceInterval {
+  id             String    @id @default(uuid())
+
+  categoryId     String?   @unique
+  category       Category? @relation(fields: [categoryId], references: [id])
+
+  assetId        String?   @unique
+  asset          Asset?    @relation(fields: [assetId], references: [id])
+
+  basis          String    // "HOURS" | "KM"
+  intervalValue  Float
+  intervalMonths Int?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// A logged completed service. The countdown to the next service resets at the
+// latest record's date (and meterAtService when supplied).
+model ServiceRecord {
+  id             String   @id @default(uuid())
+
+  assetId        String
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  serviceDate    DateTime
+  meterAtService Float?
+  meterType      String   // "HOURS" | "KM"
+  serviceType    String?
+  costCents      Int?
+  note           String?
+
+  recordedById   String
+  recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
+
+  createdAt      DateTime @default(now())
+
+  @@index([assetId, serviceDate])
 }

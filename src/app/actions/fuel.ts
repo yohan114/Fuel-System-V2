@@ -4,7 +4,15 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
 import { getPriceForDate } from "@/lib/pricing";
+import { extractFileField } from "@/lib/upload";
 import { revalidatePath } from "next/cache";
+
+// Site-configurable gate: when Setting "fuel_photo_required" === "true", a
+// pump/meter photo must accompany every fuel request / direct issue.
+async function photoRequired(): Promise<boolean> {
+  const s = await prisma.setting.findUnique({ where: { key: "fuel_photo_required" } });
+  return s?.value === "true";
+}
 
 // 1. Submit Request (User/Admin)
 export async function submitRequestAction(formData: FormData) {
@@ -106,6 +114,11 @@ export async function submitRequestAction(formData: FormData) {
       }
     }
 
+    const photo = await extractFileField(formData, "photo");
+    if (!photo && (await photoRequired())) {
+      return { error: "A pump/meter photo is required to submit a fuel request." };
+    }
+
     const request = await prisma.fuelRequest.create({
       data: {
         assetId: asset.id,
@@ -116,6 +129,7 @@ export async function submitRequestAction(formData: FormData) {
         reason,
         status: "PENDING",
         requestedById: user.id,
+        ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
       },
     });
 
@@ -182,6 +196,9 @@ export async function approveRequestAction(requestId: string, reviewNote: string
           issuedById: admin.id,
           linkedRequestId: request.id,
           fuelPriceId: resolvedPrice.id,
+          ...(request.photoData
+            ? { photoData: request.photoData, photoName: request.photoName, photoMime: request.photoMime }
+            : {}),
         },
       });
 
@@ -396,6 +413,11 @@ export async function recordDirectIssueAction(formData: FormData) {
       }
     }
 
+    const photo = await extractFileField(formData, "photo");
+    if (!photo && (await photoRequired())) {
+      return { error: "A pump/meter photo is required to record a fuel issue." };
+    }
+
     // Resolve price for the date of issue
     const resolvedPrice = await getPriceForDate(fuelKind, issueDate);
     const totalCost = Math.round(litres * resolvedPrice.pricePerLitre);
@@ -415,6 +437,7 @@ export async function recordDirectIssueAction(formData: FormData) {
           issueDate,
           issuedById: admin.id,
           fuelPriceId: resolvedPrice.id,
+          ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
         },
       });
 
