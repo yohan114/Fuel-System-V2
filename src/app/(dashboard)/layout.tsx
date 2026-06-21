@@ -26,7 +26,8 @@ import {
   Target,
   ClipboardList,
   Repeat,
-  Tags
+  Tags,
+  Package
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -72,6 +73,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Service Records", href: "/service/records", icon: ClipboardList },
       { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
+      { label: "Filter Orders", href: "/service/order-planner", icon: Package },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },

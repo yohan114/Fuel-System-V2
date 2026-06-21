@@ -769,6 +769,10 @@ model FilterCatalog {
   description     String?
   compatibleFleet String?         // free-text compatible fleet types
   crossRefText    String?         // raw cross-reference string
+  monthlyDemand   Float?          // from the source filter analysis
+  annualDemand    Float?
+  serviceCount    Int?            // historical service uses
+  vehicleCount    Int?            // distinct vehicles using it
   createdAt       DateTime @default(now())
 
   crossRefs    FilterCrossRef[]

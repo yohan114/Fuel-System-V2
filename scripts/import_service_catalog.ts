@@ -11,7 +11,7 @@ import path from "path";
 import { prisma } from "../src/lib/db";
 import { normalize, rebuildIndex } from "../src/lib/service/xref";
 
-interface DumpFilter { id: number; cat?: string; oem?: string; hifi?: string; desc?: string; fleet?: string; crossRef?: string }
+interface DumpFilter { id: number; cat?: string; oem?: string; hifi?: string; desc?: string; fleet?: string; crossRef?: string; monthlyD?: number; annualD?: number; svcCount?: number; vehCount?: number }
 interface DumpPrice { id: number; code?: string; desc?: string; qty?: number; unit?: number; total?: number }
 interface DumpLink { fid: number; ref?: string; ec?: string; vid?: number | null }
 
@@ -43,6 +43,10 @@ async function main() {
       description: f.desc || null,
       compatibleFleet: f.fleet || null,
       crossRefText: f.crossRef || null,
+      monthlyDemand: f.monthlyD ?? null,
+      annualDemand: f.annualD ?? null,
+      serviceCount: f.svcCount ?? null,
+      vehicleCount: f.vehCount ?? null,
     };
     await prisma.filterCatalog.upsert({
       where: { sourceId: f.id },

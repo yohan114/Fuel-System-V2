@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { ArrowLeft, Wrench, Paperclip, Download, Trash2, FileText } from "lucide-react";
+import { ArrowLeft, Wrench, Paperclip, Download, Trash2, FileText, Printer } from "lucide-react";
 import AttachmentUploader from "./AttachmentUploader";
 import { deleteServiceAttachmentAction } from "@/app/actions/attachment";
 
@@ -67,9 +67,19 @@ export default async function ServiceRecordDetailPage(props: PageProps) {
             {[rec.asset.brand, rec.asset.model].filter(Boolean).join(" ")} {rec.asset.regNo ? `· ${rec.asset.regNo}` : ""}
           </p>
         </div>
-        <Link href="/service/records" className="text-xs font-semibold text-gray-400 hover:text-white flex items-center gap-1.5 whitespace-nowrap">
-          <ArrowLeft className="w-4 h-4" /> Records
-        </Link>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <a
+            href={`/api/service-records/${rec.id}/pdf`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-semibold text-gray-300 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg px-3 py-2 flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <Printer className="w-4 h-4" /> Print / PDF
+          </a>
+          <Link href="/service/records" className="text-xs font-semibold text-gray-400 hover:text-white flex items-center gap-1.5 whitespace-nowrap">
+            <ArrowLeft className="w-4 h-4" /> Records
+          </Link>
+        </div>
       </div>
 
       {/* Header facts */}

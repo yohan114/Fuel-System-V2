@@ -559,6 +559,7 @@ export default async function DashboardPage() {
               <Link href="/service/records" className="text-[11px] bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-1.5 text-gray-300">Service Records</Link>
               <Link href="/service/cross-reference" className="text-[11px] bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-1.5 text-gray-300">Browse Filters</Link>
               {isAdmin && <Link href="/admin/service-prices" className="text-[11px] bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-1.5 text-gray-300">Price Books</Link>}
+              {isAdmin && <Link href="/service/order-planner" className="text-[11px] bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg px-3 py-1.5 text-gray-300">Order Planner</Link>}
               {isAdmin && <Link href="/service/new" className="text-[11px] bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 rounded-lg px-3 py-1.5 text-indigo-300">+ New Service</Link>}
             </div>
           </div>
