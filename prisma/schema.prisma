@@ -45,6 +45,8 @@ model User {
   reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
 
   tankDips         TankDip[]     @relation("TankDipRecordedBy")
+
+  serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
 }
 
 model Category {
@@ -54,6 +56,7 @@ model Category {
   defaultMeterType String        // "KM" | "HOURS"
   fleetGroup       String        // "ROAD_VEHICLE" | "MACHINERY_GENSET"
   assets           Asset[]
+  serviceInterval  ServiceInterval?
 }
 
 model Asset {
@@ -88,6 +91,8 @@ model Asset {
 
   rentalRate    RentalRate?
   bills         Bill[]
+  serviceRecords ServiceRecord[]
+  serviceIntervalOverride ServiceInterval?
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -599,4 +604,47 @@ model CreditNote {
   issuedDate  DateTime?
 
   @@index([billId])
+}
+
+// Service interval config. One row per category (the editable default) and/or
+// one per asset (an override). Resolution precedence: asset → category →
+// hard-coded fleet-group default (machinery 500 hr / road 5,000 km).
+model ServiceInterval {
+  id             String    @id @default(uuid())
+
+  categoryId     String?   @unique
+  category       Category? @relation(fields: [categoryId], references: [id])
+
+  assetId        String?   @unique
+  asset          Asset?    @relation(fields: [assetId], references: [id])
+
+  basis          String    // "HOURS" | "KM"
+  intervalValue  Float
+  intervalMonths Int?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// A logged completed service. The countdown to the next service resets at the
+// latest record's date (and meterAtService when supplied).
+model ServiceRecord {
+  id             String   @id @default(uuid())
+
+  assetId        String
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  serviceDate    DateTime
+  meterAtService Float?
+  meterType      String   // "HOURS" | "KM"
+  serviceType    String?
+  costCents      Int?
+  note           String?
+
+  recordedById   String
+  recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
+
+  createdAt      DateTime @default(now())
+
+  @@index([assetId, serviceDate])
 }

@@ -66,6 +66,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
       { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
+      { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },
@@ -82,6 +83,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Alerts", href: "/alerts", icon: Bell }
     );
@@ -102,6 +104,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
       { label: "Receivables", href: "/billing/aging", icon: Wallet },

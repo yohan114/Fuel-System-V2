@@ -16,6 +16,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   BILLING: "Billing",
   DATA: "Data quality",
   TANK: "Bulk tanks",
+  SERVICE: "Service",
 };
 
 export default async function AlertsPage() {

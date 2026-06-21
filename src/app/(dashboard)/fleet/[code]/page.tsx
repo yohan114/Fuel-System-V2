@@ -7,6 +7,8 @@ import AssetCharts from "./components/AssetCharts";
 import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
 import { recommendedUnits, varianceFlag } from "@/lib/reports/recommended";
+import { computeServiceStatus } from "@/lib/service/compute";
+import { logServiceAction, setServiceIntervalAction } from "@/app/actions/service";
 import { 
   ArrowLeft, 
   Gauge, 
@@ -14,9 +16,10 @@ import {
   FileText, 
   MapPin, 
   Bookmark, 
-  Settings, 
+  Settings,
   History,
-  Activity
+  Activity,
+  Wrench
 } from "lucide-react";
 
 interface PageProps {
@@ -70,6 +73,15 @@ export default async function AssetDetailPage(props: PageProps) {
     orderBy: { readingDate: "desc" },
     include: { recordedBy: true },
   });
+
+  // Service planner data for the Service tab.
+  const serviceStatus = await computeServiceStatus(asset.id);
+  const serviceRecords = await prisma.serviceRecord.findMany({
+    where: { assetId: asset.id },
+    orderBy: { serviceDate: "desc" },
+    include: { recordedBy: { select: { name: true } } },
+  });
+  const serviceUnit = serviceStatus?.basis === "KM" ? "km" : "hr";
 
   // 3. Compute efficiency metrics
   let totalLitres = 0;
@@ -306,6 +318,17 @@ export default async function AssetDetailPage(props: PageProps) {
             <Activity className="w-4 h-4" />
             Meter Readings ({readings.length})
           </Link>
+          <Link
+            href={`/fleet/${asset.code}?tab=service`}
+            className={`flex items-center gap-2 px-6 py-4 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === "service"
+                ? "border-indigo-500 text-white bg-[#121420]"
+                : "border-transparent text-gray-400 hover:text-white"
+            }`}
+          >
+            <Wrench className="w-4 h-4" />
+            Service ({serviceRecords.length})
+          </Link>
         </div>
 
         {/* Tab Body */}
@@ -452,6 +475,107 @@ export default async function AssetDetailPage(props: PageProps) {
                   </tbody>
                 </table>
               )}
+            </div>
+          )}
+
+          {/* D. Service Planner */}
+          {activeTab === "service" && (
+            <div className="space-y-6">
+              {serviceStatus ? (
+                <div className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Service Status</h4>
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold border ${
+                      serviceStatus.state === "OVERDUE" ? "bg-red-500/10 text-red-400 border-red-500/15"
+                      : serviceStatus.state === "DUE_SOON" ? "bg-amber-500/10 text-amber-400 border-amber-500/15"
+                      : serviceStatus.state === "OK" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/15"
+                      : "bg-gray-500/10 text-gray-400 border-gray-500/15"}`}>{serviceStatus.state.replace("_", " ")}</span>
+                  </div>
+                  {serviceStatus.usedSince != null && (
+                    <div className="mb-4">
+                      <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                        <span>{serviceStatus.usedSince.toFixed(0)} / {serviceStatus.intervalValue.toFixed(0)} {serviceUnit} used</span>
+                        <span>{serviceStatus.remaining != null ? `${Math.max(0, serviceStatus.remaining).toFixed(0)} ${serviceUnit} left` : ""}</span>
+                      </div>
+                      <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                        <div className={`h-full ${serviceStatus.state === "OVERDUE" ? "bg-red-500" : serviceStatus.state === "DUE_SOON" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, (serviceStatus.usedSince / serviceStatus.intervalValue) * 100)}%` }} />
+                      </div>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Recorded since</span><span className="text-white font-bold">{serviceStatus.recordedSince != null ? `${serviceStatus.recordedSince.toFixed(0)} ${serviceUnit}` : "—"}</span></div>
+                    <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Fuel-derived since</span><span className="text-white font-bold">{serviceStatus.fuelDerivedSince != null ? `${serviceStatus.fuelDerivedSince.toFixed(0)} ${serviceUnit}` : "—"}</span></div>
+                    <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Interval ({serviceStatus.intervalSource})</span><span className="text-white font-bold">{serviceStatus.intervalValue.toFixed(0)} {serviceUnit}</span></div>
+                    <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Projected due</span><span className="text-white font-bold">{serviceStatus.projectedDueDate ? new Date(serviceStatus.projectedDueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—"}</span></div>
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-3">Last service: {serviceStatus.lastServiceDate ? new Date(serviceStatus.lastServiceDate).toLocaleDateString("en-GB") : "none on record — measuring since commissioning"}. Countdown uses the higher of recorded and fuel-derived running.</p>
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500">No service data available for this vehicle.</div>
+              )}
+
+              {isAdmin && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <form action={async (fd) => { "use server"; await logServiceAction(fd); }} className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5 space-y-3">
+                    <input type="hidden" name="assetId" value={asset.id} />
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Log a Service</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="date" name="serviceDate" required defaultValue={new Date().toISOString().split("T")[0]} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="number" step="0.1" name="meterAtService" placeholder={`Meter (${asset.meterType})`} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="text" name="serviceType" placeholder="Type e.g. 500HR / Oil" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="number" step="0.01" name="costLkr" placeholder="Cost (LKR)" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                    </div>
+                    <input type="text" name="note" placeholder="Note (optional)" className="w-full bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg px-4 py-2">Log service</button>
+                  </form>
+
+                  <form action={async (fd) => { "use server"; await setServiceIntervalAction(fd); }} className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5 space-y-3">
+                    <input type="hidden" name="scope" value="asset" />
+                    <input type="hidden" name="assetId" value={asset.id} />
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Override Interval (this vehicle)</h4>
+                    <div className="grid grid-cols-3 gap-2">
+                      <select name="basis" defaultValue={serviceStatus?.basis || (asset.meterType === "KM" ? "KM" : "HOURS")} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs">
+                        <option value="HOURS">Hours</option>
+                        <option value="KM">KM</option>
+                      </select>
+                      <input type="number" step="1" name="intervalValue" required placeholder="Interval" defaultValue={serviceStatus?.intervalValue} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="number" step="1" name="intervalMonths" placeholder="Months?" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                    </div>
+                    <button type="submit" className="bg-white/10 hover:bg-white/20 text-white font-semibold text-xs rounded-lg px-4 py-2">Save override</button>
+                  </form>
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                {serviceRecords.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-gray-500">No services logged yet.</div>
+                ) : (
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="text-gray-400 font-semibold border-b border-white/5">
+                        <th className="py-3">Date</th>
+                        <th className="py-3">Meter</th>
+                        <th className="py-3">Type</th>
+                        <th className="py-3">Cost</th>
+                        <th className="py-3">Note</th>
+                        <th className="py-3">Logged By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {serviceRecords.map((s) => (
+                        <tr key={s.id} className="hover:bg-white/[0.01]">
+                          <td className="py-3 text-gray-300">{new Date(s.serviceDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
+                          <td className="py-3 text-gray-400 font-mono">{s.meterAtService != null ? `${s.meterAtService.toLocaleString()} ${s.meterType}` : "—"}</td>
+                          <td className="py-3 text-gray-300">{s.serviceType || "—"}</td>
+                          <td className="py-3 text-gray-400">{s.costCents != null ? `Rs. ${(s.costCents / 100).toLocaleString("en-LK")}` : "—"}</td>
+                          <td className="py-3 text-gray-500 max-w-[220px] truncate" title={s.note || ""}>{s.note || "—"}</td>
+                          <td className="py-3 text-gray-400">{s.recordedBy.name}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
 

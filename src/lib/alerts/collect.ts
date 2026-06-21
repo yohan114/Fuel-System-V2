@@ -2,12 +2,13 @@ import { prisma } from "../db";
 import { currentMonthPeriod } from "../billing/period";
 import { detectAnomalies } from "../integrity/anomalies";
 import { getTankReconciliation } from "../integrity/tank";
+import { getFleetServiceStatus } from "../service/fleet";
 
 // A single operational alert. Alerts are computed live from current state, so
 // they clear automatically once the underlying item is handled.
 export interface Alert {
   key: string;
-  category: "APPROVAL" | "INTEGRITY" | "BILLING" | "DATA" | "TANK";
+  category: "APPROVAL" | "INTEGRITY" | "BILLING" | "DATA" | "TANK" | "SERVICE";
   severity: "HIGH" | "MEDIUM" | "LOW";
   title: string;
   detail: string;
@@ -106,7 +107,20 @@ export async function collectAlerts(opts: { projectId?: string; isAdmin: boolean
     });
   }
 
-  // 6. Admin-only: low bulk-tank balances.
+  // 6. Service due / overdue.
+  const svc = await getFleetServiceStatus({ projectId });
+  if (svc.counts.overdue > 0 || svc.counts.dueSoon > 0) {
+    alerts.push({
+      key: "service-due",
+      category: "SERVICE",
+      severity: svc.counts.overdue > 0 ? "HIGH" : "MEDIUM",
+      title: `${svc.counts.overdue} overdue · ${svc.counts.dueSoon} due-soon service${svc.counts.overdue + svc.counts.dueSoon !== 1 ? "s" : ""}`,
+      detail: "Vehicles at or near their service interval (recorded or fuel-derived).",
+      href: "/service",
+    });
+  }
+
+  // 7. Admin-only: low bulk-tank balances.
   if (isAdmin) {
     const tanks = await getTankReconciliation();
     const low = tanks.filter((t) => t.lowBalance);
