@@ -746,3 +746,83 @@ model FilterCategoryRef {
   sortOrder      Int     @default(0)
   active         Boolean @default(true)
 }
+
+// ===========================================================================
+// Phase 2 of the Fuel + Service merge: the filter cross-reference engine and
+// editable price books (merged from the Service Record system's catalog).
+// ===========================================================================
+
+// The filter catalog — one row per filter, with its OEM / HIFI numbers and the
+// free-text cross-reference string that the engine parses into FilterCrossRef.
+model FilterCatalog {
+  id              String   @id @default(uuid())
+  sourceId        Int?     @unique // original id from the catalog dump (re-import key)
+  filterCategory  String?
+  oemPartNumber   String?
+  hifiPartNumber  String?
+  description     String?
+  compatibleFleet String?         // free-text compatible fleet types
+  crossRefText    String?         // raw cross-reference string
+  createdAt       DateTime @default(now())
+
+  crossRefs    FilterCrossRef[]
+  vehicleLinks FilterVehicleLink[]
+
+  @@index([filterCategory])
+}
+
+// Normalized cross-reference index — one row per (filter, part-number) pair.
+// Auto rows are rebuilt from the catalog; manual rows (added in the UI) carry
+// source='manual' and survive a rebuild.
+model FilterCrossRef {
+  id           String        @id @default(uuid())
+  catalogId    String
+  catalog      FilterCatalog @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  brand        String        @default("")
+  partNumber   String
+  normalizedPN String // uppercase, alphanumeric-only key used for matching
+  refType      String        @default("cross") // "oem" | "hifi" | "cross" | "manual"
+  note         String        @default("")
+  source       String        @default("auto") // "auto" | "manual"
+  createdAt    DateTime      @default(now())
+
+  @@index([normalizedPN])
+  @@index([catalogId])
+  @@index([brand])
+}
+
+// Filter → machine usage, by E&C code. Matched to Asset.code at query time so
+// the catalog stays decoupled from the live fleet table.
+model FilterVehicleLink {
+  id        String        @id @default(uuid())
+  catalogId String
+  catalog   FilterCatalog @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  ec        String // E&C code (maps to Asset.code)
+
+  @@index([catalogId])
+  @@index([ec])
+}
+
+// Editable filter price book — drives the auto-fill of filter prices on the
+// service sheet (looked up by normalized supplier code).
+model FilterPrice {
+  id              String   @id @default(uuid())
+  supplierCode    String
+  normalizedCode  String   @default("") // normalize(supplierCode) for lookup
+  description     String?
+  qty             Int      @default(1)
+  unitPriceCents  Int      @default(0)
+  totalPriceCents Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@index([normalizedCode])
+}
+
+// Editable oil-grade price list (grade code → price) — drives oil price
+// auto-fill on the service sheet.
+model OilPrice {
+  id             String  @id @default(uuid())
+  code           String  @unique // e.g. "15W40-CI/04"
+  description    String?
+  unitPriceCents Int     @default(0)
+}

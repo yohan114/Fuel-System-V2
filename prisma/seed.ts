@@ -9,6 +9,7 @@ import {
   DEFAULT_FILTER_CATEGORIES,
   SERVICE_SETTING_KEYS,
   DEFAULT_SERVICE_RATES,
+  DEFAULT_OIL_PRICES,
 } from "../src/lib/service/defaults";
 
 const adapter = new PrismaBetterSqlite3({
@@ -155,6 +156,13 @@ async function main() {
   for (const [key, value] of serviceRateSeed) {
     // update:{} keeps any value an admin has already changed.
     await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value } });
+  }
+  for (const op of DEFAULT_OIL_PRICES) {
+    await prisma.oilPrice.upsert({
+      where: { code: op.code },
+      update: {}, // keep admin price edits
+      create: { code: op.code, description: op.description, unitPriceCents: op.unitPriceCents },
+    });
   }
 
   // 3. Seed Default Fuel Prices (Effective 2025 January to 2026 June)

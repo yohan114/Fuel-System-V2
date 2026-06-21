@@ -24,11 +24,17 @@ interface FilterLine {
   unitPriceCents: number;
 }
 
+interface PriceData {
+  filterPrices: { code: string; cents: number }[];
+  oilPrices: { code: string; cents: number }[];
+}
+
 interface Props {
   assets: AssetOption[];
   oilLines: OilLine[];
   filterLines: FilterLine[];
   rates: ServiceRates;
+  priceData: PriceData;
   defaultAssetCode?: string;
 }
 
@@ -64,7 +70,9 @@ function fmtRs(cents: number): string {
   return "Rs. " + (cents / 100).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export default function DetailedServiceForm({ assets, oilLines, filterLines, rates, defaultAssetCode }: Props) {
+const normCode = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+export default function DetailedServiceForm({ assets, oilLines, filterLines, rates, priceData, defaultAssetCode }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -111,15 +119,47 @@ export default function DetailedServiceForm({ assets, oilLines, filterLines, rat
     };
   }, [oils, filters, costs, rates]);
 
+  // Price-book lookup maps for auto-fill (mirrors the Service Record form):
+  // a chosen oil grade or filter part number fills the price = unit × qty.
+  const oilPriceMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const o of priceData.oilPrices) m.set(o.code.toUpperCase().trim(), o.cents);
+    return m;
+  }, [priceData]);
+  const filterPriceMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const f of priceData.filterPrices) {
+      m.set(f.code.toUpperCase().trim(), f.cents);
+      m.set(normCode(f.code), f.cents);
+    }
+    return m;
+  }, [priceData]);
+
+  function lookupOilCents(grade: string): number {
+    const k = grade.toUpperCase().trim();
+    if (!k) return 0;
+    if (oilPriceMap.has(k)) return oilPriceMap.get(k)!;
+    for (const [code, c] of oilPriceMap) if (code.includes(k) || k.includes(code)) return c;
+    return 0;
+  }
+  function lookupFilterCents(no: string): number {
+    const k = no.toUpperCase().trim();
+    if (!k) return 0;
+    if (filterPriceMap.has(k)) return filterPriceMap.get(k)!;
+    const nk = normCode(no);
+    if (nk && filterPriceMap.has(nk)) return filterPriceMap.get(nk)!;
+    for (const [code, c] of filterPriceMap) if (code.includes(k) || (nk && code.includes(nk))) return c;
+    return 0;
+  }
+
   function updateOil(i: number, patch: Partial<OilRow>) {
     setOils((prev) => {
       const next = [...prev];
       const row = { ...next[i], ...patch };
-      // Auto-fill price from master unit price × qty when a unit price exists.
-      const unit = oilLines[i].unitPriceCents;
-      if (("qty" in patch) && unit > 0) {
+      if ("qty" in patch || "type" in patch) {
+        const unit = lookupOilCents(row.type) || oilLines[i].unitPriceCents || 0;
         const q = parseFloat(row.qty);
-        if (Number.isFinite(q) && q > 0) row.price = ((unit * q) / 100).toFixed(2);
+        if (unit > 0 && Number.isFinite(q) && q > 0) row.price = ((unit * q) / 100).toFixed(2);
       }
       next[i] = row;
       return next;
@@ -129,10 +169,10 @@ export default function DetailedServiceForm({ assets, oilLines, filterLines, rat
     setFilters((prev) => {
       const next = [...prev];
       const row = { ...next[i], ...patch };
-      const unit = filterLines[i].unitPriceCents;
-      if (("qty" in patch) && unit > 0) {
+      if ("qty" in patch || "no" in patch) {
+        const unit = lookupFilterCents(row.no) || filterLines[i].unitPriceCents || 0;
         const q = parseFloat(row.qty) || 1;
-        row.price = ((unit * q) / 100).toFixed(2);
+        if (unit > 0) row.price = ((unit * q) / 100).toFixed(2);
       }
       next[i] = row;
       return next;
@@ -204,6 +244,17 @@ export default function DetailedServiceForm({ assets, oilLines, filterLines, rat
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 text-red-300 text-xs rounded-xl px-4 py-3">{error}</div>
       )}
+
+      <datalist id="oil-grades">
+        {priceData.oilPrices.map((o) => (
+          <option key={o.code} value={o.code} />
+        ))}
+      </datalist>
+      <datalist id="filter-codes">
+        {priceData.filterPrices.slice(0, 1000).map((f, i) => (
+          <option key={`${f.code}-${i}`} value={f.code} />
+        ))}
+      </datalist>
 
       {/* Header */}
       <div className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5 space-y-4">
@@ -290,7 +341,7 @@ export default function DetailedServiceForm({ assets, oilLines, filterLines, rat
             {oilLines.map((o, i) => (
               <tr key={o.name}>
                 <td className="py-1.5 pr-2 text-gray-300 text-xs whitespace-nowrap">{o.name}</td>
-                <td className="py-1.5 pr-2"><input value={oils[i].type} onChange={(e) => updateOil(i, { type: e.target.value })} className={inputCls} /></td>
+                <td className="py-1.5 pr-2"><input list="oil-grades" value={oils[i].type} onChange={(e) => updateOil(i, { type: e.target.value })} className={inputCls} /></td>
                 <td className="py-1.5 pr-2"><input value={oils[i].action} onChange={(e) => updateOil(i, { action: e.target.value.toUpperCase() })} className={inputCls} /></td>
                 <td className="py-1.5 pr-2"><input type="number" step="0.1" value={oils[i].qty} onChange={(e) => updateOil(i, { qty: e.target.value })} className={`${inputCls} text-right`} /></td>
                 <td className="py-1.5"><input type="number" step="0.01" value={oils[i].price} onChange={(e) => updateOil(i, { price: e.target.value })} className={`${inputCls} text-right`} /></td>
@@ -313,7 +364,7 @@ export default function DetailedServiceForm({ assets, oilLines, filterLines, rat
             {filterLines.map((f, i) => (
               <tr key={f.name}>
                 <td className="py-1.5 pr-2 text-gray-300 text-xs whitespace-nowrap">{f.name}</td>
-                <td className="py-1.5 pr-2"><input value={filters[i].no} onChange={(e) => updateFilter(i, { no: e.target.value })} className={inputCls} /></td>
+                <td className="py-1.5 pr-2"><input list="filter-codes" value={filters[i].no} onChange={(e) => updateFilter(i, { no: e.target.value })} className={inputCls} /></td>
                 <td className="py-1.5 pr-2"><input type="number" min="1" value={filters[i].qty} onChange={(e) => updateFilter(i, { qty: e.target.value })} className={`${inputCls} text-right`} /></td>
                 <td className="py-1.5 pr-2"><input value={filters[i].action} onChange={(e) => updateFilter(i, { action: e.target.value.toUpperCase() })} className={inputCls} /></td>
                 <td className="py-1.5"><input type="number" step="0.01" value={filters[i].price} onChange={(e) => updateFilter(i, { price: e.target.value })} className={`${inputCls} text-right`} /></td>

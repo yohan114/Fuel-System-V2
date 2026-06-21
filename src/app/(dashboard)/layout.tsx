@@ -24,7 +24,9 @@ import {
   DatabaseZap,
   Wallet,
   Target,
-  ClipboardList
+  ClipboardList,
+  Repeat,
+  Tags
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -69,6 +71,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
       { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Service Records", href: "/service/records", icon: ClipboardList },
+      { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },
@@ -87,6 +90,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Service Records", href: "/service/records", icon: ClipboardList },
+      { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Alerts", href: "/alerts", icon: Bell }
     );
@@ -109,6 +113,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Service Records", href: "/service/records", icon: ClipboardList },
+      { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
       { label: "Receivables", href: "/billing/aging", icon: Wallet },
@@ -160,6 +165,13 @@ export default async function DashboardLayout({ children }: LayoutProps) {
               >
                 <Settings className="w-5 h-5" />
                 Admin Console
+              </Link>
+              <Link
+                href="/admin/service-prices"
+                className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-all"
+              >
+                <Tags className="w-5 h-5" />
+                Service Prices
               </Link>
             </div>
           )}

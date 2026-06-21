@@ -70,3 +70,21 @@ export const DEFAULT_SERVICE_RATES = {
 };
 
 export type ServiceRates = typeof DEFAULT_SERVICE_RATES;
+
+// Default oil-grade price list (grade code → price), from the Service Record
+// system. Prices in LKR cents. Seeded only when the OilPrice table is empty.
+export interface OilPriceSeed {
+  code: string;
+  description: string;
+  unitPriceCents: number;
+}
+export const DEFAULT_OIL_PRICES: OilPriceSeed[] = [
+  { code: "15W40-CI/04", description: "Engine Oil, Compressor Oil", unitPriceCents: 147_500 },
+  { code: "80W90 Gear Oil", description: "Gear Box / Differential / Axle Case / Transfer Case", unitPriceCents: 196_000 },
+  { code: "DS-10 Grease", description: "Grease, Circle Gear Case, Axle Pins", unitPriceCents: 185_000 },
+  { code: "HD-68", description: "Hydraulic / Swing Motor / Travelling Motor Oil", unitPriceCents: 120_000 },
+  { code: "MP-140 Gear Oil", description: "Gear Box / Differential / Axle / Tandem / Circle Gear", unitPriceCents: 168_000 },
+  { code: "MP-90 Gear Oil", description: "Gear Box / Differential / Axle / Tandem Drive", unitPriceCents: 168_000 },
+  { code: "Power Oil-1888", description: "Power Steering / Brake / Torque Con. / Hydraulic Oil", unitPriceCents: 232_000 },
+  { code: "SAE-30", description: "Engine Oil, Compressor Oil, Gear Box Oil", unitPriceCents: 168_500 },
+];

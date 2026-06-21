@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getOilLines, getFilterLines } from "@/lib/service/master";
 import { getServiceRates } from "@/lib/service/charge";
+import { getServiceFormPriceData } from "@/lib/service/pricebook";
 import { ArrowLeft, ClipboardPlus } from "lucide-react";
 import DetailedServiceForm from "../components/DetailedServiceForm";
 
@@ -20,7 +21,7 @@ export default async function NewServicePage(props: PageProps) {
 
   const sp = await props.searchParams;
 
-  const [assetsRaw, oilLines, filterLines, rates] = await Promise.all([
+  const [assetsRaw, oilLines, filterLines, rates, priceData] = await Promise.all([
     prisma.asset.findMany({
       where: { status: { not: "DISPOSED" } },
       orderBy: { code: "asc" },
@@ -29,6 +30,7 @@ export default async function NewServicePage(props: PageProps) {
     getOilLines(),
     getFilterLines(),
     getServiceRates(),
+    getServiceFormPriceData(),
   ]);
 
   return (
@@ -52,6 +54,7 @@ export default async function NewServicePage(props: PageProps) {
         oilLines={oilLines}
         filterLines={filterLines}
         rates={rates}
+        priceData={priceData}
         defaultAssetCode={sp.asset}
       />
     </div>
