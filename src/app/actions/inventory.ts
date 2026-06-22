@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { normalize, type ConsumerType } from "@/lib/stock/classify";
 import { postMovement, voidMovement, OverIssueError } from "@/lib/stock/post";
+import { currentBalance } from "@/lib/stock/ledger";
 import { revalidatePath } from "next/cache";
 
 function revalidateStore() {
@@ -124,7 +125,13 @@ export async function issueStockAction(formData: FormData) {
   const qty = posNum(formData.get("qty"));
   if (qty <= 0) return { error: "Quantity must be greater than zero." };
 
-  const assetId = String(formData.get("assetId") || "").trim() || null;
+  let assetId = String(formData.get("assetId") || "").trim() || null;
+  const assetCode = String(formData.get("assetCode") || "").trim();
+  if (!assetId && assetCode) {
+    const asset = await prisma.asset.findFirst({ where: { code: assetCode.toUpperCase() }, select: { id: true } });
+    if (!asset) return { error: `No machine found with code "${assetCode}".` };
+    assetId = asset.id;
+  }
   const projectId = String(formData.get("projectId") || "").trim() || null;
   const siteId = String(formData.get("siteId") || "").trim() || null;
   const description = String(formData.get("description") || "").trim() || null;
@@ -206,7 +213,13 @@ export async function resolveAliasAction(formData: FormData) {
   const aliasId = String(formData.get("aliasId") || "");
   if (!aliasId) return { error: "Missing alias id." };
   const targetType = String(formData.get("targetType") || "").toUpperCase() as ConsumerType;
-  const assetId = String(formData.get("assetId") || "").trim() || null;
+  let assetId = String(formData.get("assetId") || "").trim() || null;
+  const assetCode = String(formData.get("assetCode") || "").trim();
+  if (targetType === "ASSET" && !assetId && assetCode) {
+    const asset = await prisma.asset.findFirst({ where: { code: assetCode.toUpperCase() }, select: { id: true } });
+    if (!asset) return { error: `No machine found with code "${assetCode}".` };
+    assetId = asset.id;
+  }
   const projectId = String(formData.get("projectId") || "").trim() || null;
 
   if (targetType === "ASSET" && !assetId) return { error: "Pick a machine to map to." };
@@ -244,4 +257,57 @@ export async function resolveAliasAction(formData: FormData) {
   });
   revalidateStore();
   return { success: true, backfilled: matchIds.length };
+}
+
+// ── Month-end stock take ───────────────────────────────────────────────────────
+// Record a physical count for a product in a period. Optionally post an
+// ADJUSTMENT movement so the book balance matches the count (the variance is
+// folded in via the over-issue-safe posting path).
+export async function recordStockCountAction(formData: FormData) {
+  let user;
+  try { user = await assertCan("manage"); }
+  catch { return { error: "You are not authorized to record stock counts." }; }
+
+  const productId = String(formData.get("productId") || "");
+  const period = String(formData.get("period") || "").trim();
+  if (!productId || !/^\d{4}-\d{2}$/.test(period)) return { error: "Missing product or period (YYYY-MM)." };
+
+  const countedRaw = String(formData.get("countedQty") || "").trim();
+  if (countedRaw === "") return { error: "Enter the counted quantity." };
+  const countedQty = parseFloat(countedRaw);
+  if (!Number.isFinite(countedQty) || countedQty < 0) return { error: "Counted quantity must be zero or greater." };
+
+  const postAdjustment = String(formData.get("postAdjustment") || "") === "true";
+
+  const bookQty = await currentBalance(productId);
+  let variance = Math.round((countedQty - bookQty) * 1000) / 1000;
+  let adjusted = false;
+
+  if (postAdjustment && Math.abs(variance) > 0.0001) {
+    await postMovement({
+      productId,
+      kind: "ADJUSTMENT",
+      qtyReceived: variance > 0 ? variance : 0,
+      qtyIssued: variance < 0 ? -variance : 0,
+      description: `Stock-take adjustment ${period}`,
+      remark: `book ${bookQty} → counted ${countedQty}`,
+      source: "stocktake",
+      createdById: user.id,
+    });
+    adjusted = true;
+    variance = 0;
+  }
+
+  await prisma.stockCount.upsert({
+    where: { productId_period: { productId, period } },
+    update: { bookQty, countedQty, variance, adjusted, countedById: user.id },
+    create: { productId, period, bookQty, countedQty, variance, adjusted, countedById: user.id },
+  });
+
+  await prisma.auditLog.create({
+    data: { actorId: user.id, action: adjusted ? "UPDATE" : "CREATE", entity: "StockCount", entityId: productId, summary: `Stock-take ${period}: counted ${countedQty} (book ${bookQty})${adjusted ? " — adjusted" : ""}` },
+  });
+  revalidatePath("/store/stock-take");
+  revalidateStore();
+  return { success: true, variance, adjusted };
 }

@@ -59,6 +59,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
   const isAdmin = session.role === "ADMIN";
   const isAllocator = session.role === "ALLOCATOR";
   const isWorkshop = session.role === "WORKSHOP";
+  const isStorekeeper = session.role === "STOREKEEPER";
  
   let navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -83,6 +84,10 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Filter Stock", href: "/service/stock", icon: Boxes },
       { label: "Service Trends", href: "/service/analytics", icon: BarChart3 },
       { label: "Price Gaps", href: "/service/price-gaps", icon: Tags },
+      { label: "Oil Stock Ledger", href: "/store/ledger", icon: Droplets },
+      { label: "Stock Products", href: "/store/products", icon: Package },
+      { label: "Stock Mapping", href: "/store/mapping", icon: Repeat },
+      { label: "Stock Take", href: "/store/stock-take", icon: ClipboardCheck },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },
@@ -112,6 +117,15 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge }
+    );
+  } else if (isStorekeeper) {
+    navItems.push(
+      { label: "Oil Stock Ledger", href: "/store/ledger", icon: Droplets },
+      { label: "Stock Products", href: "/store/products", icon: Package },
+      { label: "Stock Mapping", href: "/store/mapping", icon: Repeat },
+      { label: "Stock Take", href: "/store/stock-take", icon: ClipboardCheck },
+      { label: "Fleet Directory", href: "/fleet", icon: Car },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else {
     // USER role
