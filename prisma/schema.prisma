@@ -7,93 +7,106 @@ generator client {
 }
 
 model User {
-  id               String        @id @default(uuid())
-  username         String        @unique
-  email            String?
-  name             String
-  passwordHash     String
-  role             String        // "ADMIN" | "USER" | "ALLOCATOR" | "WORKSHOP"
-  active           Boolean       @default(true)
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id           String   @id @default(uuid())
+  username     String   @unique
+  email        String?
+  name         String
+  passwordHash String
+  role         String // "ADMIN" | "USER" | "ALLOCATOR" | "WORKSHOP" | "STOREKEEPER"
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  createdById      String?
-  createdBy        User?         @relation("CreatedByUser", fields: [createdById], references: [id])
-  createdUsers     User[]        @relation("CreatedByUser")
+  createdById  String?
+  createdBy    User?   @relation("CreatedByUser", fields: [createdById], references: [id])
+  createdUsers User[]  @relation("CreatedByUser")
 
-  projectId        String?
-  project          Project?      @relation(fields: [projectId], references: [id])
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
 
-  bulkTankId       String?
-  bulkTank         BulkTank?     @relation(fields: [bulkTankId], references: [id])
+  bulkTankId String?
+  bulkTank   BulkTank? @relation(fields: [bulkTankId], references: [id])
 
   enteredPrices    FuelPrice[]
-  fuelRequests     FuelRequest[] @relation("RequestedBy")
-  reviewedRequests FuelRequest[] @relation("ReviewedBy")
-  fuelIssues       FuelIssue[]   @relation("IssuedBy")
-  meterReadings    MeterReading[] @relation("RecordedBy")
+  fuelRequests     FuelRequest[]    @relation("RequestedBy")
+  reviewedRequests FuelRequest[]    @relation("ReviewedBy")
+  fuelIssues       FuelIssue[]      @relation("IssuedBy")
+  meterReadings    MeterReading[]   @relation("RecordedBy")
   dailyConditions  DailyCondition[] @relation("RecordedBy")
-  auditLogs        AuditLog[]    @relation("Actor")
+  auditLogs        AuditLog[]       @relation("Actor")
 
-  bulkRequests     BulkRequest[] @relation("BulkRequestedBy")
-  reviewedBulk     BulkRequest[] @relation("BulkReviewedBy")
+  bulkRequests BulkRequest[] @relation("BulkRequestedBy")
+  reviewedBulk BulkRequest[] @relation("BulkReviewedBy")
 
-  generatedBills   Bill[]        @relation("BillGeneratedBy")
+  generatedBills     Bill[]            @relation("BillGeneratedBy")
   createdAssignments AssetAssignment[] @relation("AssignmentCreatedBy")
 
   fuelCorrections     FuelIssueCorrection[] @relation("CorrectionRequestedBy")
   reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
 
-  tankDips         TankDip[]     @relation("TankDipRecordedBy")
+  tankDips TankDip[] @relation("TankDipRecordedBy")
 
-  serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
+  serviceRecords     ServiceRecord[]     @relation("ServiceRecordedBy")
   serviceAttachments ServiceAttachment[] @relation("AttachmentUploadedBy")
+
+  // Oil/lubricant stock book (integrated from Oil Stock Book)
+  stockMovements        StockMovement[] @relation("StockMovementCreatedBy")
+  batteriesCreated      Battery[]       @relation("BatteryCreatedBy")
+  batteryEvents         BatteryEvent[]  @relation("BatteryEventUser")
+  stockCounts           StockCount[]    @relation("StockCountBy")
+  requisitionsRequested Requisition[]   @relation("RequisitionRequestedBy")
+  requisitionsApproved  Requisition[]   @relation("RequisitionApprovedBy")
+  requisitionsReceived  Requisition[]   @relation("RequisitionReceivedBy")
 }
 
 model Category {
-  id               String        @id @default(uuid())
-  code             String        @unique // e.g. DT, HEX, VR
+  id               String           @id @default(uuid())
+  code             String           @unique // e.g. DT, HEX, VR
   name             String
-  defaultMeterType String        // "KM" | "HOURS"
-  fleetGroup       String        // "ROAD_VEHICLE" | "MACHINERY_GENSET"
+  defaultMeterType String // "KM" | "HOURS"
+  fleetGroup       String // "ROAD_VEHICLE" | "MACHINERY_GENSET"
   assets           Asset[]
   serviceInterval  ServiceInterval?
 }
 
 model Asset {
-  id            String         @id @default(uuid())
-  code          String         @unique // E&C number (e.g. DT-123)
-  brand         String?
-  typeLabel     String?        // e.g. SANY, TATA
-  model         String?
-  regNo         String?
-  capacity      String?
-  yom           Int?
-  chassisNo     String?
-  engineNo      String?
-  serialNo      String?
-  site          String?
-  status        String         @default("ACTIVE") // "ACTIVE" | "INACTIVE" | "DISPOSED"
-  meterType     String         // "KM" | "HOURS"
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id        String   @id @default(uuid())
+  code      String   @unique // E&C number (e.g. DT-123)
+  brand     String?
+  typeLabel String? // e.g. SANY, TATA
+  model     String?
+  regNo     String?
+  capacity  String?
+  yom       Int?
+  chassisNo String?
+  engineNo  String?
+  serialNo  String?
+  site      String?
+  status    String   @default("ACTIVE") // "ACTIVE" | "INACTIVE" | "DISPOSED"
+  meterType String // "KM" | "HOURS"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  categoryId    String
-  category      Category       @relation(fields: [categoryId], references: [id])
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
 
-  projectId     String?
-  project       Project?       @relation(fields: [projectId], references: [id])
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
 
-  fuelRequests  FuelRequest[]
-  fuelIssues    FuelIssue[]
-  meterReadings MeterReading[]
+  fuelRequests    FuelRequest[]
+  fuelIssues      FuelIssue[]
+  meterReadings   MeterReading[]
   dailyConditions DailyCondition[]
-  assignments   AssetAssignment[]
+  assignments     AssetAssignment[]
 
-  rentalRate    RentalRate?
-  bills         Bill[]
-  serviceRecords ServiceRecord[]
+  rentalRate              RentalRate?
+  bills                   Bill[]
+  serviceRecords          ServiceRecord[]
   serviceIntervalOverride ServiceInterval?
+
+  // Oil/lubricant consumption linkage (Oil Stock Book integration)
+  stockMovements  StockMovement[]
+  consumerAliases ConsumerAlias[]
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -105,120 +118,120 @@ model Asset {
 // segments. Dates are Colombo local-midnight day markers. endDate is the
 // inclusive last day; a null endDate means the posting is still open/ongoing.
 model AssetAssignment {
-  id          String    @id @default(uuid())
+  id String @id @default(uuid())
 
-  assetId     String
-  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
-  projectId   String
-  project     Project   @relation(fields: [projectId], references: [id])
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
 
-  startDate   DateTime  // inclusive first day (Colombo midnight)
-  endDate     DateTime? // inclusive last day; null = ongoing
-  note        String?
+  startDate DateTime // inclusive first day (Colombo midnight)
+  endDate   DateTime? // inclusive last day; null = ongoing
+  note      String?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   createdById String?
-  createdBy   User?     @relation("AssignmentCreatedBy", fields: [createdById], references: [id])
+  createdBy   User?   @relation("AssignmentCreatedBy", fields: [createdById], references: [id])
 
   @@index([assetId, startDate])
   @@index([projectId, startDate])
 }
 
 model FuelPrice {
-  id             String      @id @default(uuid())
-  fuelKind       String      // "AUTO_DIESEL" | "SUPER_DIESEL"
-  pricePerLitre  Int         // in LKR cents
-  effectiveFrom  DateTime
-  source         String      // "CEYPETCO" | "MANUAL"
-  note           String?
-  createdAt      DateTime    @default(now())
+  id            String   @id @default(uuid())
+  fuelKind      String // "AUTO_DIESEL" | "SUPER_DIESEL"
+  pricePerLitre Int // in LKR cents
+  effectiveFrom DateTime
+  source        String // "CEYPETCO" | "MANUAL"
+  note          String?
+  createdAt     DateTime @default(now())
 
-  enteredById    String
-  enteredBy      User        @relation(fields: [enteredById], references: [id])
+  enteredById String
+  enteredBy   User   @relation(fields: [enteredById], references: [id])
 
-  fuelIssues     FuelIssue[]
+  fuelIssues FuelIssue[]
 
   @@unique([fuelKind, effectiveFrom])
   @@index([fuelKind, effectiveFrom])
 }
 
 model FuelRequest {
-  id             String      @id @default(uuid())
-  fuelKind       String      // "AUTO_DIESEL" | "SUPER_DIESEL"
+  id              String   @id @default(uuid())
+  fuelKind        String // "AUTO_DIESEL" | "SUPER_DIESEL"
   requestedLitres Float
-  meterReading   Float?
-  readingType    String?     // "KM" | "HOURS"
-  reason         String?
-  status         String      @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  meterReading    Float?
+  readingType     String? // "KM" | "HOURS"
+  reason          String?
+  status          String   @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  assetId        String
-  asset          Asset       @relation(fields: [assetId], references: [id])
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id])
 
-  requestedById  String
-  requestedBy    User        @relation("RequestedBy", fields: [requestedById], references: [id])
+  requestedById String
+  requestedBy   User   @relation("RequestedBy", fields: [requestedById], references: [id])
 
-  reviewedById   String?
-  reviewedBy     User?       @relation("ReviewedBy", fields: [reviewedById], references: [id])
-  reviewedAt     DateTime?
-  reviewNote     String?
+  reviewedById String?
+  reviewedBy   User?     @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+  reviewNote   String?
 
   // Optional pump/meter photo proof captured by the site PM at request time;
   // copied onto the resulting FuelIssue when the request is approved.
-  photoData      Bytes?
-  photoName      String?
-  photoMime      String?
+  photoData Bytes?
+  photoName String?
+  photoMime String?
 
-  issue          FuelIssue?
+  issue FuelIssue?
 }
 
 model FuelIssue {
-  id             String       @id @default(uuid())
-  fuelKind       String       // "AUTO_DIESEL" | "SUPER_DIESEL"
-  litres         Float
-  meterReading   Float?
-  readingType    String?      // "KM" | "HOURS"
-  pricePerLitre  Int          // in LKR cents snapshot
-  totalCost      Int          // in LKR cents calculated
-  source         String       // "STATION" | "BOWSER"
-  issueDate      DateTime
-  createdAt      DateTime     @default(now())
+  id            String   @id @default(uuid())
+  fuelKind      String // "AUTO_DIESEL" | "SUPER_DIESEL"
+  litres        Float
+  meterReading  Float?
+  readingType   String? // "KM" | "HOURS"
+  pricePerLitre Int // in LKR cents snapshot
+  totalCost     Int // in LKR cents calculated
+  source        String // "STATION" | "BOWSER"
+  issueDate     DateTime
+  createdAt     DateTime @default(now())
 
-  assetId        String
-  asset          Asset        @relation(fields: [assetId], references: [id])
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id])
 
-  issuedById     String
-  issuedBy       User         @relation("IssuedBy", fields: [issuedById], references: [id])
+  issuedById String
+  issuedBy   User   @relation("IssuedBy", fields: [issuedById], references: [id])
 
-  fuelPriceId    String?
-  fuelPrice      FuelPrice?   @relation(fields: [fuelPriceId], references: [id])
+  fuelPriceId String?
+  fuelPrice   FuelPrice? @relation(fields: [fuelPriceId], references: [id])
 
-  linkedRequestId String?     @unique
+  linkedRequestId String?      @unique
   linkedRequest   FuelRequest? @relation(fields: [linkedRequestId], references: [id])
 
-  meterReadingRecordId String? @unique
+  meterReadingRecordId String?       @unique
   meterReadingRecord   MeterReading? @relation("LinkedIssueMeterReading")
 
-  bulkTankId      String?
-  bulkTank        BulkTank?    @relation("TankIssues", fields: [bulkTankId], references: [id])
+  bulkTankId String?
+  bulkTank   BulkTank? @relation("TankIssues", fields: [bulkTankId], references: [id])
 
   // Soft-void: a wrong/duplicate issue is voided (not deleted) via an approved
   // correction. Voided issues are excluded from billing, fuel sums and reports
   // but kept for the audit trail.
-  voided          Boolean      @default(false)
-  voidedAt        DateTime?
+  voided   Boolean   @default(false)
+  voidedAt DateTime?
 
   // Optional pump/meter photo proof for the issue (carried from the request,
   // or attached directly on a direct issue).
-  photoData       Bytes?
-  photoName       String?
-  photoMime       String?
+  photoData Bytes?
+  photoName String?
+  photoMime String?
 
-  corrections     FuelIssueCorrection[]
+  corrections FuelIssueCorrection[]
 }
 
 // An admin-approved error-correction request against a fuel issue. A site user
@@ -226,21 +239,21 @@ model FuelIssue {
 // it travels with DB backups); an admin approves (applies the edit / voids the
 // issue) or rejects. Every request is a permanent, site-stamped log entry.
 model FuelIssueCorrection {
-  id            String    @id @default(uuid())
+  id String @id @default(uuid())
 
-  fuelIssueId   String
-  fuelIssue     FuelIssue @relation(fields: [fuelIssueId], references: [id], onDelete: Cascade)
+  fuelIssueId String
+  fuelIssue   FuelIssue @relation(fields: [fuelIssueId], references: [id], onDelete: Cascade)
 
-  type          String    // "EDIT" | "VOID"
-  status        String    @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
-  reason        String
+  type   String // "EDIT" | "VOID"
+  status String @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
+  reason String
 
   // Proposed new values (EDIT only; null = leave that field unchanged).
-  newLitres        Float?
-  newMeterReading  Float?
-  newReadingType   String?
-  newFuelKind      String?
-  newIssueDate     DateTime?
+  newLitres       Float?
+  newMeterReading Float?
+  newReadingType  String?
+  newFuelKind     String?
+  newIssueDate    DateTime?
 
   // Original values snapshotted at request time, for the before/after log.
   origLitres       Float
@@ -251,28 +264,28 @@ model FuelIssueCorrection {
 
   // Site snapshot (so the activity log sorts/filters site-wise even if the
   // vehicle is later reassigned).
-  assetId       String
-  assetCode     String
-  projectId     String?
-  projectName   String?
-  projectCode   String?
+  assetId     String
+  assetCode   String
+  projectId   String?
+  projectName String?
+  projectCode String?
 
   // Required evidence document (photo/PDF of the signed running chart), stored
   // as a BLOB so it is captured by the existing database backups.
-  docData       Bytes
-  docName       String
-  docMime       String
+  docData Bytes
+  docName String
+  docMime String
 
   requestedById String
-  requestedBy   User      @relation("CorrectionRequestedBy", fields: [requestedById], references: [id])
+  requestedBy   User   @relation("CorrectionRequestedBy", fields: [requestedById], references: [id])
 
-  reviewedById  String?
-  reviewedBy    User?     @relation("CorrectionReviewedBy", fields: [reviewedById], references: [id])
-  reviewedAt    DateTime?
-  reviewNote    String?
+  reviewedById String?
+  reviewedBy   User?     @relation("CorrectionReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+  reviewNote   String?
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status, projectCode])
   @@index([projectCode, createdAt])
@@ -280,41 +293,41 @@ model FuelIssueCorrection {
 }
 
 model MeterReading {
-  id             String     @id @default(uuid())
-  value          Float      // cumulative odometer or hour meter
-  readingType    String     // "KM" | "HOURS"
-  readingDate    DateTime
-  source         String     // "MANUAL" | "FUEL_ISSUE"
-  createdAt      DateTime   @default(now())
+  id          String   @id @default(uuid())
+  value       Float // cumulative odometer or hour meter
+  readingType String // "KM" | "HOURS"
+  readingDate DateTime
+  source      String // "MANUAL" | "FUEL_ISSUE"
+  createdAt   DateTime @default(now())
 
-  assetId        String
-  asset          Asset      @relation(fields: [assetId], references: [id])
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id])
 
-  recordedById   String
-  recordedBy     User       @relation("RecordedBy", fields: [recordedById], references: [id])
+  recordedById String
+  recordedBy   User   @relation("RecordedBy", fields: [recordedById], references: [id])
 
-  linkedIssueId  String?    @unique
-  linkedIssue    FuelIssue? @relation("LinkedIssueMeterReading", fields: [linkedIssueId], references: [id])
+  linkedIssueId String?    @unique
+  linkedIssue   FuelIssue? @relation("LinkedIssueMeterReading", fields: [linkedIssueId], references: [id])
 }
 
 model AuditLog {
-  id             String    @id @default(uuid())
-  action         String    // "CREATE" | "UPDATE" | "DELETE" | "APPROVE" | "REJECT" | "LOGIN" | "PRICE_REFRESH" | "BACKUP"
-  entity         String    // e.g. "Asset", "FuelIssue"
-  entityId       String?
-  summary        String
-  metaJson       String?   // JSON payload details
-  createdAt      DateTime  @default(now())
+  id        String   @id @default(uuid())
+  action    String // "CREATE" | "UPDATE" | "DELETE" | "APPROVE" | "REJECT" | "LOGIN" | "PRICE_REFRESH" | "BACKUP"
+  entity    String // e.g. "Asset", "FuelIssue"
+  entityId  String?
+  summary   String
+  metaJson  String? // JSON payload details
+  createdAt DateTime @default(now())
 
-  actorId        String?
-  actor          User?     @relation("Actor", fields: [actorId], references: [id])
+  actorId String?
+  actor   User?   @relation("Actor", fields: [actorId], references: [id])
 }
 
 model Setting {
-  id             String    @id @default(uuid())
-  key            String    @unique
-  value          String
-  updatedAt      DateTime  @updatedAt
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 model Project {
@@ -331,20 +344,26 @@ model Project {
   bulkTanks   BulkTank[]
   assignments AssetAssignment[]
   budgets     Budget[]
+
+  // Oil Stock Book integration
+  sites           Site[]
+  stockMovements  StockMovement[]
+  requisitions    Requisition[]
+  consumerAliases ConsumerAlias[]
 }
 
 model DailyCondition {
-  id           String   @id @default(uuid())
-  status       String   // "WORKING" | "BREAKDOWN"
-  logDate      DateTime // truncated to midnight YYYY-MM-DD
-  note         String?
-  createdAt    DateTime @default(now())
+  id        String   @id @default(uuid())
+  status    String // "WORKING" | "BREAKDOWN"
+  logDate   DateTime // truncated to midnight YYYY-MM-DD
+  note      String?
+  createdAt DateTime @default(now())
 
-  assetId      String
-  asset        Asset    @relation(fields: [assetId], references: [id])
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id])
 
   recordedById String
-  recordedBy   User     @relation("RecordedBy", fields: [recordedById], references: [id])
+  recordedBy   User   @relation("RecordedBy", fields: [recordedById], references: [id])
 
   @@unique([assetId, logDate])
   @@index([assetId, logDate])
@@ -353,132 +372,132 @@ model DailyCondition {
 model BulkTank {
   id        String   @id @default(uuid())
   name      String   @unique
-  fuelKind  String   // "AUTO_DIESEL" | "SUPER_DIESEL"
+  fuelKind  String // "AUTO_DIESEL" | "SUPER_DIESEL"
   capacity  Float
   balance   Float    @default(0.0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   projectId String?
-  project   Project?      @relation(fields: [projectId], references: [id])
+  project   Project? @relation(fields: [projectId], references: [id])
 
-  users     User[]
-  requests  BulkRequest[]
-  issues    FuelIssue[]   @relation("TankIssues")
-  dips      TankDip[]
+  users    User[]
+  requests BulkRequest[]
+  issues   FuelIssue[]   @relation("TankIssues")
+  dips     TankDip[]
 }
 
 // A physical bulk-tank dip/count, recorded periodically to reconcile the
 // measured fuel level against the system-computed balance (top-ups − issues).
 // A persistent gap flags shrinkage, leakage or unrecorded draws.
 model TankDip {
-  id              String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  bulkTankId      String
-  bulkTank        BulkTank @relation(fields: [bulkTankId], references: [id], onDelete: Cascade)
+  bulkTankId String
+  bulkTank   BulkTank @relation(fields: [bulkTankId], references: [id], onDelete: Cascade)
 
-  dipLitres       Float    // physically measured litres in the tank
-  computedBalance Float    // system balance snapshot at dip time
-  variance        Float    // dipLitres − computedBalance (negative = shortfall)
+  dipLitres       Float // physically measured litres in the tank
+  computedBalance Float // system balance snapshot at dip time
+  variance        Float // dipLitres − computedBalance (negative = shortfall)
   dipDate         DateTime
   note            String?
   createdAt       DateTime @default(now())
 
-  recordedById    String
-  recordedBy      User     @relation("TankDipRecordedBy", fields: [recordedById], references: [id])
+  recordedById String
+  recordedBy   User   @relation("TankDipRecordedBy", fields: [recordedById], references: [id])
 
   @@index([bulkTankId, dipDate])
 }
 
 model BulkRequest {
-  id              String    @id @default(uuid())
-  fuelKind        String    // "AUTO_DIESEL" | "SUPER_DIESEL"
+  id              String   @id @default(uuid())
+  fuelKind        String // "AUTO_DIESEL" | "SUPER_DIESEL"
   requestedLitres Float
-  status          String    @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  status          String   @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  bulkTankId      String
-  bulkTank        BulkTank  @relation(fields: [bulkTankId], references: [id])
+  bulkTankId String
+  bulkTank   BulkTank @relation(fields: [bulkTankId], references: [id])
 
-  requestedById   String
-  requestedBy     User      @relation("BulkRequestedBy", fields: [requestedById], references: [id])
+  requestedById String
+  requestedBy   User   @relation("BulkRequestedBy", fields: [requestedById], references: [id])
 
-  reviewedById    String?
-  reviewedBy      User?     @relation("BulkReviewedBy", fields: [reviewedById], references: [id])
-  reviewedAt      DateTime?
-  reviewNote      String?
+  reviewedById String?
+  reviewedBy   User?     @relation("BulkReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+  reviewNote   String?
 }
 
 // Per-asset machine rental rate card, imported from the E&C Machine Rental
 // Calculator. Rates are stored in LKR cents (whole-LKR source × 100). A null
 // tier means that combination is not available for the machine.
 model RentalRate {
-  id            String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  assetId       String   @unique
-  asset         Asset    @relation(fields: [assetId], references: [id])
+  assetId String @unique
+  asset   Asset  @relation(fields: [assetId], references: [id])
 
-  sourceLabel   String?  // original "label" from the rate card
-  category      String?  // source "cat"
-  equipType     String   @default("FLEET") // "FLEET" | "PORTABLE"
+  sourceLabel String? // original "label" from the rate card
+  category    String? // source "cat"
+  equipType   String  @default("FLEET") // "FLEET" | "PORTABLE"
 
-  fuelQtyDefault Float?  // source "fuel" hint (not used for billing fuel cost)
-  opRate         Int?    // source "op" operator rate, cents (reserved)
+  fuelQtyDefault Float? // source "fuel" hint (not used for billing fuel cost)
+  opRate         Int? // source "op" operator rate, cents (reserved)
 
   // Hourly tier (cents)
-  hrFwCents     Int?
-  hrWCents      Int?
-  hrDCents      Int?
+  hrFwCents Int?
+  hrWCents  Int?
+  hrDCents  Int?
   // Per-day tier (cents)
-  dyFwCents     Int?
-  dyWCents      Int?
-  dyDCents      Int?
+  dyFwCents Int?
+  dyWCents  Int?
+  dyDCents  Int?
   // Per-km tier (cents)
-  kmFwCents     Int?
-  kmWCents      Int?
-  kmDCents      Int?
+  kmFwCents Int?
+  kmWCents  Int?
+  kmDCents  Int?
 
   // Portable equipment: per-day only, 2-tier (dw = day wet, dd = day dry)
-  portDwCents   Int?
-  portDdCents   Int?
+  portDwCents Int?
+  portDdCents Int?
 
   // Fuel consumption rates from the Fuel Rates sheet (L/hr or L/km)
-  fuelConsEcon  Float?   // economic (light load) consumption
-  fuelConsTyp   Float?   // typical consumption
-  fuelConsBasis String?  // "hr" | "km"
+  fuelConsEcon  Float? // economic (light load) consumption
+  fuelConsTyp   Float? // typical consumption
+  fuelConsBasis String? // "hr" | "km"
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // One monthly bill per asset. Acts as both a cost statement and an invoice.
 // All money columns are LKR cents and fully snapshotted at generation time so a
 // finalized bill is immutable even if the underlying issues/readings change.
 model Bill {
-  id            String   @id @default(uuid())
+  id String @id @default(uuid())
 
   // Period (Colombo month)
-  year          Int
-  month         Int      // 1-12
-  periodKey     String   // "2026-05"
-  periodStart   DateTime
-  periodEnd     DateTime
+  year        Int
+  month       Int // 1-12
+  periodKey   String // "2026-05"
+  periodStart DateTime
+  periodEnd   DateTime
 
   // Asset / site snapshot
-  assetId       String
-  asset         Asset    @relation(fields: [assetId], references: [id])
-  assetCode     String
-  assetRegNo    String?
-  assetLabel    String?
-  projectId     String?
-  projectName   String?
-  projectCode   String?
+  assetId     String
+  asset       Asset   @relation(fields: [assetId], references: [id])
+  assetCode   String
+  assetRegNo  String?
+  assetLabel  String?
+  projectId   String?
+  projectName String?
+  projectCode String?
 
   // Billing config snapshot
-  billingMode   String   // "hourly" | "perkm" | "perday"
-  rateBasis     String   // "fw" | "w" | "d"
-  rateCents     Int
+  billingMode String // "hourly" | "perkm" | "perday"
+  rateBasis   String // "fw" | "w" | "d"
+  rateCents   Int
 
   // Usage derivation snapshot
   openingMeter  Float?
@@ -499,20 +518,20 @@ model Bill {
   grandTotalCents   Int
 
   // Invoice fields
-  invoiceNumber String?  @unique
-  status        String   @default("DRAFT") // "DRAFT" | "ISSUED" | "PAID" | "OVERDUE"
-  issuedDate    DateTime?
-  dueDate       DateTime?
-  paidDate      DateTime?
+  invoiceNumber   String?   @unique
+  status          String    @default("DRAFT") // "DRAFT" | "ISSUED" | "PAID" | "OVERDUE"
+  issuedDate      DateTime?
+  dueDate         DateTime?
+  paidDate        DateTime?
   paidAmountCents Int?
-  paymentRef    String?
-  paymentNote   String?
+  paymentRef      String?
+  paymentNote     String?
 
-  notes         String?
+  notes String?
 
   // Fuel-derived units (when no meter readings exist)
   derivedFromFuel Boolean @default(false)
-  fuelConsMidRate Float?  // mid consumption rate used (L/hr or L/km)
+  fuelConsMidRate Float? // mid consumption rate used (L/hr or L/km)
 
   // Fuel-derived options and raw meter units
   actualMeterUnits     Float?
@@ -525,18 +544,18 @@ model Bill {
   breakdownDays        Int @default(0)
   breakdownDeductCents Int @default(0)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   generatedById String?
-  generatedBy   User?    @relation("BillGeneratedBy", fields: [generatedById], references: [id])
+  generatedBy   User?   @relation("BillGeneratedBy", fields: [generatedById], references: [id])
 
   // Invoice email dispatch stamp.
-  emailedAt     DateTime?
-  emailedTo     String?
+  emailedAt DateTime?
+  emailedTo String?
 
-  lineItems     BillLineItem[]
-  creditNotes   CreditNote[]
+  lineItems   BillLineItem[]
+  creditNotes CreditNote[]
 
   @@unique([assetId, year, month])
   @@index([periodKey, status])
@@ -544,17 +563,17 @@ model Bill {
 }
 
 model BillLineItem {
-  id          String  @id @default(uuid())
+  id String @id @default(uuid())
 
-  billId      String
-  bill        Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+  billId String
+  bill   Bill   @relation(fields: [billId], references: [id], onDelete: Cascade)
 
-  kind        String  // "RENTAL" | "FUEL" | "ADJUSTMENT"
-  description String
-  quantity    Float
-  unit        String  // "hr" | "km" | "day" | "L" | "—"
+  kind          String // "RENTAL" | "FUEL" | "ADJUSTMENT"
+  description   String
+  quantity      Float
+  unit          String // "hr" | "km" | "day" | "L" | "—"
   unitRateCents Int
-  amountCents Int
+  amountCents   Int
 
   // Per-site attribution. When a vehicle works several sites in one month the
   // bill carries one RENTAL (+ optional FUEL) line per site; these record which
@@ -568,20 +587,20 @@ model BillLineItem {
 // Per-site monthly fuel budget, for budget-vs-actual tracking and month-end
 // run-rate forecasting.
 model Budget {
-  id                String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  projectId         String
-  project           Project  @relation(fields: [projectId], references: [id])
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
 
   year              Int
-  month             Int      // 1-12
+  month             Int // 1-12
   budgetLitres      Float?
   budgetAmountCents Int?
   note              String?
 
-  createdById       String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@unique([projectId, year, month])
   @@index([year, month])
@@ -590,18 +609,18 @@ model Budget {
 // A credit note against an issued bill (correction/discount/goodwill). Reduces
 // the outstanding receivable for that invoice once issued.
 model CreditNote {
-  id          String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  billId      String
-  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  billId String
+  bill   Bill   @relation(fields: [billId], references: [id], onDelete: Cascade)
 
-  number      String?  @unique
+  number      String? @unique
   reason      String
-  amountCents Int      // positive amount credited back to the customer
-  status      String   @default("DRAFT") // "DRAFT" | "ISSUED"
+  amountCents Int // positive amount credited back to the customer
+  status      String  @default("DRAFT") // "DRAFT" | "ISSUED"
 
   createdById String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
   issuedDate  DateTime?
 
   @@index([billId])
@@ -611,20 +630,20 @@ model CreditNote {
 // one per asset (an override). Resolution precedence: asset → category →
 // hard-coded fleet-group default (machinery 500 hr / road 5,000 km).
 model ServiceInterval {
-  id             String    @id @default(uuid())
+  id String @id @default(uuid())
 
-  categoryId     String?   @unique
-  category       Category? @relation(fields: [categoryId], references: [id])
+  categoryId String?   @unique
+  category   Category? @relation(fields: [categoryId], references: [id])
 
-  assetId        String?   @unique
-  asset          Asset?    @relation(fields: [assetId], references: [id])
+  assetId String? @unique
+  asset   Asset?  @relation(fields: [assetId], references: [id])
 
-  basis          String    // "HOURS" | "KM"
+  basis          String // "HOURS" | "KM"
   intervalValue  Float
   intervalMonths Int?
 
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // A logged completed service. The countdown to the next service resets at the
@@ -636,23 +655,23 @@ model ServiceInterval {
 // All money is stored in LKR cents to match the rest of the system. `costCents`
 // is kept as a mirror of `grandTotalCents` so existing displays keep working.
 model ServiceRecord {
-  id             String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  assetId        String
-  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   serviceDate    DateTime
   meterAtService Float?
-  meterType      String   // "HOURS" | "KM"
+  meterType      String // "HOURS" | "KM"
   serviceType    String?
-  costCents      Int?     // legacy/grand-total mirror (kept for existing displays)
+  costCents      Int? // legacy/grand-total mirror (kept for existing displays)
   note           String?
 
   // --- Detailed service-sheet header (merged from the Service Record system) ---
   jobNo            String?
   siteLocation     String?
   nextServiceMeter Float?
-  upkeepingStatus  String?  // e.g. "GOOD" | "NEEDS_REPAIR"
+  upkeepingStatus  String? // e.g. "GOOD" | "NEEDS_REPAIR"
   repairDetails    String?
 
   // --- Money breakdown (LKR cents) ---
@@ -663,14 +682,14 @@ model ServiceRecord {
   sundryAmountCents  Int   @default(0)
   grandTotalCents    Int   @default(0)
 
-  recordedById   String
-  recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
+  recordedById String
+  recordedBy   User   @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
 
-  createdAt      DateTime @default(now())
+  createdAt DateTime @default(now())
 
   // Provenance for bulk imports (e.g. "servicedb:1573"); lets re-runs skip
   // already-imported rows. Null for records created in-app.
-  sourceRef      String?  @unique
+  sourceRef String? @unique
 
   oils        ServiceOil[]
   filters     ServiceFilter[]
@@ -684,12 +703,12 @@ model ServiceRecord {
 // One oil line on a service sheet (e.g. "Engine Oil" → grade "15W40-CI/04",
 // 12 L, Rs ...). `oilName` matches an OilType master row.
 model ServiceOil {
-  id              String        @id @default(uuid())
+  id String @id @default(uuid())
 
   serviceRecordId String
   serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
 
-  oilName    String  // master oil-line name (e.g. "Engine Oil")
+  oilName    String // master oil-line name (e.g. "Engine Oil")
   oilType    String? // chosen grade/code (e.g. "15W40-CI/04")
   actionType String? // C/V marker (change / verify) — free text
   quantity   Float   @default(0)
@@ -701,12 +720,12 @@ model ServiceOil {
 // One filter line on a service sheet. `filterCategory` matches a
 // FilterCategoryRef master row; `filterNo` is the part number fitted.
 model ServiceFilter {
-  id              String        @id @default(uuid())
+  id String @id @default(uuid())
 
   serviceRecordId String
   serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
 
-  filterCategory String  // master filter-category name (e.g. "Air Filter")
+  filterCategory String // master filter-category name (e.g. "Air Filter")
   filterNo       String? // part number fitted
   actionType     String? // X/E marker (exchange / existing) — free text
   quantity       Int     @default(1)
@@ -718,7 +737,7 @@ model ServiceFilter {
 // A free-form additional cost line on a service sheet (labour items, sundries
 // entered by hand, sublet work, etc.).
 model ServiceCostLine {
-  id              String        @id @default(uuid())
+  id String @id @default(uuid())
 
   serviceRecordId String
   serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
@@ -767,12 +786,12 @@ model FilterCatalog {
   oemPartNumber   String?
   hifiPartNumber  String?
   description     String?
-  compatibleFleet String?         // free-text compatible fleet types
-  crossRefText    String?         // raw cross-reference string
-  monthlyDemand   Float?          // from the source filter analysis
+  compatibleFleet String? // free-text compatible fleet types
+  crossRefText    String? // raw cross-reference string
+  monthlyDemand   Float? // from the source filter analysis
   annualDemand    Float?
-  serviceCount    Int?            // historical service uses
-  vehicleCount    Int?            // distinct vehicles using it
+  serviceCount    Int? // historical service uses
+  vehicleCount    Int? // distinct vehicles using it
   createdAt       DateTime @default(now())
 
   crossRefs    FilterCrossRef[]
@@ -849,14 +868,14 @@ model FilterStockMovement {
   id              String   @id @default(uuid())
   normalizedCode  String
   filterNo        String?
-  delta           Int      // signed: +in (receipt/adjust up), -out (consumption/adjust down)
-  reason          String   // "RECEIPT" | "CONSUMPTION" | "ADJUSTMENT" | "OPENING"
+  delta           Int // signed: +in (receipt/adjust up), -out (consumption/adjust down)
+  reason          String // "RECEIPT" | "CONSUMPTION" | "ADJUSTMENT" | "OPENING"
   note            String?
-  unitCostCents   Int?     // unit cost captured on a receipt (LKR cents); null otherwise
-  balanceAfter    Int      // on-hand immediately after this movement was applied
-  serviceRecordId String?  // CONSUMPTION rows: the service that consumed the filter
-  purchaseOrderId String?  // RECEIPT rows: the PO this receipt was booked against
-  createdById     String?  // actor (User.id); plain ref, not a relation
+  unitCostCents   Int? // unit cost captured on a receipt (LKR cents); null otherwise
+  balanceAfter    Int // on-hand immediately after this movement was applied
+  serviceRecordId String? // CONSUMPTION rows: the service that consumed the filter
+  purchaseOrderId String? // RECEIPT rows: the PO this receipt was booked against
+  createdById     String? // actor (User.id); plain ref, not a relation
   createdAt       DateTime @default(now())
 
   @@index([normalizedCode, createdAt])
@@ -880,7 +899,7 @@ model FilterPurchaseOrder {
   receivedAt  DateTime?
   updatedAt   DateTime  @updatedAt
 
-  lines       FilterPurchaseOrderLine[]
+  lines FilterPurchaseOrderLine[]
 }
 
 model FilterPurchaseOrderLine {
@@ -911,7 +930,7 @@ model OilPrice {
 // Office docs). Stored inline as Bytes — like FuelIssue.photoData and
 // FuelIssueCorrection.docData — so they travel with the database backups.
 model ServiceAttachment {
-  id              String        @id @default(uuid())
+  id String @id @default(uuid())
 
   serviceRecordId String
   serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
@@ -919,12 +938,247 @@ model ServiceAttachment {
   data         Bytes
   originalName String
   mimeType     String?
-  fileSize     Int      @default(0)
-  caption      String   @default("")
+  fileSize     Int     @default(0)
+  caption      String  @default("")
 
   uploadedById String?
   uploadedBy   User?    @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id])
   uploadedAt   DateTime @default(now())
 
   @@index([serviceRecordId])
+}
+
+// ===========================================================================
+// Oil Stock Book integration — a general lubricant / consumable stock ledger,
+// month-end stock-take, material requisitions and a battery register, merged
+// from the standalone Oil Stock Book app. These reuse this system's canonical
+// fleet (`Asset`), `Project` and `User` rather than duplicating them, so oil
+// issues land on the same machines this system already tracks fuel & service
+// for (powering complete per-machine total cost of ownership).
+//
+// Note: filters keep their dedicated engine (FilterStock / FilterStockMovement
+// / FilterPurchaseOrder). This `Product` / `StockMovement` ledger covers oils,
+// lubricants, greases, spares, tyres and other consumables. A later phase may
+// fold filters into this unified model.
+// ===========================================================================
+
+// A first-class site (location) under a project. Oil Stock Book modelled sites
+// explicitly; this system previously only had a free-text `Asset.site`. Promoted
+// here so requisitions and oil issues can attribute to an exact location.
+model Site {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  nameNorm  String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  stockMovements StockMovement[]
+  requisitions   Requisition[]
+
+  @@unique([projectId, nameNorm])
+  @@index([projectId])
+}
+
+// A stockable item: oil / lubricant / grease / spare / tyre / consumable.
+// Generalises Oil Stock Book's `products`. Prices are LKR cents to match the
+// rest of this system (Oil Stock Book stored rupees).
+model Product {
+  id             String   @id @default(uuid())
+  name           String   @unique
+  sheetName      String? // source stock-book sheet (import provenance)
+  unit           String   @default("L")
+  category       String? // "engine_oil" | "hydraulic" | "gear_oil" | "grease" | "fuel" | "other"
+  reorderLevel   Float?
+  unitPriceCents Int? // null = price not set
+  active         Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  movements    StockMovement[]
+  stockCounts  StockCount[]
+  requisitions Requisition[]
+
+  @@index([category])
+}
+
+// The stock ledger — one signed movement per row, with the running balance
+// reproduced row-for-row (ported from Oil Stock Book's `transactions`). Each
+// issue is linked to the consuming machine, project and/or site. Ordering for
+// the running-balance recompute is (txnDate, createdAt, id); the importer
+// assigns monotonically increasing createdAt so imported rows keep the exact
+// physical stock-book order even when dates tie.
+model StockMovement {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  txnDate      DateTime
+  kind         String // "RECEIPT" | "ISSUE" | "OPENING" | "ADJUSTMENT"
+  qtyReceived  Float    @default(0)
+  qtyIssued    Float    @default(0)
+  balanceAfter Float    @default(0)
+
+  // Consumer linkage — reuses this system's canonical fleet & projects.
+  consumerType String? // "ASSET" | "PROJECT" | "INTERNAL" | "UNKNOWN"
+  assetId      String?
+  asset        Asset?   @relation(fields: [assetId], references: [id])
+  projectId    String?
+  project      Project? @relation(fields: [projectId], references: [id])
+  siteId       String?
+  site         Site?    @relation(fields: [siteId], references: [id])
+
+  description String?
+  mrNo        String? // material-requisition no (from the book)
+  mtnNo       String? // maintenance no (from the book)
+  remark      String?
+
+  // CONSUMPTION posted by a service sheet links back to it (Phase 4 closed
+  // loop). Plain ref (like FilterStockMovement.serviceRecordId) so stock
+  // history survives if the service is later removed.
+  serviceRecordId String?
+
+  voided   Boolean   @default(false)
+  voidedAt DateTime?
+
+  source     String  @default("manual") // "manual" | "import" | "requisition" | "service" | "stocktake"
+  importHash String? @unique // idempotent re-import key
+
+  createdById String?
+  createdBy   User?    @relation("StockMovementCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requisition Requisition? @relation("RequisitionTxn")
+
+  @@index([productId, txnDate])
+  @@index([assetId])
+  @@index([projectId])
+  @@index([txnDate])
+  @@index([serviceRecordId])
+}
+
+// Month-end physical stock take / reconciliation (Oil Stock Book's stock_counts).
+model StockCount {
+  id          String   @id @default(uuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  period      String // "YYYY-MM" the count closes
+  bookQty     Float    @default(0) // system balance at period end
+  countedQty  Float    @default(0) // physical count
+  variance    Float    @default(0) // counted - book
+  adjusted    Boolean  @default(false) // an ADJUSTMENT movement was posted
+  note        String?
+  countedById String?
+  countedBy   User?    @relation("StockCountBy", fields: [countedById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([productId, period])
+  @@index([period])
+}
+
+// Material requisition / dispatch: a site requests lubricant → the store keeper
+// approves & sends (an ISSUE movement is posted here) → the site confirms the
+// quantity received, flagging any shortfall (Oil Stock Book's `requisitions`).
+model Requisition {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+  siteId    String?
+  site      Site?    @relation(fields: [siteId], references: [id])
+
+  qtyRequested Float?
+  qtySent      Float?
+  qtyReceived  Float?
+  status       String @default("PENDING") // "PENDING"|"SENT"|"RECEIVED"|"REJECTED"|"CANCELLED"
+
+  // The issue movement posted when the store keeper sends the stock.
+  txnId String?        @unique
+  txn   StockMovement? @relation("RequisitionTxn", fields: [txnId], references: [id])
+
+  note         String?
+  rejectReason String?
+  discrepancy  Boolean @default(false) // received <> sent
+
+  requestedById String?
+  requestedBy   User?   @relation("RequisitionRequestedBy", fields: [requestedById], references: [id])
+  approvedById  String?
+  approvedBy    User?   @relation("RequisitionApprovedBy", fields: [approvedById], references: [id])
+  receivedById  String?
+  receivedBy    User?   @relation("RequisitionReceivedBy", fields: [receivedById], references: [id])
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  sentAt     DateTime?
+  receivedAt DateTime?
+
+  @@index([status])
+  @@index([projectId])
+}
+
+// One battery per vehicle (both unique). Photos are stored inline as Bytes
+// (this system's convention — see FuelIssue.photoData / ServiceAttachment.data)
+// rather than on disk, so they travel with the database backups. Batteries are
+// never deleted; transfer / decommission / edit are recorded in BatteryEvent.
+model Battery {
+  id            String   @id @default(uuid())
+  vehicleNo     String
+  vehicleNoNorm String   @unique
+  serialNo      String
+  serialNoNorm  String   @unique
+  note          String?
+  photoData     Bytes
+  photoMime     String?
+  createdById   String?
+  createdBy     User?    @relation("BatteryCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime @default(now())
+
+  events BatteryEvent[]
+}
+
+// Append-only battery audit trail. Decommissioned batteries leave `Battery`
+// but their events stay here forever (snapshot of serial / vehicle / photo).
+model BatteryEvent {
+  id            String   @id @default(uuid())
+  batteryId     String? // active battery id at event time (may be gone)
+  battery       Battery? @relation(fields: [batteryId], references: [id])
+  action        String // "ADD" | "TRANSFER" | "DECOMMISSION" | "EDIT"
+  serialNo      String?
+  serialNoNorm  String?
+  vehicleNo     String? // vehicle after the event (to-vehicle for a transfer)
+  fromVehicleNo String? // vehicle before a transfer / edit
+  reason        String?
+  photoData     Bytes?
+  photoMime     String?
+  userId        String?
+  user          User?    @relation("BatteryEventUser", fields: [userId], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([serialNoNorm])
+  @@index([batteryId])
+}
+
+// Unresolved free-text consumer descriptions from imported issues, surfaced on
+// the Mapping screen so one click links them to a machine / project and
+// back-fills history (Oil Stock Book's `aliases`).
+model ConsumerAlias {
+  id         String   @id @default(uuid())
+  rawText    String
+  rawNorm    String   @unique
+  targetType String? // "ASSET" | "PROJECT" | "INTERNAL"
+  assetId    String?
+  asset      Asset?   @relation(fields: [assetId], references: [id])
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id])
+  resolved   Boolean  @default(false)
+  hitCount   Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([resolved])
 }

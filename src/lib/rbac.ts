@@ -5,6 +5,10 @@ const MATRIX = {
   ALLOCATOR: new Set(["allocate"]),
   USER: new Set(["create"]),
   WORKSHOP: new Set(["create"]),
+  // Store keeper: runs the oil/lubricant stock book — records receipts & issues,
+  // manages products, and approves/sends material requisitions. Not allowed to
+  // hard-delete (admin only) or allocate fuel.
+  STOREKEEPER: new Set(["create", "update", "approve", "manage"]),
 };
 
 export type RBACAction = "create" | "update" | "delete" | "approve" | "manage" | "allocate";
