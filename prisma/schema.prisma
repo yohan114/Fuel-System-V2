@@ -838,6 +838,30 @@ model FilterStock {
   updatedAt      DateTime @updatedAt
 }
 
+// Phase 12: filter stock ledger. Every change to on-hand stock is recorded as a
+// signed movement (receipts in, service consumption out, manual adjustments) so
+// FilterStock.onHand is always explained and auditable. Keyed by the same
+// normalizedCode the demand / reorder engine uses, so the ledger lines up
+// exactly with the Reorder Planner. `serviceRecordId` links a CONSUMPTION row
+// back to the service that used the filter (plain ref, like ServiceRecord.sourceRef
+// — kept even if the service is later removed so stock history survives).
+model FilterStockMovement {
+  id              String   @id @default(uuid())
+  normalizedCode  String
+  filterNo        String?
+  delta           Int      // signed: +in (receipt/adjust up), -out (consumption/adjust down)
+  reason          String   // "RECEIPT" | "CONSUMPTION" | "ADJUSTMENT" | "OPENING"
+  note            String?
+  unitCostCents   Int?     // unit cost captured on a receipt (LKR cents); null otherwise
+  balanceAfter    Int      // on-hand immediately after this movement was applied
+  serviceRecordId String?  // CONSUMPTION rows: the service that consumed the filter
+  createdById     String?  // actor (User.id); plain ref, not a relation
+  createdAt       DateTime @default(now())
+
+  @@index([normalizedCode, createdAt])
+  @@index([serviceRecordId])
+}
+
 // Editable oil-grade price list (grade code → price) — drives oil price
 // auto-fill on the service sheet.
 model OilPrice {

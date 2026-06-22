@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { computeServiceTotals, getServiceRates } from "@/lib/service/charge";
+import { postServiceConsumption } from "@/lib/service/stock";
 
 // Log a completed service. The countdown to the next service resets at this
 // record's date (and meterAtService when supplied — compute.ts reads it
@@ -303,8 +304,18 @@ export async function logDetailedServiceAction(input: DetailedServiceInput) {
       },
     });
 
+    // Phase 12: decrement filter stock for what this service consumed.
+    // Best-effort — a stock-ledger hiccup must never fail the service log.
+    try {
+      await postServiceConsumption(rec.id, filters, admin.id);
+    } catch (stockErr) {
+      console.error("Stock consumption posting failed for service", rec.id, stockErr);
+    }
+
     revalidatePath("/service");
     revalidatePath("/service/records");
+    revalidatePath("/service/reorder");
+    revalidatePath("/service/stock");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true, id: rec.id };
   } catch (err: any) {

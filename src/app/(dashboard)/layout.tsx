@@ -28,6 +28,7 @@ import {
   Repeat,
   Tags,
   Package,
+  Boxes,
   ShoppingCart,
   BarChart3
 } from "lucide-react";
@@ -77,6 +78,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
       { label: "Filter Orders", href: "/service/order-planner", icon: Package },
       { label: "Reorder", href: "/service/reorder", icon: ShoppingCart },
+      { label: "Filter Stock", href: "/service/stock", icon: Boxes },
       { label: "Service Trends", href: "/service/analytics", icon: BarChart3 },
       { label: "Price Gaps", href: "/service/price-gaps", icon: Tags },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
