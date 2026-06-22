@@ -43,6 +43,11 @@ model User {
 
   fuelCorrections     FuelIssueCorrection[] @relation("CorrectionRequestedBy")
   reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
+
+  tankDips         TankDip[]     @relation("TankDipRecordedBy")
+
+  serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
+  serviceAttachments ServiceAttachment[] @relation("AttachmentUploadedBy")
 }
 
 model Category {
@@ -52,6 +57,7 @@ model Category {
   defaultMeterType String        // "KM" | "HOURS"
   fleetGroup       String        // "ROAD_VEHICLE" | "MACHINERY_GENSET"
   assets           Asset[]
+  serviceInterval  ServiceInterval?
 }
 
 model Asset {
@@ -86,6 +92,8 @@ model Asset {
 
   rentalRate    RentalRate?
   bills         Bill[]
+  serviceRecords ServiceRecord[]
+  serviceIntervalOverride ServiceInterval?
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -159,6 +167,12 @@ model FuelRequest {
   reviewedAt     DateTime?
   reviewNote     String?
 
+  // Optional pump/meter photo proof captured by the site PM at request time;
+  // copied onto the resulting FuelIssue when the request is approved.
+  photoData      Bytes?
+  photoName      String?
+  photoMime      String?
+
   issue          FuelIssue?
 }
 
@@ -197,6 +211,12 @@ model FuelIssue {
   // but kept for the audit trail.
   voided          Boolean      @default(false)
   voidedAt        DateTime?
+
+  // Optional pump/meter photo proof for the issue (carried from the request,
+  // or attached directly on a direct issue).
+  photoData       Bytes?
+  photoName       String?
+  photoMime       String?
 
   corrections     FuelIssueCorrection[]
 }
@@ -310,6 +330,7 @@ model Project {
   assets      Asset[]
   bulkTanks   BulkTank[]
   assignments AssetAssignment[]
+  budgets     Budget[]
 }
 
 model DailyCondition {
@@ -344,6 +365,29 @@ model BulkTank {
   users     User[]
   requests  BulkRequest[]
   issues    FuelIssue[]   @relation("TankIssues")
+  dips      TankDip[]
+}
+
+// A physical bulk-tank dip/count, recorded periodically to reconcile the
+// measured fuel level against the system-computed balance (top-ups − issues).
+// A persistent gap flags shrinkage, leakage or unrecorded draws.
+model TankDip {
+  id              String   @id @default(uuid())
+
+  bulkTankId      String
+  bulkTank        BulkTank @relation(fields: [bulkTankId], references: [id], onDelete: Cascade)
+
+  dipLitres       Float    // physically measured litres in the tank
+  computedBalance Float    // system balance snapshot at dip time
+  variance        Float    // dipLitres − computedBalance (negative = shortfall)
+  dipDate         DateTime
+  note            String?
+  createdAt       DateTime @default(now())
+
+  recordedById    String
+  recordedBy      User     @relation("TankDipRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([bulkTankId, dipDate])
 }
 
 model BulkRequest {
@@ -487,7 +531,12 @@ model Bill {
   generatedById String?
   generatedBy   User?    @relation("BillGeneratedBy", fields: [generatedById], references: [id])
 
+  // Invoice email dispatch stamp.
+  emailedAt     DateTime?
+  emailedTo     String?
+
   lineItems     BillLineItem[]
+  creditNotes   CreditNote[]
 
   @@unique([assetId, year, month])
   @@index([periodKey, status])
@@ -514,4 +563,368 @@ model BillLineItem {
   projectName String?
 
   @@index([billId])
+}
+
+// Per-site monthly fuel budget, for budget-vs-actual tracking and month-end
+// run-rate forecasting.
+model Budget {
+  id                String   @id @default(uuid())
+
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id])
+
+  year              Int
+  month             Int      // 1-12
+  budgetLitres      Float?
+  budgetAmountCents Int?
+  note              String?
+
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectId, year, month])
+  @@index([year, month])
+}
+
+// A credit note against an issued bill (correction/discount/goodwill). Reduces
+// the outstanding receivable for that invoice once issued.
+model CreditNote {
+  id          String   @id @default(uuid())
+
+  billId      String
+  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  number      String?  @unique
+  reason      String
+  amountCents Int      // positive amount credited back to the customer
+  status      String   @default("DRAFT") // "DRAFT" | "ISSUED"
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  issuedDate  DateTime?
+
+  @@index([billId])
+}
+
+// Service interval config. One row per category (the editable default) and/or
+// one per asset (an override). Resolution precedence: asset → category →
+// hard-coded fleet-group default (machinery 500 hr / road 5,000 km).
+model ServiceInterval {
+  id             String    @id @default(uuid())
+
+  categoryId     String?   @unique
+  category       Category? @relation(fields: [categoryId], references: [id])
+
+  assetId        String?   @unique
+  asset          Asset?    @relation(fields: [assetId], references: [id])
+
+  basis          String    // "HOURS" | "KM"
+  intervalValue  Float
+  intervalMonths Int?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// A logged completed service. The countdown to the next service resets at the
+// latest record's date (and meterAtService when supplied).
+//
+// Phase 1 of the Fuel + Service merge deepens this into a full service sheet
+// (merged from the standalone Service Record system): a header, an oils matrix,
+// a filters matrix, free-form cost lines and the labour/sundry money breakdown.
+// All money is stored in LKR cents to match the rest of the system. `costCents`
+// is kept as a mirror of `grandTotalCents` so existing displays keep working.
+model ServiceRecord {
+  id             String   @id @default(uuid())
+
+  assetId        String
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  serviceDate    DateTime
+  meterAtService Float?
+  meterType      String   // "HOURS" | "KM"
+  serviceType    String?
+  costCents      Int?     // legacy/grand-total mirror (kept for existing displays)
+  note           String?
+
+  // --- Detailed service-sheet header (merged from the Service Record system) ---
+  jobNo            String?
+  siteLocation     String?
+  nextServiceMeter Float?
+  upkeepingStatus  String?  // e.g. "GOOD" | "NEEDS_REPAIR"
+  repairDetails    String?
+
+  // --- Money breakdown (LKR cents) ---
+  partsSubtotalCents Int   @default(0)
+  labourRatePct      Float @default(0) // % actually applied (low/high band)
+  labourChargeCents  Int   @default(0)
+  sundryRatePct      Float @default(0)
+  sundryAmountCents  Int   @default(0)
+  grandTotalCents    Int   @default(0)
+
+  recordedById   String
+  recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
+
+  createdAt      DateTime @default(now())
+
+  // Provenance for bulk imports (e.g. "servicedb:1573"); lets re-runs skip
+  // already-imported rows. Null for records created in-app.
+  sourceRef      String?  @unique
+
+  oils        ServiceOil[]
+  filters     ServiceFilter[]
+  costLines   ServiceCostLine[]
+  attachments ServiceAttachment[]
+
+  @@index([assetId, serviceDate])
+  @@index([jobNo])
+}
+
+// One oil line on a service sheet (e.g. "Engine Oil" → grade "15W40-CI/04",
+// 12 L, Rs ...). `oilName` matches an OilType master row.
+model ServiceOil {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  oilName    String  // master oil-line name (e.g. "Engine Oil")
+  oilType    String? // chosen grade/code (e.g. "15W40-CI/04")
+  actionType String? // C/V marker (change / verify) — free text
+  quantity   Float   @default(0)
+  priceCents Int     @default(0)
+
+  @@index([serviceRecordId])
+}
+
+// One filter line on a service sheet. `filterCategory` matches a
+// FilterCategoryRef master row; `filterNo` is the part number fitted.
+model ServiceFilter {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  filterCategory String  // master filter-category name (e.g. "Air Filter")
+  filterNo       String? // part number fitted
+  actionType     String? // X/E marker (exchange / existing) — free text
+  quantity       Int     @default(1)
+  priceCents     Int     @default(0)
+
+  @@index([serviceRecordId])
+}
+
+// A free-form additional cost line on a service sheet (labour items, sundries
+// entered by hand, sublet work, etc.).
+model ServiceCostLine {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  description String?
+  unit        String?
+  rateCents   Int     @default(0)
+  qty         Float   @default(0)
+  amountCents Int     @default(0)
+
+  @@index([serviceRecordId])
+}
+
+// Master list of oil lines shown on the service sheet (one row per oil line).
+// Editable later; seeded with the Service Record system's defaults.
+model OilType {
+  id             String  @id @default(uuid())
+  name           String  @unique
+  unit           String  @default("L")
+  unitPriceCents Int     @default(0)
+  sortOrder      Int     @default(0)
+  active         Boolean @default(true)
+}
+
+// Master list of filter categories shown on the service sheet (one row per
+// filter line). Named *Ref to avoid clashing with the asset `Category` model.
+model FilterCategoryRef {
+  id             String  @id @default(uuid())
+  name           String  @unique
+  unitPriceCents Int     @default(0)
+  sortOrder      Int     @default(0)
+  active         Boolean @default(true)
+}
+
+// ===========================================================================
+// Phase 2 of the Fuel + Service merge: the filter cross-reference engine and
+// editable price books (merged from the Service Record system's catalog).
+// ===========================================================================
+
+// The filter catalog — one row per filter, with its OEM / HIFI numbers and the
+// free-text cross-reference string that the engine parses into FilterCrossRef.
+model FilterCatalog {
+  id              String   @id @default(uuid())
+  sourceId        Int?     @unique // original id from the catalog dump (re-import key)
+  filterCategory  String?
+  oemPartNumber   String?
+  hifiPartNumber  String?
+  description     String?
+  compatibleFleet String?         // free-text compatible fleet types
+  crossRefText    String?         // raw cross-reference string
+  monthlyDemand   Float?          // from the source filter analysis
+  annualDemand    Float?
+  serviceCount    Int?            // historical service uses
+  vehicleCount    Int?            // distinct vehicles using it
+  createdAt       DateTime @default(now())
+
+  crossRefs    FilterCrossRef[]
+  vehicleLinks FilterVehicleLink[]
+
+  @@index([filterCategory])
+}
+
+// Normalized cross-reference index — one row per (filter, part-number) pair.
+// Auto rows are rebuilt from the catalog; manual rows (added in the UI) carry
+// source='manual' and survive a rebuild.
+model FilterCrossRef {
+  id           String        @id @default(uuid())
+  catalogId    String
+  catalog      FilterCatalog @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  brand        String        @default("")
+  partNumber   String
+  normalizedPN String // uppercase, alphanumeric-only key used for matching
+  refType      String        @default("cross") // "oem" | "hifi" | "cross" | "manual"
+  note         String        @default("")
+  source       String        @default("auto") // "auto" | "manual"
+  createdAt    DateTime      @default(now())
+
+  @@index([normalizedPN])
+  @@index([catalogId])
+  @@index([brand])
+}
+
+// Filter → machine usage, by E&C code. Matched to Asset.code at query time so
+// the catalog stays decoupled from the live fleet table.
+model FilterVehicleLink {
+  id        String        @id @default(uuid())
+  catalogId String
+  catalog   FilterCatalog @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+  ec        String // E&C code (maps to Asset.code)
+
+  @@index([catalogId])
+  @@index([ec])
+}
+
+// Editable filter price book — drives the auto-fill of filter prices on the
+// service sheet (looked up by normalized supplier code).
+model FilterPrice {
+  id              String   @id @default(uuid())
+  supplierCode    String
+  normalizedCode  String   @default("") // normalize(supplierCode) for lookup
+  description     String?
+  qty             Int      @default(1)
+  unitPriceCents  Int      @default(0)
+  totalPriceCents Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@index([normalizedCode])
+}
+
+// On-hand stock per filter, keyed by the demand key (normalize(part no)).
+// Powers the reorder planner's "quantity to order" = coverage demand − on hand.
+model FilterStock {
+  id             String   @id @default(uuid())
+  normalizedCode String   @unique
+  filterNo       String?
+  onHand         Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+// Phase 12: filter stock ledger. Every change to on-hand stock is recorded as a
+// signed movement (receipts in, service consumption out, manual adjustments) so
+// FilterStock.onHand is always explained and auditable. Keyed by the same
+// normalizedCode the demand / reorder engine uses, so the ledger lines up
+// exactly with the Reorder Planner. `serviceRecordId` links a CONSUMPTION row
+// back to the service that used the filter (plain ref, like ServiceRecord.sourceRef
+// — kept even if the service is later removed so stock history survives).
+model FilterStockMovement {
+  id              String   @id @default(uuid())
+  normalizedCode  String
+  filterNo        String?
+  delta           Int      // signed: +in (receipt/adjust up), -out (consumption/adjust down)
+  reason          String   // "RECEIPT" | "CONSUMPTION" | "ADJUSTMENT" | "OPENING"
+  note            String?
+  unitCostCents   Int?     // unit cost captured on a receipt (LKR cents); null otherwise
+  balanceAfter    Int      // on-hand immediately after this movement was applied
+  serviceRecordId String?  // CONSUMPTION rows: the service that consumed the filter
+  purchaseOrderId String?  // RECEIPT rows: the PO this receipt was booked against
+  createdById     String?  // actor (User.id); plain ref, not a relation
+  createdAt       DateTime @default(now())
+
+  @@index([normalizedCode, createdAt])
+  @@index([serviceRecordId])
+}
+
+// Phase 12 (cont.): filter purchase orders. Turns the Reorder Planner's
+// suggestions into a real ordering workflow — create a PO from the suggested
+// lines, mark it ordered, then receive (fully or partially). Receiving posts
+// RECEIPT movements to the stock ledger with the PO's unit costs, so on-hand
+// updates automatically and every receipt traces back to its PO.
+model FilterPurchaseOrder {
+  id          String    @id @default(uuid())
+  poNumber    String    @unique
+  status      String    @default("DRAFT") // "DRAFT" | "ORDERED" | "RECEIVED" | "CANCELLED"
+  supplier    String?
+  note        String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  orderedAt   DateTime?
+  receivedAt  DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  lines       FilterPurchaseOrderLine[]
+}
+
+model FilterPurchaseOrderLine {
+  id              String              @id @default(uuid())
+  purchaseOrderId String
+  purchaseOrder   FilterPurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  normalizedCode String
+  filterNo       String?
+  category       String?
+  qtyOrdered     Int     @default(0)
+  qtyReceived    Int     @default(0)
+  unitCostCents  Int?
+
+  @@index([purchaseOrderId])
+}
+
+// Editable oil-grade price list (grade code → price) — drives oil price
+// auto-fill on the service sheet.
+model OilPrice {
+  id             String  @id @default(uuid())
+  code           String  @unique // e.g. "15W40-CI/04"
+  description    String?
+  unitPriceCents Int     @default(0)
+}
+
+// Phase 3 of the merge: file attachments on a service record (PDF / images /
+// Office docs). Stored inline as Bytes — like FuelIssue.photoData and
+// FuelIssueCorrection.docData — so they travel with the database backups.
+model ServiceAttachment {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  data         Bytes
+  originalName String
+  mimeType     String?
+  fileSize     Int      @default(0)
+  caption      String   @default("")
+
+  uploadedById String?
+  uploadedBy   User?    @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id])
+  uploadedAt   DateTime @default(now())
+
+  @@index([serviceRecordId])
 }

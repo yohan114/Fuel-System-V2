@@ -15,7 +15,23 @@ import {
   Menu,
   Database,
   Receipt,
-  Wrench
+  Wrench,
+  ShieldAlert,
+  Droplets,
+  Bell,
+  Activity,
+  ScrollText,
+  DatabaseZap,
+  Wallet,
+  Target,
+  ClipboardList,
+  Repeat,
+  Tags,
+  Package,
+  Boxes,
+  ClipboardCheck,
+  ShoppingCart,
+  BarChart3
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -56,16 +72,38 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
+      { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
+      { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Service Records", href: "/service/records", icon: ClipboardList },
+      { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
+      { label: "Filter Orders", href: "/service/order-planner", icon: Package },
+      { label: "Reorder", href: "/service/reorder", icon: ShoppingCart },
+      { label: "Purchase Orders", href: "/service/orders", icon: ClipboardCheck },
+      { label: "Filter Stock", href: "/service/stock", icon: Boxes },
+      { label: "Service Trends", href: "/service/analytics", icon: BarChart3 },
+      { label: "Price Gaps", href: "/service/price-gaps", icon: Tags },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
-      { label: "Billing", href: "/billing", icon: Receipt }
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Alerts", href: "/alerts", icon: Bell },
+      { label: "Receivables", href: "/billing/aging", icon: Wallet },
+      { label: "Fuel Budgets", href: "/admin/budgets", icon: Target },
+      { label: "Audit Log", href: "/admin/audit", icon: ScrollText },
+      { label: "Data Quality", href: "/admin/data-quality", icon: DatabaseZap }
     );
   } else if (isAllocator) {
     navItems.push(
       { label: "Allocator Console", href: "/allocator", icon: Car },
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck }
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Service Records", href: "/service/records", icon: ClipboardList },
+      { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else if (isWorkshop) {
     navItems.push(
@@ -84,7 +122,13 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
-      { label: "Billing", href: "/billing", icon: Receipt }
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Service Records", href: "/service/records", icon: ClipboardList },
+      { label: "Cross-Reference", href: "/service/cross-reference", icon: Repeat },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Receivables", href: "/billing/aging", icon: Wallet },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   }
 
@@ -92,7 +136,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
     <div className="min-h-screen flex flex-col md:flex-row bg-[#090a0f] text-gray-200">
       
       {/* 1. Desktop Sidebar */}
-      <aside className="hidden md:flex flex-col w-64 bg-[#121420] border-r border-white/5 p-6 flex-shrink-0">
+      <aside className="hidden md:flex flex-col w-64 bg-[#121420] border-r border-white/5 p-6 flex-shrink-0 md:h-screen md:sticky md:top-0 overflow-hidden">
         {/* Brand / Logo */}
         <div className="flex items-center gap-3 mb-10 px-2">
           <div className="w-10 h-10 bg-gradient-to-tr from-indigo-500 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/10">
@@ -105,7 +149,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
         </div>
 
         {/* Navigation Links */}
-        <nav className="flex-1 space-y-1">
+        <nav className="flex-1 space-y-1 overflow-y-auto min-h-0 -mr-3 pr-3">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -132,6 +176,13 @@ export default async function DashboardLayout({ children }: LayoutProps) {
               >
                 <Settings className="w-5 h-5" />
                 Admin Console
+              </Link>
+              <Link
+                href="/admin/service-prices"
+                className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-all"
+              >
+                <Tags className="w-5 h-5" />
+                Service Prices
               </Link>
             </div>
           )}

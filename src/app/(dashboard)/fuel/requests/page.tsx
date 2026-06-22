@@ -33,6 +33,7 @@ export default async function FuelRequestsPage(props: PageProps) {
 
   const requests = await prisma.fuelRequest.findMany({
     where,
+    omit: { photoData: true },
     include: {
       asset: true,
       requestedBy: true,

@@ -109,6 +109,14 @@ export function InvoiceDocument({ bill }: { bill: any }) {
   const monthLabel = new Date(bill.year, bill.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   const isDraft = bill.status === "DRAFT";
 
+  // Actual entered meter vs the system-recommended (fuel ÷ typical rate) units.
+  const unit = bill.billingMode === "perkm" ? "km" : "hr";
+  const isMetered = bill.billingMode === "hourly" || bill.billingMode === "perkm";
+  const actualMeter: number = bill.actualMeterUnits ?? (bill.derivedFromFuel ? 0 : bill.actualUnits);
+  const recommended: number | null = bill.derivedStandardUnits ?? null;
+  const variancePct: number | null =
+    isMetered && recommended != null ? ((recommended - actualMeter) / Math.max(actualMeter, 1)) * 100 : null;
+
   return (
     <Document>
       <Page size="A4" style={styles.page}>
@@ -203,6 +211,36 @@ export function InvoiceDocument({ bill }: { bill: any }) {
               </View>
             )}
           </View>
+
+          {isMetered && (
+            <>
+              <Text style={styles.secHeading}>Actual Meter vs System-Recommended</Text>
+              <View style={styles.usageGrid}>
+                <View style={styles.usageCell}>
+                  <Text style={styles.usageCellLabel}>Actual Meter</Text>
+                  <Text style={styles.usageCellVal}>{actualMeter.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+                  <Text style={styles.usageCellUnit}>{unit}</Text>
+                </View>
+                <View style={styles.usageCell}>
+                  <Text style={styles.usageCellLabel}>Recommended (fuel)</Text>
+                  <Text style={styles.usageCellVal}>{recommended != null ? recommended.toLocaleString("en-LK", { maximumFractionDigits: 1 }) : "—"}</Text>
+                  <Text style={styles.usageCellUnit}>{bill.fuelConsTypSnapshot ? `${unit} @ ${bill.fuelConsTypSnapshot} L/${unit}` : unit}</Text>
+                </View>
+                <View style={styles.usageCell}>
+                  <Text style={styles.usageCellLabel}>Variance</Text>
+                  <Text style={[styles.usageCellVal, variancePct != null && Math.abs(variancePct) >= 20 ? { color: "#b91c1c" } : {}]}>
+                    {variancePct != null ? `${variancePct > 0 ? "+" : ""}${variancePct.toFixed(0)}%` : "—"}
+                  </Text>
+                  <Text style={styles.usageCellUnit}>{bill.derivedFromFuel ? "billed on fuel" : "billed on meter"}</Text>
+                </View>
+                <View style={styles.usageCell}>
+                  <Text style={styles.usageCellLabel}>Rate / {unit}</Text>
+                  <Text style={[styles.usageCellVal, { fontSize: 9 }]}>{rs(bill.rateCents)}</Text>
+                  <Text style={styles.usageCellUnit}>{bill.rateBasis?.toUpperCase()}</Text>
+                </View>
+              </View>
+            </>
+          )}
 
           <Text style={styles.secHeading}>Charges</Text>
           <View style={styles.table}>

@@ -10,7 +10,8 @@ import {
   Fuel, 
   BarChart4, 
   Gauge,
-  Sparkles
+  Sparkles,
+  Wrench
 } from "lucide-react";
 import SiteConsumptionCharts from "./SiteConsumptionCharts";
 
@@ -54,6 +55,20 @@ export default async function ReportsPage(props: PageProps) {
 
         {/* Export triggers */}
         <div className="flex items-center gap-2">
+          <Link
+            href={`/reports/tco?from=${fromStr}&to=${toStr}`}
+            className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 text-amber-300 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <Coins className="w-4 h-4" />
+            Cost of Ownership
+          </Link>
+          <a
+            href={`/api/reports/monthly/xlsx?year=${fromStr.slice(0, 4)}&month=${fromStr.slice(5, 7)}`}
+            className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-indigo-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
+            Monthly Site Report
+          </a>
           <a
             href={`/api/reports/export/xlsx?from=${fromStr}&to=${toStr}`}
             className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-emerald-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
@@ -67,6 +82,20 @@ export default async function ReportsPage(props: PageProps) {
           >
             <FileText className="w-4 h-4 text-red-400" />
             Export PDF
+          </a>
+          <a
+            href={`/api/reports/service/xlsx?from=${fromStr}&to=${toStr}`}
+            className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-amber-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <Wrench className="w-4 h-4 text-amber-400" />
+            Service Excel
+          </a>
+          <a
+            href={`/api/reports/service/pdf?from=${fromStr}&to=${toStr}`}
+            className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-amber-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <Wrench className="w-4 h-4 text-amber-400" />
+            Service PDF
           </a>
         </div>
       </div>
@@ -194,7 +223,9 @@ export default async function ReportsPage(props: PageProps) {
                   <th className="py-2.5">Specs</th>
                   <th className="py-2.5">Litres</th>
                   <th className="py-2.5">Total Cost</th>
-                  <th className="py-2.5">Running</th>
+                  <th className="py-2.5">Actual Meter</th>
+                  <th className="py-2.5">Recommended</th>
+                  <th className="py-2.5">Variance</th>
                   <th className="py-2.5 text-right">Economy</th>
                 </tr>
               </thead>
@@ -227,6 +258,36 @@ export default async function ReportsPage(props: PageProps) {
                       </td>
                       <td className="py-3 text-gray-400 font-mono">
                         {asset.runningDelta > 0 ? `${asset.runningDelta.toLocaleString()} ${asset.meterType}` : "—"}
+                      </td>
+                      <td className="py-3 text-gray-300 font-mono">
+                        {asset.recommended != null
+                          ? `${asset.recommended.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${asset.meterType}`
+                          : "—"}
+                      </td>
+                      <td className="py-3 font-semibold">
+                        {asset.variancePct != null ? (
+                          <span
+                            className={
+                              asset.flag === "METER_LOW"
+                                ? "text-red-400"
+                                : asset.flag === "METER_HIGH"
+                                ? "text-amber-400"
+                                : "text-gray-400"
+                            }
+                            title={
+                              asset.flag === "METER_LOW"
+                                ? "Fuel implies more running than the meter shows — possible under-recorded meter"
+                                : asset.flag === "METER_HIGH"
+                                ? "Meter shows more than fuel implies"
+                                : "Within tolerance"
+                            }
+                          >
+                            {asset.variancePct > 0 ? "+" : ""}
+                            {(asset.variancePct * 100).toFixed(0)}%
+                          </span>
+                        ) : (
+                          <span className="text-gray-600">—</span>
+                        )}
                       </td>
                       <td className="py-3 text-right font-bold text-emerald-400">
                         {formattedEff}
