@@ -22,6 +22,7 @@ export interface PostMovementInput {
   note?: string | null;
   unitCostCents?: number | null;
   serviceRecordId?: string | null;
+  purchaseOrderId?: string | null;
   createdById?: string | null;
 }
 
@@ -56,6 +57,7 @@ export async function postStockMovement(input: PostMovementInput): Promise<numbe
       unitCostCents: input.unitCostCents ?? null,
       balanceAfter: stock.onHand,
       serviceRecordId: input.serviceRecordId ?? null,
+      purchaseOrderId: input.purchaseOrderId ?? null,
       createdById: input.createdById ?? null,
     },
   });

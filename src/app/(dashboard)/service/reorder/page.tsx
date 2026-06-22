@@ -3,7 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { computeReorder } from "@/lib/service/reorder";
-import { ShoppingCart, ArrowLeft, FileSpreadsheet, AlertTriangle } from "lucide-react";
+import { createPoFromReorderAction } from "@/app/actions/po";
+import { ShoppingCart, ArrowLeft, FileSpreadsheet, AlertTriangle, ClipboardCheck } from "lucide-react";
 import StockInput from "./StockInput";
 
 interface PageProps {
@@ -52,6 +53,13 @@ export default async function ReorderPage(props: PageProps) {
           <a href={`/api/service/reorder/xlsx?cover=${coverMonths}&lead=${leadMonths}`} className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-emerald-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-3 py-2 rounded-lg text-xs font-semibold">
             <FileSpreadsheet className="w-4 h-4 text-emerald-400" /> Export PO
           </a>
+          <form action={createPoFromReorderAction}>
+            <input type="hidden" name="cover" value={coverMonths} />
+            <input type="hidden" name="lead" value={leadMonths} />
+            <button type="submit" className="flex items-center gap-2 bg-indigo-500/15 border border-indigo-500/25 text-indigo-300 hover:bg-indigo-500/25 px-3 py-2 rounded-lg text-xs font-semibold">
+              <ClipboardCheck className="w-4 h-4" /> Create PO
+            </button>
+          </form>
           <Link href="/service/order-planner" className="text-xs font-semibold text-gray-400 hover:text-white flex items-center gap-1.5 whitespace-nowrap">
             <ArrowLeft className="w-4 h-4" /> Demand
           </Link>

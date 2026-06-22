@@ -855,11 +855,47 @@ model FilterStockMovement {
   unitCostCents   Int?     // unit cost captured on a receipt (LKR cents); null otherwise
   balanceAfter    Int      // on-hand immediately after this movement was applied
   serviceRecordId String?  // CONSUMPTION rows: the service that consumed the filter
+  purchaseOrderId String?  // RECEIPT rows: the PO this receipt was booked against
   createdById     String?  // actor (User.id); plain ref, not a relation
   createdAt       DateTime @default(now())
 
   @@index([normalizedCode, createdAt])
   @@index([serviceRecordId])
+}
+
+// Phase 12 (cont.): filter purchase orders. Turns the Reorder Planner's
+// suggestions into a real ordering workflow — create a PO from the suggested
+// lines, mark it ordered, then receive (fully or partially). Receiving posts
+// RECEIPT movements to the stock ledger with the PO's unit costs, so on-hand
+// updates automatically and every receipt traces back to its PO.
+model FilterPurchaseOrder {
+  id          String    @id @default(uuid())
+  poNumber    String    @unique
+  status      String    @default("DRAFT") // "DRAFT" | "ORDERED" | "RECEIVED" | "CANCELLED"
+  supplier    String?
+  note        String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  orderedAt   DateTime?
+  receivedAt  DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  lines       FilterPurchaseOrderLine[]
+}
+
+model FilterPurchaseOrderLine {
+  id              String              @id @default(uuid())
+  purchaseOrderId String
+  purchaseOrder   FilterPurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  normalizedCode String
+  filterNo       String?
+  category       String?
+  qtyOrdered     Int     @default(0)
+  qtyReceived    Int     @default(0)
+  unitCostCents  Int?
+
+  @@index([purchaseOrderId])
 }
 
 // Editable oil-grade price list (grade code → price) — drives oil price
