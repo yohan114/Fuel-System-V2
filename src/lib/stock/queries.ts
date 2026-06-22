@@ -169,3 +169,97 @@ export async function stockTakeStatus(period: string): Promise<StockTakeRow[]> {
 export function currentPeriod(): string {
   return new Date().toISOString().slice(0, 7);
 }
+
+export interface RequisitionRow {
+  id: string;
+  productName: string;
+  unit: string;
+  projectName: string | null;
+  siteName: string | null;
+  qtyRequested: number | null;
+  qtySent: number | null;
+  qtyReceived: number | null;
+  status: string;
+  discrepancy: boolean;
+  note: string | null;
+  rejectReason: string | null;
+  requestedBy: string | null;
+  createdAt: Date;
+}
+
+export interface BatteryRow {
+  id: string;
+  vehicleNo: string;
+  serialNo: string;
+  note: string | null;
+  createdAt: Date;
+}
+
+/** Live batteries (one per vehicle), newest first. */
+export async function batteryList(): Promise<BatteryRow[]> {
+  const rows = await prisma.battery.findMany({
+    orderBy: { createdAt: "desc" },
+    select: { id: true, vehicleNo: true, serialNo: true, note: true, createdAt: true },
+  });
+  return rows;
+}
+
+export interface BatteryEventRow {
+  id: string;
+  action: string;
+  serialNo: string | null;
+  vehicleNo: string | null;
+  fromVehicleNo: string | null;
+  reason: string | null;
+  actorName: string | null;
+  createdAt: Date;
+}
+
+/** Append-only battery audit history, newest first. */
+export async function batteryHistory(limit = 100): Promise<BatteryEventRow[]> {
+  const rows = await prisma.batteryEvent.findMany({
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    include: { user: { select: { name: true } } },
+  });
+  return rows.map((e) => ({
+    id: e.id,
+    action: e.action,
+    serialNo: e.serialNo,
+    vehicleNo: e.vehicleNo,
+    fromVehicleNo: e.fromVehicleNo,
+    reason: e.reason,
+    actorName: e.user?.name ?? null,
+    createdAt: e.createdAt,
+  }));
+}
+
+/** Recent requisitions, newest first, decorated with product/project/site names. */
+export async function requisitionList(limit = 100): Promise<RequisitionRow[]> {
+  const rows = await prisma.requisition.findMany({
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    include: {
+      product: { select: { name: true, unit: true } },
+      project: { select: { name: true } },
+      site: { select: { name: true } },
+      requestedBy: { select: { name: true } },
+    },
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    productName: r.product.name,
+    unit: r.product.unit,
+    projectName: r.project?.name ?? null,
+    siteName: r.site?.name ?? null,
+    qtyRequested: r.qtyRequested,
+    qtySent: r.qtySent,
+    qtyReceived: r.qtyReceived,
+    status: r.status,
+    discrepancy: r.discrepancy,
+    note: r.note,
+    rejectReason: r.rejectReason,
+    requestedBy: r.requestedBy?.name ?? null,
+    createdAt: r.createdAt,
+  }));
+}

@@ -31,7 +31,8 @@ import {
   Boxes,
   ClipboardCheck,
   ShoppingCart,
-  BarChart3
+  BarChart3,
+  BatteryCharging
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -88,6 +89,8 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Stock Products", href: "/store/products", icon: Package },
       { label: "Stock Mapping", href: "/store/mapping", icon: Repeat },
       { label: "Stock Take", href: "/store/stock-take", icon: ClipboardCheck },
+      { label: "Requisitions", href: "/store/requisitions", icon: ClipboardList },
+      { label: "Batteries", href: "/store/batteries", icon: BatteryCharging },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Analytics", href: "/analytics", icon: Activity },
@@ -124,6 +127,8 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Stock Products", href: "/store/products", icon: Package },
       { label: "Stock Mapping", href: "/store/mapping", icon: Repeat },
       { label: "Stock Take", href: "/store/stock-take", icon: ClipboardCheck },
+      { label: "Requisitions", href: "/store/requisitions", icon: ClipboardList },
+      { label: "Batteries", href: "/store/batteries", icon: BatteryCharging },
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Alerts", href: "/alerts", icon: Bell }
     );
@@ -131,6 +136,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
     // USER role
     navItems.push(
       { label: "Fleet Directory", href: "/fleet", icon: Car },
+      { label: "Requisitions", href: "/store/requisitions", icon: ClipboardList },
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
