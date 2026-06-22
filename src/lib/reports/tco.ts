@@ -17,6 +17,8 @@ export interface TCORow {
   fuelCount: number;
   serviceCents: number;
   serviceCount: number;
+  oilCents: number;
+  oilCount: number;
   totalCents: number;
 }
 
@@ -28,7 +30,7 @@ export interface TCORow {
 export async function aggregateTCO({ from, to, projectId }: TCOFilter) {
   const assetWhere = projectId ? { projectId } : undefined;
 
-  const [fuelAgg, svcRows] = await Promise.all([
+  const [fuelAgg, svcRows, oilRows] = await Promise.all([
     prisma.fuelIssue.groupBy({
       by: ["assetId"],
       where: {
@@ -46,6 +48,18 @@ export async function aggregateTCO({ from, to, projectId }: TCOFilter) {
       },
       select: { assetId: true, grandTotalCents: true, costCents: true },
     }),
+    // Oil/lubricant issues drawn against a machine, valued at the product's
+    // unit price (LKR cents). Service-loop and manual issues both count here.
+    prisma.stockMovement.findMany({
+      where: {
+        kind: "ISSUE",
+        voided: false,
+        assetId: { not: null },
+        txnDate: { gte: from, lte: to },
+        ...(assetWhere ? { asset: assetWhere } : {}),
+      },
+      select: { assetId: true, qtyIssued: true, product: { select: { unitPriceCents: true } } },
+    }),
   ]);
 
   const fuel = new Map<string, { cents: number; count: number }>();
@@ -60,7 +74,17 @@ export async function aggregateTCO({ from, to, projectId }: TCOFilter) {
     svc.set(s.assetId, cur);
   }
 
-  const ids = Array.from(new Set([...fuel.keys(), ...svc.keys()]));
+  const oil = new Map<string, { cents: number; count: number }>();
+  for (const m of oilRows) {
+    if (!m.assetId) continue;
+    const cents = Math.round((m.qtyIssued ?? 0) * (m.product?.unitPriceCents ?? 0));
+    const cur = oil.get(m.assetId) ?? { cents: 0, count: 0 };
+    cur.cents += cents;
+    cur.count += 1;
+    oil.set(m.assetId, cur);
+  }
+
+  const ids = Array.from(new Set([...fuel.keys(), ...svc.keys(), ...oil.keys()]));
   const assets = ids.length
     ? await prisma.asset.findMany({
         where: { id: { in: ids } },
@@ -81,6 +105,7 @@ export async function aggregateTCO({ from, to, projectId }: TCOFilter) {
       const a = aMap.get(id);
       const fc = fuel.get(id)?.cents ?? 0;
       const sc = svc.get(id)?.cents ?? 0;
+      const oc = oil.get(id)?.cents ?? 0;
       return {
         assetId: id,
         code: a?.code ?? "—",
@@ -92,7 +117,9 @@ export async function aggregateTCO({ from, to, projectId }: TCOFilter) {
         fuelCount: fuel.get(id)?.count ?? 0,
         serviceCents: sc,
         serviceCount: svc.get(id)?.count ?? 0,
-        totalCents: fc + sc,
+        oilCents: oc,
+        oilCount: oil.get(id)?.count ?? 0,
+        totalCents: fc + sc + oc,
       };
     })
     .filter((r) => r.totalCents > 0)
@@ -100,12 +127,14 @@ export async function aggregateTCO({ from, to, projectId }: TCOFilter) {
 
   const totalFuelCents = rows.reduce((s, r) => s + r.fuelCents, 0);
   const totalServiceCents = rows.reduce((s, r) => s + r.serviceCents, 0);
+  const totalOilCents = rows.reduce((s, r) => s + r.oilCents, 0);
 
   return {
     rows,
     totalFuelCents,
     totalServiceCents,
-    totalCents: totalFuelCents + totalServiceCents,
+    totalOilCents,
+    totalCents: totalFuelCents + totalServiceCents + totalOilCents,
     vehicleCount: rows.length,
   };
 }

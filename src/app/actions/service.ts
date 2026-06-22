@@ -5,6 +5,7 @@ import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { computeServiceTotals, getServiceRates } from "@/lib/service/charge";
 import { postServiceConsumption } from "@/lib/service/stock";
+import { postServiceOilConsumption } from "@/lib/stock/post";
 
 // Log a completed service. The countdown to the next service resets at this
 // record's date (and meterAtService when supplied — compute.ts reads it
@@ -312,10 +313,20 @@ export async function logDetailedServiceAction(input: DetailedServiceInput) {
       console.error("Stock consumption posting failed for service", rec.id, stockErr);
     }
 
+    // Oil Stock Book loop: draw the oils this service used from the oil ledger,
+    // linked to the machine (feeds per-machine TCO). Best-effort.
+    try {
+      await postServiceOilConsumption(rec.id, asset.id, oils, admin.id);
+    } catch (oilErr) {
+      console.error("Oil consumption posting failed for service", rec.id, oilErr);
+    }
+
     revalidatePath("/service");
     revalidatePath("/service/records");
     revalidatePath("/service/reorder");
     revalidatePath("/service/stock");
+    revalidatePath("/store/ledger");
+    revalidatePath("/store/products");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true, id: rec.id };
   } catch (err: any) {

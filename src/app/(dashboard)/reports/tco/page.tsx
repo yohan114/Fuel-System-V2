@@ -2,7 +2,7 @@ import React from "react";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { aggregateTCO } from "@/lib/reports/tco";
-import { ArrowLeft, Coins, Fuel, Wrench, Truck } from "lucide-react";
+import { ArrowLeft, Coins, Fuel, Wrench, Truck, Droplets } from "lucide-react";
 
 interface PageProps {
   searchParams: Promise<{ from?: string; to?: string }>;
@@ -37,7 +37,7 @@ export default async function TCOPage(props: PageProps) {
           <h1 className="text-xl font-bold text-white tracking-wide flex items-center gap-2">
             <Coins className="w-5 h-5 text-amber-400" /> Cost of Ownership
           </h1>
-          <p className="text-xs text-gray-400 mt-1">Fuel + service spend per vehicle. {fromStr} → {toStr}.</p>
+          <p className="text-xs text-gray-400 mt-1">Fuel + service + oil spend per vehicle. {fromStr} → {toStr}.</p>
         </div>
         <div className="flex items-center gap-3">
           <form className="flex items-end gap-2" method="GET">
@@ -57,7 +57,7 @@ export default async function TCOPage(props: PageProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-[#121420] border border-white/5 rounded-2xl p-5">
           <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider flex items-center gap-1.5"><Coins className="w-3.5 h-3.5" /> Total Spend</span>
           <span className="text-2xl font-bold text-white block mt-1">{fmtRs(data.totalCents)}</span>
@@ -73,6 +73,11 @@ export default async function TCOPage(props: PageProps) {
           <span className="text-[10px] text-gray-500">{data.totalCents > 0 ? Math.round((data.totalServiceCents / data.totalCents) * 100) : 0}% of total</span>
         </div>
         <div className="bg-[#121420] border border-white/5 rounded-2xl p-5">
+          <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider flex items-center gap-1.5"><Droplets className="w-3.5 h-3.5 text-emerald-400" /> Oil</span>
+          <span className="text-2xl font-bold text-emerald-400 block mt-1">{fmtRs(data.totalOilCents)}</span>
+          <span className="text-[10px] text-gray-500">{data.totalCents > 0 ? Math.round((data.totalOilCents / data.totalCents) * 100) : 0}% of total</span>
+        </div>
+        <div className="bg-[#121420] border border-white/5 rounded-2xl p-5">
           <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider flex items-center gap-1.5"><Truck className="w-3.5 h-3.5" /> Vehicles</span>
           <span className="text-2xl font-bold text-white block mt-1">{data.vehicleCount}</span>
         </div>
@@ -80,7 +85,7 @@ export default async function TCOPage(props: PageProps) {
 
       <div className="bg-[#121420] border border-white/5 rounded-2xl p-5 md:p-6 shadow-xl overflow-x-auto">
         {data.rows.length === 0 ? (
-          <div className="text-center py-12 text-xs text-gray-500">No fuel or service spend in this period.</div>
+          <div className="text-center py-12 text-xs text-gray-500">No fuel, service or oil spend in this period.</div>
         ) : (
           <table className="w-full text-left text-xs border-collapse">
             <thead>
@@ -90,13 +95,17 @@ export default async function TCOPage(props: PageProps) {
                 <th className="py-2.5">Site</th>
                 <th className="py-2.5 text-right">Fuel</th>
                 <th className="py-2.5 text-right">Service</th>
+                <th className="py-2.5 text-right">Oil</th>
                 <th className="py-2.5 text-right">Total</th>
                 <th className="py-2.5 w-28">Split</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {data.rows.map((r) => {
-                const fuelPct = r.totalCents > 0 ? (r.fuelCents / r.totalCents) * 100 : 0;
+                const total = r.totalCents || 1;
+                const fuelPct = (r.fuelCents / total) * 100;
+                const svcPct = (r.serviceCents / total) * 100;
+                const oilPct = (r.oilCents / total) * 100;
                 return (
                   <tr key={r.assetId} className="hover:bg-white/[0.01]">
                     <td className="py-3">
@@ -107,11 +116,13 @@ export default async function TCOPage(props: PageProps) {
                     <td className="py-3 text-gray-400">{r.projectCode || "—"}</td>
                     <td className="py-3 text-right text-blue-400">{r.fuelCents ? fmtRs(r.fuelCents) : "—"}</td>
                     <td className="py-3 text-right text-amber-400">{r.serviceCents ? fmtRs(r.serviceCents) : "—"}</td>
+                    <td className="py-3 text-right text-emerald-400">{r.oilCents ? fmtRs(r.oilCents) : "—"}</td>
                     <td className="py-3 text-right text-white font-bold">{fmtRs(r.totalCents)}</td>
                     <td className="py-3">
-                      <div className="flex h-2 rounded-full overflow-hidden bg-white/5" title={`${Math.round(fuelPct)}% fuel`}>
+                      <div className="flex h-2 rounded-full overflow-hidden bg-white/5" title={`${Math.round(fuelPct)}% fuel · ${Math.round(svcPct)}% service · ${Math.round(oilPct)}% oil`}>
                         <div className="bg-blue-500/70" style={{ width: `${fuelPct}%` }} />
-                        <div className="bg-amber-500/70" style={{ width: `${100 - fuelPct}%` }} />
+                        <div className="bg-amber-500/70" style={{ width: `${svcPct}%` }} />
+                        <div className="bg-emerald-500/70" style={{ width: `${oilPct}%` }} />
                       </div>
                     </td>
                   </tr>
@@ -120,7 +131,7 @@ export default async function TCOPage(props: PageProps) {
             </tbody>
           </table>
         )}
-        <p className="text-[10px] text-gray-500 mt-3"><span className="inline-block w-2 h-2 rounded-full bg-blue-500/70 mr-1" />Fuel <span className="inline-block w-2 h-2 rounded-full bg-amber-500/70 ml-3 mr-1" />Service · sorted by total spend.</p>
+        <p className="text-[10px] text-gray-500 mt-3"><span className="inline-block w-2 h-2 rounded-full bg-blue-500/70 mr-1" />Fuel <span className="inline-block w-2 h-2 rounded-full bg-amber-500/70 ml-3 mr-1" />Service <span className="inline-block w-2 h-2 rounded-full bg-emerald-500/70 ml-3 mr-1" />Oil · sorted by total spend.</p>
       </div>
     </div>
   );

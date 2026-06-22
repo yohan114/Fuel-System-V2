@@ -1,5 +1,5 @@
 import { prisma } from "../db";
-import { round3, type ConsumerType, type MovementKind } from "./classify";
+import { normalize, round3, type ConsumerType, type MovementKind } from "./classify";
 
 const EPS = 0.0001;
 
@@ -137,4 +137,62 @@ export async function voidMovement(id: string): Promise<void> {
       await tx.stockMovement.update({ where: { id: u.id }, data: { balanceAfter: u.balanceAfter } });
     }
   });
+}
+
+interface ServiceOilLine {
+  oilName: string;
+  oilType: string | null;
+  quantity: number;
+}
+
+/**
+ * Close the service↔stock loop: post ISSUE movements for the oils a service
+ * consumed, linked to the serviced machine, so the store balance falls and the
+ * oil cost lands on that asset's TCO. Each oil line is matched to a Product by
+ * normalized name (grade first, then line name) — only a *single* confident
+ * match is drawn down; ambiguous or unmatched lines are skipped rather than
+ * guessed. Best-effort and ledger-safe: an over-issue (or any error) skips the
+ * line, so a short store or a hiccup never blocks logging the service. The
+ * caller already wraps this in its own try/catch.
+ */
+export async function postServiceOilConsumption(
+  serviceRecordId: string,
+  assetId: string,
+  lines: ServiceOilLine[],
+  createdById: string | null,
+): Promise<number> {
+  const products = await prisma.product.findMany({ where: { active: true }, select: { id: true, name: true } });
+  const keyed = products.map((p) => ({ id: p.id, key: normalize(p.name) }));
+
+  let posted = 0;
+  for (const l of lines) {
+    const qty = round3(Number(l.quantity) || 0);
+    if (qty <= 0) continue;
+
+    let matchId: string | null = null;
+    for (const candidate of [normalize(l.oilType), normalize(l.oilName)]) {
+      if (!candidate || candidate.length < 3) continue;
+      const hits = keyed.filter((p) => p.key.includes(candidate) || candidate.includes(p.key));
+      if (hits.length === 1) { matchId = hits[0].id; break; }
+    }
+    if (!matchId) continue;
+
+    try {
+      await postMovement({
+        productId: matchId,
+        kind: "ISSUE",
+        qtyIssued: qty,
+        consumerType: "ASSET",
+        assetId,
+        serviceRecordId,
+        source: "service",
+        description: `Service oil: ${l.oilName}${l.oilType ? ` (${l.oilType})` : ""}`,
+        createdById,
+      });
+      posted++;
+    } catch {
+      // Over-issue or other — skip this line; never block the service log.
+    }
+  }
+  return posted;
 }
