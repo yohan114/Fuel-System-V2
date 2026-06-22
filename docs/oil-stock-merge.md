@@ -8,14 +8,14 @@ Prisma stack and its issues link directly to canonical `Asset` and `Project`
 rows — so a machine's oil consumption sits alongside its fuel and service cost,
 powering complete per-machine total cost of ownership.
 
-The merge ships in phases:
+The merge shipped in phases (all delivered):
 
-| Phase | What it adds |
-|---|---|
-| **1 (this PR)** | **Foundations** — data model (`Product`, `StockMovement`, `Site`, `StockCount`, `Requisition`, `Battery`/`BatteryEvent`, `ConsumerAlias`), the running-balance ledger, the `STOREKEEPER` role, and the importer (Excel seed + live-DB migration). No UI yet. |
-| 2 | **Core stock book** UI — `/store` ledger, product catalog, receipts/issues with the over-issue guard, consumer **Mapping** screen, month-end **stock-take**. |
-| 3 | **Requisitions** (request → approve → send → receive) + **Battery register** (inline photos, append-only audit). |
-| 4 | **The payoff** — service sheets auto-draw oil/filter stock; complete per-machine **TCO** on `/reports/tco`; unified `/alerts`. |
+| Phase | What it adds | Status |
+|---|---|---|
+| **1** | **Foundations** — data model (`Product`, `StockMovement`, `Site`, `StockCount`, `Requisition`, `Battery`/`BatteryEvent`, `ConsumerAlias`), the running-balance ledger, the `STOREKEEPER` role, and the importer (Excel seed + live-DB migration). | ✅ |
+| **2** | **Core stock book** — `/store` ledger, product catalog, receipts/issues with the over-issue guard, consumer **Mapping** screen, month-end **stock-take**. | ✅ |
+| **3** | **The payoff** — service sheets auto-draw oil stock; complete per-machine **TCO** on `/reports/tco` (fuel + service + oil). | ✅ |
+| **4** | **Requisitions** (request → approve → send → receive) + **Battery register** (inline photos, append-only audit) + **unified `/alerts`** (low stock, overdue stock-take, pending requisitions). | ✅ |
 
 All money is stored in **LKR cents** (Oil Stock Book stored rupees; prices are
 converted on migration). Filters keep their existing dedicated engine
