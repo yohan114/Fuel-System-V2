@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { currentMonthPeriod } from "@/lib/billing/period";
-import { DatabaseZap, Gauge, Coins } from "lucide-react";
+import { runInvariantChecks } from "@/lib/integrity/invariants";
+import { DatabaseZap, Gauge, Coins, ShieldCheck } from "lucide-react";
 
 export default async function DataQualityPage() {
   const session = await getSession();
@@ -34,6 +35,9 @@ export default async function DataQualityPage() {
     orderBy: { code: "asc" },
   });
 
+  const invariants = await runInvariantChecks();
+  const failing = invariants.filter((c) => c.count > 0).length;
+
   return (
     <div className="space-y-8">
       <div className="border-b border-white/5 pb-4">
@@ -42,6 +46,32 @@ export default async function DataQualityPage() {
         </h1>
         <p className="text-xs text-gray-400 mt-1">Gaps that weaken billing accuracy and integrity checks.</p>
       </div>
+
+      <Section
+        title={`Invariant checks (${invariants.length - failing}/${invariants.length} passing)`}
+        icon={<ShieldCheck className={`w-4 h-4 ${failing === 0 ? "text-emerald-400" : "text-rose-400"}`} />}
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {invariants.map((c) => (
+            <div key={c.key} className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-white">{c.name}</span>
+                {c.count === 0 ? (
+                  <span className="text-[10px] font-bold rounded-lg px-2 py-1 bg-emerald-500/10 text-emerald-400">PASS</span>
+                ) : (
+                  <span className="text-[10px] font-bold rounded-lg px-2 py-1 bg-rose-500/10 text-rose-400">{c.count} FOUND</span>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">{c.description}</p>
+              {c.samples.length > 0 && (
+                <p className="text-[10px] font-mono text-gray-400 mt-1.5 truncate" title={c.samples.join(", ")}>
+                  {c.samples.join(", ")}{c.count > c.samples.length ? ", …" : ""}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      </Section>
 
       <Section title={`No meter reading this month (${noReading.length})`} icon={<Gauge className="w-4 h-4 text-amber-400" />}>
         {noReading.length === 0 ? (
