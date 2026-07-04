@@ -7,6 +7,7 @@ import AssetCharts from "./components/AssetCharts";
 import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
 import { recommendedUnits, varianceFlag, formatVariancePct } from "@/lib/reports/recommended";
+import { classifyConsumption } from "@/lib/analytics/consumption";
 import { computeServiceStatus } from "@/lib/service/compute";
 import { getBreakdownEpisodes } from "@/lib/breakdowns";
 import { logServiceAction, setServiceIntervalAction } from "@/app/actions/service";
@@ -262,8 +263,23 @@ export default async function AssetDetailPage(props: PageProps) {
               </span>
             </div>
             <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
-              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Typical Rate</span>
-              <span className="text-md font-bold text-white block mt-1">{asset.rentalRate.fuelConsTyp} L/{asset.meterType === "KM" ? "km" : "hr"}</span>
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Consumption Band</span>
+              <span className="text-md font-bold text-white block mt-1">
+                {asset.rentalRate.fuelConsEcon ?? "—"} / {asset.rentalRate.fuelConsTyp} / {asset.rentalRate.fuelConsHeavy ?? "—"} L/{asset.meterType === "KM" ? "km" : "hr"}
+              </span>
+              {(() => {
+                const rate = runGrowth > 0 && totalLitres > 0 ? totalLitres / runGrowth : null;
+                const st = classifyConsumption(rate, asset.rentalRate.fuelConsEcon, asset.rentalRate.fuelConsTyp, asset.rentalRate.fuelConsHeavy);
+                const style =
+                  st === "OVER" ? "text-rose-400" : st === "HEAVY" ? "text-amber-400" : st === "NORMAL" ? "text-emerald-400" : st === "BELOW_ECON" ? "text-sky-400" : "text-gray-500";
+                const label =
+                  st === "OVER" ? "over heavy — repair candidate" : st === "HEAVY" ? "heavy burn" : st === "NORMAL" ? "within band" : st === "BELOW_ECON" ? "below econ — check reporting" : "no meter data";
+                return (
+                  <span className={`text-[10px] block mt-0.5 ${style}`}>
+                    actual {rate != null ? rate.toFixed(2) : "—"} L/{asset.meterType === "KM" ? "km" : "hr"} — {label}
+                  </span>
+                );
+              })()}
             </div>
           </div>
         ) : (

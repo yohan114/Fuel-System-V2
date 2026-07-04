@@ -41,7 +41,10 @@ export default async function AnalyticsPage(props: PageProps) {
           <h1 className="text-xl font-bold text-white tracking-wide flex items-center gap-2">
             <Activity className="w-5 h-5 text-indigo-400" /> Utilization & Downtime
           </h1>
-          <p className="text-xs text-gray-400 mt-1">Working vs idle days and breakdown downtime, from the daily condition logs.</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Working vs idle days and breakdown downtime, from the daily condition logs.{" "}
+            <Link href="/analytics/consumption" className="text-indigo-400 hover:underline">Fuel consumption health →</Link>
+          </p>
         </div>
         <form method="GET" action="/analytics" className="flex items-end gap-2">
           <div>
