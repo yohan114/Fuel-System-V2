@@ -1,11 +1,26 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { prisma } from "./db";
+import { resolveAuthSecret } from "./auth-secret";
 
-const SECRET = new TextEncoder().encode(
-  process.env.AUTH_SECRET || "default_auth_secret_must_be_changed_in_env_file"
-);
 const COOKIE_NAME = "session";
+
+// Resolved lazily so `next build` (which runs without runtime secrets) still
+// works; any attempt to sign or verify a session in production without a real
+// AUTH_SECRET fails hard instead of silently using the known fallback.
+let cachedSecret: Uint8Array | null = null;
+let warnedDevFallback = false;
+
+function getSecret(): Uint8Array {
+  if (cachedSecret) return cachedSecret;
+  const { secret, usedFallback } = resolveAuthSecret(process.env.AUTH_SECRET, process.env.NODE_ENV);
+  if (usedFallback && !warnedDevFallback) {
+    warnedDevFallback = true;
+    console.warn("[auth] AUTH_SECRET not set — using the insecure development fallback secret.");
+  }
+  cachedSecret = new TextEncoder().encode(secret);
+  return cachedSecret;
+}
 
 export interface SessionPayload {
   userId: string;
@@ -29,7 +44,7 @@ export async function createSession(
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
-    .sign(SECRET);
+    .sign(getSecret());
 
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {
@@ -51,7 +66,7 @@ export async function getSession(): Promise<SessionPayload | null> {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value;
     if (!token) return null;
-    const { payload } = await jwtVerify(token, SECRET);
+    const { payload } = await jwtVerify(token, getSecret());
     return payload as unknown as SessionPayload;
   } catch (err) {
     return null;
