@@ -471,9 +471,11 @@ model RentalRate {
   portDwCents   Int?
   portDdCents   Int?
 
-  // Fuel consumption rates from the Fuel Rates sheet (L/hr or L/km)
+  // Fuel consumption band (L/hr or L/km): econ ≤ typ ≤ heavy. Actual burn
+  // above heavy flags a repair candidate on /analytics/consumption.
   fuelConsEcon  Float?   // economic (light load) consumption
   fuelConsTyp   Float?   // typical consumption
+  fuelConsHeavy Float?   // heavy-work upper bound
   fuelConsBasis String?  // "hr" | "km"
 
   createdAt     DateTime @default(now())
