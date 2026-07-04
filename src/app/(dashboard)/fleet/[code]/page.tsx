@@ -81,7 +81,7 @@ export default async function AssetDetailPage(props: PageProps) {
   const serviceRecords = await prisma.serviceRecord.findMany({
     where: { assetId: asset.id },
     orderBy: { serviceDate: "desc" },
-    include: { recordedBy: { select: { name: true } } },
+    include: { recordedBy: { select: { name: true } }, _count: { select: { items: true } } },
   });
   const serviceUnit = serviceStatus?.basis === "KM" ? "km" : "hr";
 
@@ -90,6 +90,13 @@ export default async function AssetDetailPage(props: PageProps) {
     from: new Date(Date.now() - 183 * 86400000),
     to: new Date(),
     assetId: asset.id,
+  });
+
+  // Filters that fit this machine (merged from the Service Record System).
+  const machineFilters = await prisma.assetFilter.findMany({
+    where: { assetId: asset.id },
+    include: { filter: true },
+    orderBy: { filter: { category: "asc" } },
   });
 
   // 3. Compute efficiency metrics
@@ -578,6 +585,30 @@ export default async function AssetDetailPage(props: PageProps) {
                 </div>
               )}
 
+              {machineFilters.length > 0 && (
+                <div className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Filters &amp; Oils for this Machine</h4>
+                    <Link href="/filters" className="text-[10px] font-bold text-indigo-400 hover:underline">Filter database →</Link>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                    {machineFilters.map((mf) => (
+                      <Link
+                        key={mf.id}
+                        href={`/filters?q=${encodeURIComponent(mf.filter.hifiPartNo || mf.filter.oemPartNo || "")}`}
+                        className="bg-[#121420] border border-white/5 hover:border-indigo-500/30 rounded-xl px-3 py-2.5"
+                      >
+                        <span className="text-[10px] text-gray-500 uppercase block truncate">{mf.filter.category ?? "Filter"}</span>
+                        <span className="text-xs font-bold text-white font-mono block truncate">{mf.filter.hifiPartNo || mf.filter.oemPartNo || "—"}</span>
+                        <span className="text-[10px] text-gray-500 block">
+                          {mf.filter.priceCents != null ? `Rs ${(mf.filter.priceCents / 100).toLocaleString("en-LK", { maximumFractionDigits: 0 })}` : "no price"}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {isAdmin && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <form action={async (fd) => { "use server"; await logServiceAction(fd); }} className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5 space-y-3">
@@ -588,6 +619,7 @@ export default async function AssetDetailPage(props: PageProps) {
                       <input type="number" step="0.1" name="meterAtService" placeholder={`Meter (${asset.meterType})`} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
                       <input type="text" name="serviceType" placeholder="Type e.g. 500HR / Oil" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
                       <input type="number" step="0.01" name="costLkr" placeholder="Cost (LKR)" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="text" name="jobNo" placeholder="Job No (optional)" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs col-span-2" />
                     </div>
                     <input type="text" name="note" placeholder="Note (optional)" className="w-full bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
                     <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg px-4 py-2">Log service</button>
@@ -618,8 +650,10 @@ export default async function AssetDetailPage(props: PageProps) {
                     <thead>
                       <tr className="text-gray-400 font-semibold border-b border-white/5">
                         <th className="py-3">Date</th>
+                        <th className="py-3">Job No</th>
                         <th className="py-3">Meter</th>
                         <th className="py-3">Type</th>
+                        <th className="py-3 text-right">Parts</th>
                         <th className="py-3">Cost</th>
                         <th className="py-3">Note</th>
                         <th className="py-3">Logged By</th>
@@ -629,9 +663,11 @@ export default async function AssetDetailPage(props: PageProps) {
                       {serviceRecords.map((s) => (
                         <tr key={s.id} className="hover:bg-white/[0.01]">
                           <td className="py-3 text-gray-300">{new Date(s.serviceDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
+                          <td className="py-3 text-gray-400 font-mono">{s.jobNo || "—"}</td>
                           <td className="py-3 text-gray-400 font-mono">{s.meterAtService != null ? `${s.meterAtService.toLocaleString()} ${s.meterType}` : "—"}</td>
                           <td className="py-3 text-gray-300">{s.serviceType || "—"}</td>
-                          <td className="py-3 text-gray-400">{s.costCents != null ? `Rs. ${(s.costCents / 100).toLocaleString("en-LK")}` : "—"}</td>
+                          <td className="py-3 text-right text-gray-400">{s._count.items > 0 ? s._count.items : "—"}</td>
+                          <td className="py-3 text-gray-400" title={s.labourCents != null || s.sundryCents != null ? `parts ${s.partsCents != null ? (s.partsCents / 100).toLocaleString("en-LK") : "—"} · labour ${s.labourCents != null ? (s.labourCents / 100).toLocaleString("en-LK") : "—"} · sundry ${s.sundryCents != null ? (s.sundryCents / 100).toLocaleString("en-LK") : "—"}` : ""}>{s.costCents != null ? `Rs. ${(s.costCents / 100).toLocaleString("en-LK")}` : "—"}</td>
                           <td className="py-3 text-gray-500 max-w-[220px] truncate" title={s.note || ""}>{s.note || "—"}</td>
                           <td className="py-3 text-gray-400">{s.recordedBy.name}</td>
                         </tr>

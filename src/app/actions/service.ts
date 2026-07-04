@@ -22,6 +22,7 @@ export async function logServiceAction(formData: FormData) {
   const serviceType = formData.get("serviceType")?.toString().trim() || null;
   const costStr = formData.get("costLkr")?.toString().trim();
   const note = formData.get("note")?.toString().trim() || null;
+  const jobNo = formData.get("jobNo")?.toString().trim() || null;
 
   if (!assetRef || !serviceDateStr) {
     return { error: "Asset and service date are required" };
@@ -53,6 +54,7 @@ export async function logServiceAction(formData: FormData) {
         serviceType,
         costCents,
         note,
+        jobNo,
         recordedById: admin.id,
       },
     });

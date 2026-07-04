@@ -92,11 +92,12 @@ export default async function ServicePage(props: PageProps) {
           <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2 border-b border-white/5 pb-2">
             <Wrench className="w-4 h-4 text-indigo-400" /> Log a Service
           </h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
             <input type="text" name="assetId" required placeholder="Vehicle code e.g. DT-11" className="bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
             <input type="date" name="serviceDate" required defaultValue={new Date().toISOString().split("T")[0]} className="bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
             <input type="number" step="0.1" name="meterAtService" placeholder="Meter at service" className="bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
             <input type="text" name="serviceType" placeholder="Type e.g. 500HR / Oil" className="bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+            <input type="text" name="jobNo" placeholder="Job No" className="bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
             <input type="number" step="0.01" name="costLkr" placeholder="Cost (LKR)" className="bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
             <input type="text" name="note" placeholder="Note (optional)" className="bg-[#1b1e30] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
           </div>
