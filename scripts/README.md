@@ -25,6 +25,13 @@ run directly: `npx tsx scripts/<name>.ts`.
 **Prerequisite:** every transaction importer (5–8, 11–12) refuses to run until
 `import_fuel_prices` has been loaded — that failure is intentional and hard.
 
+**On demand (not part of `seed:all`):**
+
+| Script | Source file | Notes |
+|---|---|---|
+| `import_pm_master` | `Fleet_PM_Master.xlsx` (repo) | Preventive-maintenance plans per category (powers `/service/plan/<code>`). Re-import replaces workbook tasks, keeps manually added ones. |
+| `merge_duplicate_assets` | — | Duplicate-vehicle merge; dry-run by default, `--apply` to execute. |
+
 ## Where files are looked up
 
 - **Repo-root importers** read from `process.cwd()` — keep the workbooks next to
