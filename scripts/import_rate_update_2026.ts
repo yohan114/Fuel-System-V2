@@ -7,9 +7,9 @@
  *   sheet DRY            → dry tier (d)  — bare machine, customer fuels
  *   sheet DRY+OPERATOR   → wet tier (w)  — machine+operator, fuel billed on top
  *   sheet WET            → fully-wet (fw)
- *   Cons.(typ)           → RentalRate.fuelConsTyp
- *       hours machines: litres per hour (basis "hr")
- *       km vehicles: sheet stores km per litre → converted to litres/km ("km")
+ *   Cons. ECON/TYP/HEAVY → RentalRate.fuelConsEcon/Typ/Heavy — the consumption
+ *       band, in the sheet's explicit "Cons. unit" (L/hr or L/km). Actual burn
+ *       above HEAVY flags a repair candidate on /analytics/consumption.
  *
  * Monthly tiers are ignored (billing minimums cover monthly logic) and per-km
  * rental tiers are untouched (the sheet prices km vehicles hourly; only their
@@ -79,28 +79,25 @@ async function main() {
     }
     stats.matched++;
 
-    // Consumption: hours machines are L/hr; km vehicles store km per litre.
-    const cons = parseFloat(String(r[8]));
-    let fuelConsTyp: number | null = null;
-    let fuelConsBasis: string | null = null;
-    if (!isNaN(cons) && cons > 0) {
-      if (asset.meterType === "KM") {
-        fuelConsTyp = Math.round((1 / cons) * 1000) / 1000; // km/L → L/km
-        fuelConsBasis = "km";
-      } else {
-        fuelConsTyp = cons;
-        fuelConsBasis = "hr";
-      }
-    }
+    // Consumption band, in the sheet's explicit unit (L/hr or L/km).
+    const consUnit = String(r[8] ?? "").trim().toLowerCase();
+    const fuelConsBasis = consUnit === "l/km" ? "km" : consUnit === "l/hr" ? "hr" : null;
+    const num = (v: unknown) => {
+      const n = parseFloat(String(v));
+      return isNaN(n) || n <= 0 ? null : n;
+    };
+    const fuelConsEcon = fuelConsBasis ? num(r[9]) : null;
+    const fuelConsTyp = fuelConsBasis ? num(r[10]) : null;
+    const fuelConsHeavy = fuelConsBasis ? num(r[11]) : null;
 
     const tierData = {
-      hrDCents: toCents(r[12]),
-      hrWCents: toCents(r[13]),
-      hrFwCents: toCents(r[14]),
-      dyDCents: toCents(r[15]),
-      dyWCents: toCents(r[16]),
-      dyFwCents: toCents(r[17]),
-      ...(fuelConsTyp != null ? { fuelConsTyp, fuelConsBasis } : {}),
+      hrDCents: toCents(r[17]),
+      hrWCents: toCents(r[18]),
+      hrFwCents: toCents(r[19]),
+      dyDCents: toCents(r[20]),
+      dyWCents: toCents(r[21]),
+      dyFwCents: toCents(r[22]),
+      ...(fuelConsBasis && fuelConsTyp != null ? { fuelConsEcon, fuelConsTyp, fuelConsHeavy, fuelConsBasis } : {}),
     };
 
     const existing = await prisma.rentalRate.findUnique({ where: { assetId: asset.id } });
@@ -108,9 +105,9 @@ async function main() {
       if (fuelConsTyp != null && existing.fuelConsTyp !== fuelConsTyp) stats.consUpdated++;
       await prisma.rentalRate.update({ where: { assetId: asset.id }, data: tierData });
       stats.ratesUpdated++;
-      if (samples.length < 4 && existing.hrWCents !== tierData.hrWCents) {
+      if (samples.length < 4 && (existing.fuelConsHeavy == null || existing.hrWCents !== tierData.hrWCents)) {
         samples.push(
-          `${code}: w ${existing.hrWCents != null ? existing.hrWCents / 100 : "—"}→${tierData.hrWCents != null ? tierData.hrWCents / 100 : "—"} Rs/hr, cons ${existing.fuelConsTyp ?? "—"}→${fuelConsTyp ?? "—"}`
+          `${code}: band ${fuelConsEcon ?? "—"}/${fuelConsTyp ?? "—"}/${fuelConsHeavy ?? "—"} ${consUnit}, w ${tierData.hrWCents != null ? tierData.hrWCents / 100 : "—"} Rs/hr`
         );
       }
     } else {
