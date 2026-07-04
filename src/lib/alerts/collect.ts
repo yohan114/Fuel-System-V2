@@ -3,6 +3,7 @@ import { currentMonthPeriod } from "../billing/period";
 import { detectAnomalies } from "../integrity/anomalies";
 import { getTankReconciliation } from "../integrity/tank";
 import { getFleetServiceStatus } from "../service/fleet";
+import { getBreakdownEpisodes } from "../breakdowns";
 
 // A single operational alert. Alerts are computed live from current state, so
 // they clear automatically once the underlying item is handled.
@@ -120,7 +121,21 @@ export async function collectAlerts(opts: { projectId?: string; isAdmin: boolean
     });
   }
 
-  // 7. Admin-only: low bulk-tank balances.
+  // 7. Machines logged broken down for 3+ consecutive days and still down.
+  const breakdowns = await getBreakdownEpisodes({ from: period.start, to: period.end, projectId });
+  const longDown = breakdowns.openNow.filter((e) => e.days >= 3);
+  if (longDown.length > 0) {
+    alerts.push({
+      key: "breakdowns-open",
+      category: "SERVICE",
+      severity: "HIGH",
+      title: `${longDown.length} machine${longDown.length !== 1 ? "s" : ""} down 3+ days`,
+      detail: `Still logged as breakdown: ${longDown.slice(0, 5).map((e) => `${e.code} (${e.days}d)`).join(", ")}${longDown.length > 5 ? "…" : ""}.`,
+      href: "/breakdowns",
+    });
+  }
+
+  // 8. Admin-only: low bulk-tank balances.
   if (isAdmin) {
     const tanks = await getTankReconciliation();
     const low = tanks.filter((t) => t.lowBalance);
