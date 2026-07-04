@@ -122,6 +122,7 @@ model Asset {
   bills         Bill[]
   serviceRecords ServiceRecord[]
   serviceIntervalOverride ServiceInterval?
+  filters       AssetFilter[]
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -658,7 +659,9 @@ model ServiceInterval {
 }
 
 // A logged completed service. The countdown to the next service resets at the
-// latest record's date (and meterAtService when supplied).
+// latest record's date (and meterAtService when supplied). Records merged from
+// the E&C Service Record System carry jobNo, the labour/sundry breakdown and
+// per-part line items; sourceRef makes their re-import idempotent.
 model ServiceRecord {
   id             String   @id @default(uuid())
 
@@ -669,8 +672,16 @@ model ServiceRecord {
   meterAtService Float?
   meterType      String   // "HOURS" | "KM"
   serviceType    String?
-  costCents      Int?
+  costCents      Int?     // grand total
   note           String?
+
+  jobNo          String?
+  partsCents     Int?
+  labourCents    Int?
+  sundryCents    Int?
+  sourceRef      String?  @unique // e.g. "SRDB:123" for merged records
+
+  items          ServiceItem[]
 
   recordedById   String
   recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
@@ -678,4 +689,74 @@ model ServiceRecord {
   createdAt      DateTime @default(now())
 
   @@index([assetId, serviceDate])
+}
+
+// A part/consumable line on a service record (filter replaced, oil top-up …).
+model ServiceItem {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  kind            String // "FILTER" | "OIL"
+  description     String
+  partNo          String?
+  action          String? // replaced / cleaned / top-up …
+  qty             Float   @default(1)
+  unitPriceCents  Int?
+  amountCents     Int?
+
+  @@index([serviceRecordId])
+}
+
+// Filter master from the E&C Service Record System: one row per physical
+// filter, addressable by any equivalent part number via FilterCrossRef.
+model Filter {
+  id          String  @id @default(uuid())
+  category    String? // Oil Filter / Fuel Filter / Air Filter …
+  oemPartNo   String?
+  hifiPartNo  String?
+  description String?
+  priceCents  Int?    // best supplier quote, resolved through the cross-refs
+  priceNote   String? // supplier the price came from
+
+  crossRefs   FilterCrossRef[]
+  assetLinks  AssetFilter[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// One equivalent part number for a filter (OEM, HIFI, Fleetguard, Donaldson,
+// Baldwin, Sakura, VIC …). normalizedPN powers the cross-reference search.
+model FilterCrossRef {
+  id           String @id @default(uuid())
+
+  filterId     String
+  filter       Filter @relation(fields: [filterId], references: [id], onDelete: Cascade)
+
+  brand        String?
+  partNumber   String
+  normalizedPN String
+  refType      String? // oem | hifi | cross
+
+  @@index([normalizedPN])
+  @@index([filterId])
+}
+
+// Which filters fit which machine. assetId is null when the source vehicle
+// (e.g. a generator) has no matching asset here; vehicleRef keeps the label.
+model AssetFilter {
+  id         String  @id @default(uuid())
+
+  filterId   String
+  filter     Filter  @relation(fields: [filterId], references: [id], onDelete: Cascade)
+
+  assetId    String?
+  asset      Asset?  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  vehicleRef String
+
+  @@index([assetId])
+  @@index([filterId])
 }
