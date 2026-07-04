@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx prisma generate
+
+      # Informational until the pre-existing no-explicit-any backlog is cleared
+      # (175 legacy errors); typecheck and tests below are the enforced gates.
+      - run: npm run lint
+        continue-on-error: true
+
+      - run: npm run typecheck
+
+      - run: npm test
