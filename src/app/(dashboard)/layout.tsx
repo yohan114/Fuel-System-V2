@@ -23,7 +23,8 @@ import {
   ScrollText,
   DatabaseZap,
   Wallet,
-  Target
+  Target,
+  Building2
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -69,6 +70,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
       { label: "Alerts", href: "/alerts", icon: Bell },
@@ -83,6 +85,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Alerts", href: "/alerts", icon: Bell }
@@ -104,6 +107,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
