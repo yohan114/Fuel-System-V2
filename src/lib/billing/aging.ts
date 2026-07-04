@@ -23,6 +23,17 @@ export interface AgingReport {
 
 const DAY = 1000 * 60 * 60 * 24;
 
+export type AgingBucket = "current" | "d1_30" | "d31_60" | "d60plus";
+
+// Pure: which bucket an invoice falls in, by days past its due date
+// (zero/negative = not yet due).
+export function agingBucketFor(daysPastDue: number): AgingBucket {
+  if (daysPastDue <= 0) return "current";
+  if (daysPastDue <= 30) return "d1_30";
+  if (daysPastDue <= 60) return "d31_60";
+  return "d60plus";
+}
+
 export async function getAgingReport(opts: { projectId?: string } = {}): Promise<AgingReport> {
   const now = new Date();
 
@@ -53,10 +64,7 @@ export async function getAgingReport(opts: { projectId?: string } = {}): Promise
     s.totalOutstanding += outstanding;
 
     const daysPastDue = b.dueDate ? Math.floor((now.getTime() - new Date(b.dueDate).getTime()) / DAY) : 0;
-    if (daysPastDue <= 0) s.current += outstanding;
-    else if (daysPastDue <= 30) s.d1_30 += outstanding;
-    else if (daysPastDue <= 60) s.d31_60 += outstanding;
-    else s.d60plus += outstanding;
+    s[agingBucketFor(daysPastDue)] += outstanding;
   }
 
   const sites = [...siteMap.values()].sort((a, b) => b.totalOutstanding - a.totalOutstanding);
