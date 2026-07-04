@@ -30,6 +30,7 @@ run directly: `npx tsx scripts/<name>.ts`.
 | Script | Source file | Notes |
 |---|---|---|
 | `import_pm_master` | `Fleet_PM_Master.xlsx` (repo) | Preventive-maintenance plans per category (powers `/service/plan/<code>`). Re-import replaces workbook tasks, keeps manually added ones. |
+| `import_rate_update_2026` | `Fleet_Machinery_Rental_Price_Sheet_2026.xlsx` (repo) | Per-unit rate update: hr/day tiers (DRY→d, DRY+OP→w, WET→fw), fuel consumption (L/hr; km vehicles convert km/L→L/km) and the CPC fuel-price revisions. |
 | `merge_duplicate_assets` | — | Duplicate-vehicle merge; dry-run by default, `--apply` to execute. |
 
 ## Where files are looked up
