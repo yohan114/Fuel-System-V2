@@ -1,6 +1,6 @@
 import { prisma } from "../db";
 import { computeWindowDelta } from "../billing/usage";
-import { recommendedUnits } from "../reports/recommended";
+import { recommendedUnits, formatVariancePct } from "../reports/recommended";
 
 // Fuel-integrity rule engine. Signed fuel-issue records are hard to fake, so
 // cross-checking them against meters, rate cards and breakdown logs surfaces
@@ -109,7 +109,7 @@ export async function detectAnomalies(opts: {
           ...base,
           type: "METER_UNDER_RECORDED",
           severity: variance >= 0.5 ? "HIGH" : "MEDIUM",
-          message: `Fuel implies ~${recommended.toFixed(0)} ${meterType} run but meter grew only ${actualMeter.toLocaleString()} ${meterType} (+${(variance * 100).toFixed(0)}%). Possible off-meter running or under-recorded meter.`,
+          message: `Fuel implies ~${recommended.toFixed(0)} ${meterType} run but meter grew only ${actualMeter.toLocaleString()} ${meterType} (${formatVariancePct(variance)}). Possible off-meter running or under-recorded meter.`,
         });
       }
     }

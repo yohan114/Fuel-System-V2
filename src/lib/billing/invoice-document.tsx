@@ -1,5 +1,6 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, renderToBuffer, Svg, Path, Line } from "@react-pdf/renderer";
+import { formatVariancePct } from "../reports/recommended";
 
 const NAVY = "#1e3a5f";
 const AMBER = "#f59e0b";
@@ -229,7 +230,7 @@ export function InvoiceDocument({ bill }: { bill: any }) {
                 <View style={styles.usageCell}>
                   <Text style={styles.usageCellLabel}>Variance</Text>
                   <Text style={[styles.usageCellVal, variancePct != null && Math.abs(variancePct) >= 20 ? { color: "#b91c1c" } : {}]}>
-                    {variancePct != null ? `${variancePct > 0 ? "+" : ""}${variancePct.toFixed(0)}%` : "—"}
+                    {variancePct != null ? formatVariancePct(variancePct / 100) : "—"}
                   </Text>
                   <Text style={styles.usageCellUnit}>{bill.derivedFromFuel ? "billed on fuel" : "billed on meter"}</Text>
                 </View>

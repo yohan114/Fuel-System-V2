@@ -6,7 +6,7 @@ import Link from "next/link";
 import AssetCharts from "./components/AssetCharts";
 import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
-import { recommendedUnits, varianceFlag } from "@/lib/reports/recommended";
+import { recommendedUnits, varianceFlag, formatVariancePct } from "@/lib/reports/recommended";
 import { computeServiceStatus } from "@/lib/service/compute";
 import { getBreakdownEpisodes } from "@/lib/breakdowns";
 import { logServiceAction, setServiceIntervalAction } from "@/app/actions/service";
@@ -255,7 +255,7 @@ export default async function AssetDetailPage(props: PageProps) {
               <span className={`text-md font-bold block mt-1 ${
                 lifetimeVariance.flag === "METER_LOW" ? "text-red-400" : lifetimeVariance.flag === "METER_HIGH" ? "text-amber-400" : "text-white"
               }`}>
-                {lifetimeVariance.variancePct != null ? `${lifetimeVariance.variancePct > 0 ? "+" : ""}${(lifetimeVariance.variancePct * 100).toFixed(0)}%` : "—"}
+                {formatVariancePct(lifetimeVariance.variancePct) ?? "—"}
               </span>
               <span className="text-[10px] text-gray-500 block mt-0.5">
                 {lifetimeVariance.flag === "METER_LOW" ? "meter under-recorded?" : lifetimeVariance.flag === "METER_HIGH" ? "meter high" : "within tolerance"}

@@ -1,5 +1,6 @@
 import React from "react";
 import { aggregateFuelData } from "@/lib/reports/aggregate";
+import { formatVariancePct } from "@/lib/reports/recommended";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
 import { 
@@ -260,8 +261,7 @@ export default async function ReportsPage(props: PageProps) {
                                 : "Within tolerance"
                             }
                           >
-                            {asset.variancePct > 0 ? "+" : ""}
-                            {(asset.variancePct * 100).toFixed(0)}%
+                            {formatVariancePct(asset.variancePct)}
                           </span>
                         ) : (
                           <span className="text-gray-600">—</span>

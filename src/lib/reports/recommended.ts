@@ -23,6 +23,20 @@ export interface MeterVsFuel {
   flag: VarianceFlag;
 }
 
+// Display cap: past ±999% a variance percentage stops carrying information —
+// the meter effectively did not move against real fuel. The METER_LOW/HIGH
+// flag carries the interpretation; the capped marker just says "off the scale".
+export const VARIANCE_DISPLAY_CAP_PCT = 999;
+
+// Formats the signed variance fraction (0.2 = +20%) for display, capped.
+export function formatVariancePct(variancePct: number | null): string | null {
+  if (variancePct == null) return null;
+  const pct = variancePct * 100;
+  if (pct > VARIANCE_DISPLAY_CAP_PCT) return `≥ +${VARIANCE_DISPLAY_CAP_PCT}%`;
+  if (pct < -VARIANCE_DISPLAY_CAP_PCT) return `≤ -${VARIANCE_DISPLAY_CAP_PCT}%`;
+  return `${pct > 0 ? "+" : ""}${pct.toFixed(0)}%`;
+}
+
 // litres ÷ typical consumption rate. Null when no usable rate; 0 when no fuel.
 export function recommendedUnits(
   litres: number,

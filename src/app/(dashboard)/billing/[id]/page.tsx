@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Download, FileSpreadsheet, Building2, Calendar } from "lucide-react";
 import { unitLabel, basisLabel, modeLabel, type BillingMode, type RateBasis } from "@/lib/billing/calc";
+import { formatVariancePct } from "@/lib/reports/recommended";
 import { getWetRateCents } from "@/lib/billing/rate";
 import BillActions from "./BillActions";
 import BillingRunningChart from "../components/BillingRunningChart";
@@ -267,7 +268,7 @@ export default async function BillDetailPage(props: PageProps) {
                   <div className="flex items-center justify-between">
                     <dt className="text-gray-400">Meter vs recommended variance</dt>
                     <dd className={`font-bold ${Math.abs(variancePct) >= 20 ? (variancePct > 0 ? "text-red-400" : "text-amber-400") : "text-gray-300"}`}>
-                      {variancePct > 0 ? "+" : ""}{variancePct.toFixed(0)}%
+                      {formatVariancePct(variancePct / 100)}
                       {Math.abs(variancePct) >= 20 ? (variancePct > 0 ? " · meter low" : " · meter high") : ""}
                     </dd>
                   </div>
