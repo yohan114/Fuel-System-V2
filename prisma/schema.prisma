@@ -57,6 +57,35 @@ model Category {
   fleetGroup       String        // "ROAD_VEHICLE" | "MACHINERY_GENSET"
   assets           Asset[]
   serviceInterval  ServiceInterval?
+  pmTasks          PMTask[]
+}
+
+// A preventive-maintenance task from the Fleet PM Master plan. Every vehicle
+// of the category shares the plan; tasks repeat on an hour-ladder interval
+// (10/50/250/500/1000/2000/4000 h). Road vehicles schedule the same ladder in
+// kilometres at 10 km per plan hour (matching the app's 500 h ≈ 5,000 km rule).
+model PMTask {
+  id            String   @id @default(uuid())
+
+  categoryId    String
+  category      Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  taskCode      String?  // source id, e.g. BAC-1-001; null for manually added tasks
+  intervalHours Float
+  intervalLabel String   // e.g. "Monthly / 250 h"
+  system        String?  // Engine / Hydraulic / Electrical ...
+  component     String?
+  description   String
+  parts         String?  // consumables / parts to use
+  skill         String?
+  laborHours    Float?
+  notes         String?
+  sortOrder     Int      @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([categoryId, intervalHours, sortOrder])
 }
 
 model Asset {
