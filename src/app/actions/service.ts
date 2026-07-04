@@ -76,6 +76,92 @@ export async function logServiceAction(formData: FormData) {
   }
 }
 
+// Add a task to a category's PM plan (shared by every vehicle of the category).
+export async function addPMTaskAction(formData: FormData) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to edit PM plans" };
+  }
+
+  const categoryId = formData.get("categoryId")?.toString();
+  const assetCode = formData.get("assetCode")?.toString() || "";
+  const intervalHours = parseFloat(formData.get("intervalHours")?.toString() || "");
+  const description = formData.get("description")?.toString().trim();
+  const system = formData.get("system")?.toString().trim() || null;
+  const component = formData.get("component")?.toString().trim() || null;
+  const parts = formData.get("parts")?.toString().trim() || null;
+
+  if (!categoryId || !description) return { error: "Category and task description are required" };
+  if (isNaN(intervalHours) || intervalHours <= 0) return { error: "Interval is required" };
+
+  try {
+    const sibling = await prisma.pMTask.findFirst({
+      where: { categoryId, intervalHours },
+      select: { intervalLabel: true },
+    });
+    const last = await prisma.pMTask.findFirst({
+      where: { categoryId },
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    });
+    const task = await prisma.pMTask.create({
+      data: {
+        categoryId,
+        intervalHours,
+        intervalLabel: sibling?.intervalLabel ?? `Every ${intervalHours} h`,
+        system,
+        component,
+        description,
+        parts,
+        sortOrder: (last?.sortOrder ?? 0) + 1,
+      },
+    });
+    await prisma.auditLog.create({
+      data: {
+        actorId: admin.id,
+        action: "CREATE",
+        entity: "PMTask",
+        entityId: task.id,
+        summary: `Added PM task "${description}" (${task.intervalLabel}) to category plan`,
+      },
+    });
+    if (assetCode) revalidatePath(`/service/plan/${assetCode}`);
+    return { success: true };
+  } catch (err: any) {
+    console.error("Add PM task error:", err);
+    return { error: err.message || "Failed to add PM task" };
+  }
+}
+
+// Remove a task from a category's PM plan.
+export async function deletePMTaskAction(taskId: string, assetCode: string) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to edit PM plans" };
+  }
+  try {
+    const task = await prisma.pMTask.delete({ where: { id: taskId } });
+    await prisma.auditLog.create({
+      data: {
+        actorId: admin.id,
+        action: "DELETE",
+        entity: "PMTask",
+        entityId: taskId,
+        summary: `Removed PM task "${task.description}" (${task.intervalLabel}) from category plan`,
+      },
+    });
+    if (assetCode) revalidatePath(`/service/plan/${assetCode}`);
+    return { success: true };
+  } catch (err: any) {
+    console.error("Delete PM task error:", err);
+    return { error: err.message || "Failed to delete PM task" };
+  }
+}
+
 // Upsert a service interval — a per-category default or a per-asset override.
 export async function setServiceIntervalAction(formData: FormData) {
   let admin;

@@ -130,7 +130,11 @@ export default async function ServicePage(props: PageProps) {
                   <tr key={r.assetId} className="hover:bg-white/[0.01]">
                     <td className="py-3">
                       <Link href={`/fleet/${r.code}?tab=service`} className="font-bold text-white hover:text-indigo-400">{r.code}</Link>
-                      <span className="block text-[10px] text-gray-500">{r.categoryName}</span>
+                      <span className="block text-[10px] text-gray-500">
+                        {r.categoryName}
+                        {" · "}
+                        <Link href={`/service/plan/${encodeURIComponent(r.code)}`} className="text-indigo-400 hover:underline">PM plan</Link>
+                      </span>
                     </td>
                     <td className="py-3 text-gray-400">{r.projectName || "—"}</td>
                     <td className="py-3 text-right text-gray-300">{num(r.intervalValue)} {unit}<span className="block text-[9px] text-gray-600 uppercase">{r.intervalSource}</span></td>

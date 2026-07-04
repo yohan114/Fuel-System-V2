@@ -516,7 +516,10 @@ export default async function AssetDetailPage(props: PageProps) {
                     <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Interval ({serviceStatus.intervalSource})</span><span className="text-white font-bold">{serviceStatus.intervalValue.toFixed(0)} {serviceUnit}</span></div>
                     <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Projected due</span><span className="text-white font-bold">{serviceStatus.projectedDueDate ? new Date(serviceStatus.projectedDueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—"}</span></div>
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-3">Last service: {serviceStatus.lastServiceDate ? new Date(serviceStatus.lastServiceDate).toLocaleDateString("en-GB") : "none on record — measuring since commissioning"}. Countdown uses the higher of recorded and fuel-derived running.</p>
+                  <p className="text-[10px] text-gray-500 mt-3">
+                    Last service: {serviceStatus.lastServiceDate ? new Date(serviceStatus.lastServiceDate).toLocaleDateString("en-GB") : "none on record — measuring since commissioning"}. Countdown uses the higher of recorded and fuel-derived running.{" "}
+                    <Link href={`/service/plan/${encodeURIComponent(asset.code)}`} className="text-indigo-400 hover:underline font-bold">Full service plan →</Link>
+                  </p>
                 </div>
               ) : (
                 <div className="text-xs text-gray-500">No service data available for this vehicle.</div>
