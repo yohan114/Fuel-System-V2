@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { planMerges, detailScore } from "../fleet/dedupe";
 
 // Cross-cutting invariant checks for /admin/data-quality. Each check verifies
 // something the rest of the system assumes to be true; a failure means data
@@ -105,6 +106,30 @@ export async function runInvariantChecks(): Promise<InvariantCheck[]> {
     description: "A void/edit was approved after these drafts were generated — regenerate them before finalizing.",
     count: staleDrafts.length,
     samples: staleDrafts.slice(0, 5).map((r) => `${r.assetCode} ${r.periodKey}`),
+  });
+
+  // 7. Duplicate vehicle records sharing one registration identity.
+  const fleet = await prisma.asset.findMany({ include: { rentalRate: { select: { id: true } } } });
+  const dedupe = planMerges(
+    fleet.map((a) => ({
+      id: a.id,
+      code: a.code,
+      regNo: a.regNo,
+      status: a.status,
+      createdAt: a.createdAt,
+      detailScore: detailScore(a),
+    }))
+  );
+  checks.push({
+    key: "duplicate-vehicles",
+    name: "Duplicate vehicle records",
+    description:
+      "The same registration exists on more than one asset. Mergeable ones: run scripts/merge_duplicate_assets.ts; ambiguous groups need a manual decision.",
+    count: dedupe.merges.length + dedupe.ambiguous.length,
+    samples: [
+      ...dedupe.merges.slice(0, 3).map((m) => `${m.survivor.code} ⇐ ${m.duplicates.map((d) => d.code).join(", ")}`),
+      ...dedupe.ambiguous.slice(0, 2).map((g) => `${g.codes.join("/")} (manual)`),
+    ],
   });
 
   return checks;
