@@ -107,7 +107,7 @@ export default async function BreakdownsPage(props: PageProps) {
                   <td className="py-3 text-gray-500">{fmtDay(e.lastLoggedDay)}</td>
                   <td className="py-3 text-gray-500 max-w-[240px] truncate" title={e.lastNote ?? ""}>{e.lastNote ?? "—"}</td>
                   <td className="py-3 text-right">
-                    <Link href={`/fleet/${e.code}`} className="text-[10px] font-bold text-indigo-400 hover:underline whitespace-nowrap">
+                    <Link href={`/fleet/${e.code}?tab=service`} className="text-[10px] font-bold text-indigo-400 hover:underline whitespace-nowrap">
                       <Wrench className="w-3 h-3 inline mr-1" />log service
                     </Link>
                   </td>
