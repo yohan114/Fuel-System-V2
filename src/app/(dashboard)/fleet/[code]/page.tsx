@@ -8,6 +8,7 @@ import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
 import { recommendedUnits, varianceFlag } from "@/lib/reports/recommended";
 import { computeServiceStatus } from "@/lib/service/compute";
+import { getBreakdownEpisodes } from "@/lib/breakdowns";
 import { logServiceAction, setServiceIntervalAction } from "@/app/actions/service";
 import { 
   ArrowLeft, 
@@ -82,6 +83,13 @@ export default async function AssetDetailPage(props: PageProps) {
     include: { recordedBy: { select: { name: true } } },
   });
   const serviceUnit = serviceStatus?.basis === "KM" ? "km" : "hr";
+
+  // Breakdown episodes over the last 6 months, for the Service tab strip.
+  const breakdownLog = await getBreakdownEpisodes({
+    from: new Date(Date.now() - 183 * 86400000),
+    to: new Date(),
+    assetId: asset.id,
+  });
 
   // 3. Compute efficiency metrics
   let totalLitres = 0;
@@ -512,6 +520,43 @@ export default async function AssetDetailPage(props: PageProps) {
                 </div>
               ) : (
                 <div className="text-xs text-gray-500">No service data available for this vehicle.</div>
+              )}
+
+              {breakdownLog.episodes.length > 0 && (
+                <div className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Breakdown History (6 months)</h4>
+                    <Link href="/breakdowns" className="text-[10px] font-bold text-indigo-400 hover:underline">Breakdown log →</Link>
+                  </div>
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="text-gray-400 font-semibold border-b border-white/5">
+                        <th className="py-2">From</th>
+                        <th className="py-2">To</th>
+                        <th className="py-2 text-right">Days</th>
+                        <th className="py-2">Status</th>
+                        <th className="py-2">Last note</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {breakdownLog.episodes.slice(0, 8).map((e) => (
+                        <tr key={e.startDay}>
+                          <td className="py-2.5 text-gray-300">{new Date(`${e.startDay}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
+                          <td className="py-2.5 text-gray-300">{new Date(`${e.endDay}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
+                          <td className="py-2.5 text-right font-bold text-amber-400">{e.days}</td>
+                          <td className="py-2.5">
+                            {e.open ? (
+                              <span className="text-[9px] font-bold rounded px-2 py-0.5 bg-rose-500/10 text-rose-400">STILL DOWN</span>
+                            ) : (
+                              <span className="text-[9px] font-bold rounded px-2 py-0.5 bg-emerald-500/10 text-emerald-400">REPAIRED</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 text-gray-500 max-w-[220px] truncate" title={e.lastNote || ""}>{e.lastNote || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
 
               {isAdmin && (

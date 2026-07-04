@@ -24,7 +24,8 @@ import {
   DatabaseZap,
   Wallet,
   Target,
-  Building2
+  Building2,
+  AlertTriangle
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -68,6 +69,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
       { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
@@ -87,6 +89,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Alerts", href: "/alerts", icon: Bell }
     );
@@ -96,7 +99,8 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
-      { label: "Meter Readings", href: "/readings", icon: Gauge }
+      { label: "Meter Readings", href: "/readings", icon: Gauge },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle }
     );
   } else {
     // USER role
@@ -109,6 +113,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
       { label: "Receivables", href: "/billing/aging", icon: Wallet },
