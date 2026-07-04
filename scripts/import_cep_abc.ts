@@ -19,6 +19,7 @@ import XLSX from "xlsx";
 import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -146,17 +147,19 @@ async function main() {
   });
   stats.projects++;
 
-  // Create Site User
+  // Create Site User. Password is generated randomly on first creation and
+  // printed once; re-imports never touch credentials.
   const username = projectName;
-  const password = `${projectName}@123`;
+  const existingUser = await prisma.user.findUnique({ where: { username } });
+  const password = crypto.randomBytes(6).toString("base64url");
   await prisma.user.upsert({
     where: { username },
-    update: { passwordHash: bcrypt.hashSync(password, 10), projectId: project.id, name: `${projectName} Site User`, active: true },
+    update: { projectId: project.id, name: `${projectName} Site User`, active: true },
     create: { username, name: `${projectName} Site User`, role: "USER", passwordHash: bcrypt.hashSync(password, 10), projectId: project.id, createdById: sysId }
   });
   stats.users++;
 
-  console.log(`Project: "${projectName}" [${projectCode}] | User: "${username}" / "${password}"`);
+  console.log(`Project: "${projectName}" [${projectCode}] | User: "${username}" ${existingUser ? "(password unchanged)" : `/ "${password}" (generated once — record it now)`}`);
 
   async function ensureAsset(code: string, type: string, projectId: string, rateVal?: number): Promise<AssetInfo> {
     const found = lookup(code);
