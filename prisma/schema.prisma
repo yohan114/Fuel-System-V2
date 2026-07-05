@@ -103,6 +103,7 @@ model Asset {
   site          String?
   status        String         @default("ACTIVE") // "ACTIVE" | "INACTIVE" | "DISPOSED"
   meterType     String         // "KM" | "HOURS"
+  dailyCapLitres Int?          // optional per-vehicle daily fuel cap (litres); blocks over-cap issues
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 

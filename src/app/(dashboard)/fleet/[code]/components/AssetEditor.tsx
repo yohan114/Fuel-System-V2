@@ -21,6 +21,7 @@ interface AssetEditorProps {
     site: string | null;
     status: string;
     meterType: string;
+    dailyCapLitres: number | null;
   };
 }
 
@@ -280,6 +281,25 @@ export default function AssetEditor({ asset }: AssetEditorProps) {
                       <option value="KM">Kilometres (KM)</option>
                       <option value="HOURS">Hours (HOURS)</option>
                     </select>
+                  </div>
+
+                  {/* Daily Fuel Cap */}
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                      Daily Fuel Cap (Litres)
+                    </label>
+                    <input
+                      type="number"
+                      name="dailyCapLitres"
+                      min="1"
+                      step="1"
+                      defaultValue={asset.dailyCapLitres ?? ""}
+                      placeholder="No cap"
+                      className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-3 text-white text-xs focus:outline-none focus:border-indigo-500/50"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-1.5">
+                      Leave blank for no limit. Blocks issues once the day's total would exceed this.
+                    </p>
                   </div>
                 </div>
 

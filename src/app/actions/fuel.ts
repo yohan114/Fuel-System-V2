@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
 import { getPriceForDate } from "@/lib/pricing";
+import { checkDailyCap } from "@/lib/fuel-policy";
 import { extractFileField } from "@/lib/upload";
 import { revalidatePath } from "next/cache";
 
@@ -177,6 +178,15 @@ export async function approveRequestAction(requestId: string, reviewNote: string
 
     // Resolve active price for the current date
     const issueDate = new Date();
+
+    // Site fuel discipline: block if this would exceed the vehicle's daily cap.
+    const capError = await checkDailyCap(
+      request.assetId,
+      request.asset.dailyCapLitres,
+      issueDate,
+      request.requestedLitres
+    );
+    if (capError) return { error: capError };
     const resolvedPrice = await getPriceForDate(request.fuelKind, issueDate);
     const totalCost = Math.round(request.requestedLitres * resolvedPrice.pricePerLitre);
 
@@ -412,6 +422,10 @@ export async function recordDirectIssueAction(formData: FormData) {
         };
       }
     }
+
+    // Site fuel discipline: block if this would exceed the vehicle's daily cap.
+    const capError = await checkDailyCap(asset.id, asset.dailyCapLitres, issueDate, litres);
+    if (capError) return { error: capError };
 
     const photo = await extractFileField(formData, "photo");
     if (!photo && (await photoRequired())) {
