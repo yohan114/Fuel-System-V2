@@ -39,6 +39,10 @@ export async function GET(request: NextRequest) {
         id: true,
         assetCode: true,
         projectName: true,
+        rentalAmountCents: true,
+        fuelCostCents: true,
+        ssclCents: true,
+        vatCents: true,
         grandTotalCents: true,
         issuedDate: true,
         createdAt: true,
@@ -59,13 +63,26 @@ export async function GET(request: NextRequest) {
       amountCents: i.totalCost,
       occurredAt: i.issueDate.toISOString(),
     })),
-    income: bills.map((b) => ({
-      sourceRef: `bill:${b.id}`,
-      machineCode: b.assetCode,
-      siteRef: b.projectName ?? null,
-      amountCents: b.grandTotalCents,
-      occurredAt: (b.issuedDate ?? b.createdAt).toISOString(),
-      status: b.status,
-    })),
+    // Income split by component so the portal can compute the fuel margin
+    // (fuel billed − fuel cost) separately from rental. Idempotent per part.
+    income: bills.flatMap((b) => {
+      const occurredAt = (b.issuedDate ?? b.createdAt).toISOString();
+      const parts: { cat: string; cents: number }[] = [
+        { cat: "rental", cents: b.rentalAmountCents },
+        { cat: "fuel", cents: b.fuelCostCents },
+        { cat: "tax", cents: (b.ssclCents ?? 0) + (b.vatCents ?? 0) },
+      ];
+      return parts
+        .filter((p) => p.cents > 0)
+        .map((p) => ({
+          sourceRef: `bill:${b.id}:${p.cat}`,
+          machineCode: b.assetCode,
+          siteRef: b.projectName ?? null,
+          category: p.cat,
+          amountCents: p.cents,
+          occurredAt,
+          status: b.status,
+        }));
+    }),
   });
 }
