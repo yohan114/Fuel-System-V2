@@ -37,10 +37,10 @@ export async function GET(request: NextRequest) {
     system: "fuel",
     generatedAt: now.toISOString(),
     kpis: [
-      { label: "Fuel this month", value: rs(fuelCents), tone: "neutral" },
-      { label: "Pending fuel requests", value: pendingRequests, tone: pendingRequests > 0 ? "warn" : "good" },
-      { label: "Receivables outstanding", value: rs(owedCents), tone: owedCents > 0 ? "warn" : "good" },
-      { label: "Bulk tank stock", value: `${litresInTanks.toLocaleString("en-LK")} L`, tone: "neutral" },
+      { label: "Fuel this month", value: rs(fuelCents), tone: "neutral", href: "/reports" },
+      { label: "Pending fuel requests", value: pendingRequests, tone: pendingRequests > 0 ? "warn" : "good", href: "/fuel/requests" },
+      { label: "Receivables outstanding", value: rs(owedCents), tone: owedCents > 0 ? "warn" : "good", href: "/billing/aging" },
+      { label: "Bulk tank stock", value: `${litresInTanks.toLocaleString("en-LK")} L`, tone: "neutral", href: "/admin/tanks" },
     ],
   });
 }
