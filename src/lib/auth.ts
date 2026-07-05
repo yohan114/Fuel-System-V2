@@ -13,7 +13,11 @@ let warnedDevFallback = false;
 
 function getSecret(): Uint8Array {
   if (cachedSecret) return cachedSecret;
-  const { secret, usedFallback } = resolveAuthSecret(process.env.AUTH_SECRET, process.env.NODE_ENV);
+  // Prefer a system-scoped secret so co-hosting alongside other E&C systems on
+  // one box (shared machine-level AUTH_SECRET) cannot silently share a signing
+  // key. Falls back to AUTH_SECRET so existing deployments keep working.
+  const configured = process.env.FUEL_AUTH_SECRET || process.env.AUTH_SECRET;
+  const { secret, usedFallback } = resolveAuthSecret(configured, process.env.NODE_ENV);
   if (usedFallback && !warnedDevFallback) {
     warnedDevFallback = true;
     console.warn("[auth] AUTH_SECRET not set — using the insecure development fallback secret.");
@@ -74,7 +78,9 @@ export async function getSession(): Promise<SessionPayload | null> {
 }
 
 export async function requireUser() {
-  if (process.env.TEST_ENV === "true") {
+  // The TEST_ENV bypass returns the admin user without a session — it must
+  // never be reachable in production, even if the env var leaks onto the box.
+  if (process.env.TEST_ENV === "true" && process.env.NODE_ENV !== "production") {
     const user = await prisma.user.findFirst({
       where: { username: "admin" },
     });

@@ -8,8 +8,14 @@ export function proxy(request: NextRequest) {
   // Log incoming request details for diagnostic purposes
   console.log(`[Proxy Log] ${method} ${pathname} | Host: ${request.headers.get("host")} | Origin: ${request.headers.get("origin")} | X-Forwarded-Host: ${request.headers.get("x-forwarded-host")} | X-Forwarded-Proto: ${request.headers.get("x-forwarded-proto")}`);
 
-  // Let cron API routes pass (they authorize using the CRON_SECRET header or query parameter)
-  if (pathname.startsWith("/api/cron") || pathname.startsWith("/api/reports/export")) {
+  // Let machine endpoints pass: cron (CRON_SECRET), report exports (self-authed),
+  // health (public), and the portal read API (X-Portal-Token in the handler).
+  if (
+    pathname.startsWith("/api/cron") ||
+    pathname.startsWith("/api/reports/export") ||
+    pathname === "/api/health" ||
+    pathname.startsWith("/api/portal")
+  ) {
     return NextResponse.next();
   }
 

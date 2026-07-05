@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import bcrypt from "bcryptjs";
 import path from "path";
 import fs from "fs";
+import { randomBytes } from "crypto";
 
 const adapter = new PrismaBetterSqlite3({
   url: process.env.DATABASE_URL || "file:./data/app.db",
@@ -101,8 +102,15 @@ async function main() {
   categoryDbIds["OTHER"] = fallbackCat.id;
 
   // 2. Seed Default Admin
+  // No hardcoded fallback password — a fresh install must supply
+  // SEED_ADMIN_PASSWORD, otherwise a random one is generated and printed once
+  // so the credential never lives in source control.
   console.log("Seeding default admin user...");
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD || "Gunaya@23254";
+  let adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (!adminPassword) {
+    adminPassword = randomBytes(12).toString("base64url");
+    console.log(`  Generated admin password (save it now): ${adminPassword}`);
+  }
   const passwordHash = bcrypt.hashSync(adminPassword, 10);
   const adminUser = await prisma.user.upsert({
     where: { username: "admin" },
