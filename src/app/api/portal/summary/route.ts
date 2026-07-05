@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 // x-portal-token header (the proxy lets /api/portal/* pass). Never mutates.
 export async function GET(request: NextRequest) {
   const token = request.headers.get("x-portal-token");
-  const expected = process.env.PORTAL_TOKEN;
+  const expected = process.env.FUEL_PORTAL_TOKEN || process.env.PORTAL_TOKEN;
   if (!expected || !token || token !== expected) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
