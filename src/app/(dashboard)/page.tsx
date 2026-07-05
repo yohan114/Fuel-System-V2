@@ -247,7 +247,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* Volume Pumped */}
-        <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-lg flex items-center gap-5">
+        <Link href="/sites" className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-lg flex items-center gap-5 hover:border-indigo-500/30 transition-colors">
           <div className="w-12 h-12 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
             <Fuel className="w-6 h-6" />
           </div>
@@ -256,8 +256,9 @@ export default async function DashboardPage() {
             <span className="text-lg font-bold text-white block mt-0.5">
               {(monthlyIssues._sum.litres || 0).toLocaleString("en-US", { maximumFractionDigits: 1 })} Litres
             </span>
+            <span className="text-[10px] text-indigo-400 block mt-0.5">View by site →</span>
           </div>
-        </div>
+        </Link>
 
         {/* Active Fleet */}
         <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-lg flex items-center gap-5">

@@ -15,7 +15,18 @@ import {
   Menu,
   Database,
   Receipt,
-  Wrench
+  Wrench,
+  ShieldAlert,
+  Droplets,
+  Bell,
+  Activity,
+  ScrollText,
+  DatabaseZap,
+  Wallet,
+  Target,
+  Building2,
+  AlertTriangle,
+  Filter as FilterIcon
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -56,16 +67,34 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
+      { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
+      { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Filter Database", href: "/filters", icon: FilterIcon },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
-      { label: "Billing", href: "/billing", icon: Receipt }
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Alerts", href: "/alerts", icon: Bell },
+      { label: "Receivables", href: "/billing/aging", icon: Wallet },
+      { label: "Fuel Budgets", href: "/admin/budgets", icon: Target },
+      { label: "Audit Log", href: "/admin/audit", icon: ScrollText },
+      { label: "Data Quality", href: "/admin/data-quality", icon: DatabaseZap }
     );
   } else if (isAllocator) {
     navItems.push(
       { label: "Allocator Console", href: "/allocator", icon: Car },
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck }
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Filter Database", href: "/filters", icon: FilterIcon },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else if (isWorkshop) {
     navItems.push(
@@ -73,7 +102,9 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
-      { label: "Meter Readings", href: "/readings", icon: Gauge }
+      { label: "Meter Readings", href: "/readings", icon: Gauge },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Filter Database", href: "/filters", icon: FilterIcon }
     );
   } else {
     // USER role
@@ -84,7 +115,13 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
-      { label: "Billing", href: "/billing", icon: Receipt }
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Receivables", href: "/billing/aging", icon: Wallet },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   }
 

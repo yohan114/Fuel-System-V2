@@ -43,6 +43,10 @@ model User {
 
   fuelCorrections     FuelIssueCorrection[] @relation("CorrectionRequestedBy")
   reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
+
+  tankDips         TankDip[]     @relation("TankDipRecordedBy")
+
+  serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
 }
 
 model Category {
@@ -52,6 +56,36 @@ model Category {
   defaultMeterType String        // "KM" | "HOURS"
   fleetGroup       String        // "ROAD_VEHICLE" | "MACHINERY_GENSET"
   assets           Asset[]
+  serviceInterval  ServiceInterval?
+  pmTasks          PMTask[]
+}
+
+// A preventive-maintenance task from the Fleet PM Master plan. Every vehicle
+// of the category shares the plan; tasks repeat on an hour-ladder interval
+// (10/50/250/500/1000/2000/4000 h). Road vehicles schedule the same ladder in
+// kilometres at 10 km per plan hour (matching the app's 500 h ≈ 5,000 km rule).
+model PMTask {
+  id            String   @id @default(uuid())
+
+  categoryId    String
+  category      Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  taskCode      String?  // source id, e.g. BAC-1-001; null for manually added tasks
+  intervalHours Float
+  intervalLabel String   // e.g. "Monthly / 250 h"
+  system        String?  // Engine / Hydraulic / Electrical ...
+  component     String?
+  description   String
+  parts         String?  // consumables / parts to use
+  skill         String?
+  laborHours    Float?
+  notes         String?
+  sortOrder     Int      @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([categoryId, intervalHours, sortOrder])
 }
 
 model Asset {
@@ -69,6 +103,7 @@ model Asset {
   site          String?
   status        String         @default("ACTIVE") // "ACTIVE" | "INACTIVE" | "DISPOSED"
   meterType     String         // "KM" | "HOURS"
+  dailyCapLitres Int?          // optional per-vehicle daily fuel cap (litres); blocks over-cap issues
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -86,6 +121,9 @@ model Asset {
 
   rentalRate    RentalRate?
   bills         Bill[]
+  serviceRecords ServiceRecord[]
+  serviceIntervalOverride ServiceInterval?
+  filters       AssetFilter[]
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -159,6 +197,12 @@ model FuelRequest {
   reviewedAt     DateTime?
   reviewNote     String?
 
+  // Optional pump/meter photo proof captured by the site PM at request time;
+  // copied onto the resulting FuelIssue when the request is approved.
+  photoData      Bytes?
+  photoName      String?
+  photoMime      String?
+
   issue          FuelIssue?
 }
 
@@ -197,6 +241,12 @@ model FuelIssue {
   // but kept for the audit trail.
   voided          Boolean      @default(false)
   voidedAt        DateTime?
+
+  // Optional pump/meter photo proof for the issue (carried from the request,
+  // or attached directly on a direct issue).
+  photoData       Bytes?
+  photoName       String?
+  photoMime       String?
 
   corrections     FuelIssueCorrection[]
 }
@@ -310,6 +360,7 @@ model Project {
   assets      Asset[]
   bulkTanks   BulkTank[]
   assignments AssetAssignment[]
+  budgets     Budget[]
 }
 
 model DailyCondition {
@@ -344,6 +395,29 @@ model BulkTank {
   users     User[]
   requests  BulkRequest[]
   issues    FuelIssue[]   @relation("TankIssues")
+  dips      TankDip[]
+}
+
+// A physical bulk-tank dip/count, recorded periodically to reconcile the
+// measured fuel level against the system-computed balance (top-ups − issues).
+// A persistent gap flags shrinkage, leakage or unrecorded draws.
+model TankDip {
+  id              String   @id @default(uuid())
+
+  bulkTankId      String
+  bulkTank        BulkTank @relation(fields: [bulkTankId], references: [id], onDelete: Cascade)
+
+  dipLitres       Float    // physically measured litres in the tank
+  computedBalance Float    // system balance snapshot at dip time
+  variance        Float    // dipLitres − computedBalance (negative = shortfall)
+  dipDate         DateTime
+  note            String?
+  createdAt       DateTime @default(now())
+
+  recordedById    String
+  recordedBy      User     @relation("TankDipRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([bulkTankId, dipDate])
 }
 
 model BulkRequest {
@@ -399,9 +473,11 @@ model RentalRate {
   portDwCents   Int?
   portDdCents   Int?
 
-  // Fuel consumption rates from the Fuel Rates sheet (L/hr or L/km)
+  // Fuel consumption band (L/hr or L/km): econ ≤ typ ≤ heavy. Actual burn
+  // above heavy flags a repair candidate on /analytics/consumption.
   fuelConsEcon  Float?   // economic (light load) consumption
   fuelConsTyp   Float?   // typical consumption
+  fuelConsHeavy Float?   // heavy-work upper bound
   fuelConsBasis String?  // "hr" | "km"
 
   createdAt     DateTime @default(now())
@@ -487,7 +563,12 @@ model Bill {
   generatedById String?
   generatedBy   User?    @relation("BillGeneratedBy", fields: [generatedById], references: [id])
 
+  // Invoice email dispatch stamp.
+  emailedAt     DateTime?
+  emailedTo     String?
+
   lineItems     BillLineItem[]
+  creditNotes   CreditNote[]
 
   @@unique([assetId, year, month])
   @@index([periodKey, status])
@@ -514,4 +595,169 @@ model BillLineItem {
   projectName String?
 
   @@index([billId])
+}
+
+// Per-site monthly fuel budget, for budget-vs-actual tracking and month-end
+// run-rate forecasting.
+model Budget {
+  id                String   @id @default(uuid())
+
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id])
+
+  year              Int
+  month             Int      // 1-12
+  budgetLitres      Float?
+  budgetAmountCents Int?
+  note              String?
+
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectId, year, month])
+  @@index([year, month])
+}
+
+// A credit note against an issued bill (correction/discount/goodwill). Reduces
+// the outstanding receivable for that invoice once issued.
+model CreditNote {
+  id          String   @id @default(uuid())
+
+  billId      String
+  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  number      String?  @unique
+  reason      String
+  amountCents Int      // positive amount credited back to the customer
+  status      String   @default("DRAFT") // "DRAFT" | "ISSUED"
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  issuedDate  DateTime?
+
+  @@index([billId])
+}
+
+// Service interval config. One row per category (the editable default) and/or
+// one per asset (an override). Resolution precedence: asset → category →
+// hard-coded fleet-group default (machinery 500 hr / road 5,000 km).
+model ServiceInterval {
+  id             String    @id @default(uuid())
+
+  categoryId     String?   @unique
+  category       Category? @relation(fields: [categoryId], references: [id])
+
+  assetId        String?   @unique
+  asset          Asset?    @relation(fields: [assetId], references: [id])
+
+  basis          String    // "HOURS" | "KM"
+  intervalValue  Float
+  intervalMonths Int?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// A logged completed service. The countdown to the next service resets at the
+// latest record's date (and meterAtService when supplied). Records merged from
+// the E&C Service Record System carry jobNo, the labour/sundry breakdown and
+// per-part line items; sourceRef makes their re-import idempotent.
+model ServiceRecord {
+  id             String   @id @default(uuid())
+
+  assetId        String
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  serviceDate    DateTime
+  meterAtService Float?
+  meterType      String   // "HOURS" | "KM"
+  serviceType    String?
+  costCents      Int?     // grand total
+  note           String?
+
+  jobNo          String?
+  partsCents     Int?
+  labourCents    Int?
+  sundryCents    Int?
+  sourceRef      String?  @unique // e.g. "SRDB:123" for merged records
+
+  items          ServiceItem[]
+
+  recordedById   String
+  recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
+
+  createdAt      DateTime @default(now())
+
+  @@index([assetId, serviceDate])
+}
+
+// A part/consumable line on a service record (filter replaced, oil top-up …).
+model ServiceItem {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  kind            String // "FILTER" | "OIL"
+  description     String
+  partNo          String?
+  action          String? // replaced / cleaned / top-up …
+  qty             Float   @default(1)
+  unitPriceCents  Int?
+  amountCents     Int?
+
+  @@index([serviceRecordId])
+}
+
+// Filter master from the E&C Service Record System: one row per physical
+// filter, addressable by any equivalent part number via FilterCrossRef.
+model Filter {
+  id          String  @id @default(uuid())
+  category    String? // Oil Filter / Fuel Filter / Air Filter …
+  oemPartNo   String?
+  hifiPartNo  String?
+  description String?
+  priceCents  Int?    // best supplier quote, resolved through the cross-refs
+  priceNote   String? // supplier the price came from
+
+  crossRefs   FilterCrossRef[]
+  assetLinks  AssetFilter[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// One equivalent part number for a filter (OEM, HIFI, Fleetguard, Donaldson,
+// Baldwin, Sakura, VIC …). normalizedPN powers the cross-reference search.
+model FilterCrossRef {
+  id           String @id @default(uuid())
+
+  filterId     String
+  filter       Filter @relation(fields: [filterId], references: [id], onDelete: Cascade)
+
+  brand        String?
+  partNumber   String
+  normalizedPN String
+  refType      String? // oem | hifi | cross
+
+  @@index([normalizedPN])
+  @@index([filterId])
+}
+
+// Which filters fit which machine. assetId is null when the source vehicle
+// (e.g. a generator) has no matching asset here; vehicleRef keeps the label.
+model AssetFilter {
+  id         String  @id @default(uuid())
+
+  filterId   String
+  filter     Filter  @relation(fields: [filterId], references: [id], onDelete: Cascade)
+
+  assetId    String?
+  asset      Asset?  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  vehicleRef String
+
+  @@index([assetId])
+  @@index([filterId])
 }

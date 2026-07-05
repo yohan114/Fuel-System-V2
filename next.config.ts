@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: [
+    "fuel.portal.ec-workshops.online",
+    "https://fuel.portal.ec-workshops.online",
+    "*.portal.ec-workshops.online",
+    "https://*.portal.ec-workshops.online",
     "fuel-portal.ec-workshops.online",
     "https://fuel-portal.ec-workshops.online",
     "http://fuel-portal.ec-workshops.online",
@@ -18,6 +22,10 @@ const nextConfig: NextConfig = {
       // Correction requests carry a signed running-chart photo/PDF.
       bodySizeLimit: "12mb",
       allowedOrigins: [
+        "fuel.portal.ec-workshops.online",
+        "https://fuel.portal.ec-workshops.online",
+        "*.portal.ec-workshops.online",
+        "https://*.portal.ec-workshops.online",
         "fuel-portal.ec-workshops.online",
         "https://fuel-portal.ec-workshops.online",
         "http://fuel-portal.ec-workshops.online",

@@ -19,6 +19,7 @@ import XLSX from "xlsx";
 import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -79,12 +80,14 @@ async function main() {
   // Badalgama project + user + workshop-plant category
   const badal = await prisma.project.upsert({ where: { code: "BADAL" }, update: { name: "Badalgama Plant/Workshop" }, create: { name: "Badalgama Plant/Workshop", code: "BADAL" } });
   const username = "Badalgama Plant/Workshop";
+  const existingUser = await prisma.user.findUnique({ where: { username } });
+  const password = crypto.randomBytes(6).toString("base64url");
   await prisma.user.upsert({
     where: { username },
-    update: { passwordHash: bcrypt.hashSync(`${username}@123`, 10), projectId: badal.id, name: `${username} Site User`, active: true },
-    create: { username, name: `${username} Site User`, role: "USER", passwordHash: bcrypt.hashSync(`${username}@123`, 10), projectId: badal.id, createdById: sysId },
+    update: { projectId: badal.id, name: `${username} Site User`, active: true },
+    create: { username, name: `${username} Site User`, role: "USER", passwordHash: bcrypt.hashSync(password, 10), projectId: badal.id, createdById: sysId },
   });
-  console.log(`Project "Badalgama Plant/Workshop" [BADAL] — user="${username}" password="${username}@123"`);
+  console.log(`Project "Badalgama Plant/Workshop" [BADAL] — user="${username}" ${existingUser ? "(password unchanged)" : `password="${password}" (generated once — record it now)`}`);
   await prisma.category.upsert({
     where: { code: "WSP" },
     update: {},

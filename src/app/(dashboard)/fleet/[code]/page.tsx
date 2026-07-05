@@ -6,6 +6,11 @@ import Link from "next/link";
 import AssetCharts from "./components/AssetCharts";
 import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
+import { recommendedUnits, varianceFlag, formatVariancePct } from "@/lib/reports/recommended";
+import { classifyConsumption } from "@/lib/analytics/consumption";
+import { computeServiceStatus } from "@/lib/service/compute";
+import { getBreakdownEpisodes } from "@/lib/breakdowns";
+import { logServiceAction, setServiceIntervalAction } from "@/app/actions/service";
 import { 
   ArrowLeft, 
   Gauge, 
@@ -13,9 +18,10 @@ import {
   FileText, 
   MapPin, 
   Bookmark, 
-  Settings, 
+  Settings,
   History,
-  Activity
+  Activity,
+  Wrench
 } from "lucide-react";
 
 interface PageProps {
@@ -53,12 +59,14 @@ export default async function AssetDetailPage(props: PageProps) {
   const issues = await prisma.fuelIssue.findMany({
     where: { assetId: asset.id },
     orderBy: { issueDate: "desc" },
+    omit: { photoData: true },
     include: { issuedBy: true },
   });
 
   const requests = await prisma.fuelRequest.findMany({
     where: { assetId: asset.id },
     orderBy: { createdAt: "desc" },
+    omit: { photoData: true },
     include: { requestedBy: true, reviewedBy: true },
   });
 
@@ -66,6 +74,29 @@ export default async function AssetDetailPage(props: PageProps) {
     where: { assetId: asset.id },
     orderBy: { readingDate: "desc" },
     include: { recordedBy: true },
+  });
+
+  // Service planner data for the Service tab.
+  const serviceStatus = await computeServiceStatus(asset.id);
+  const serviceRecords = await prisma.serviceRecord.findMany({
+    where: { assetId: asset.id },
+    orderBy: { serviceDate: "desc" },
+    include: { recordedBy: { select: { name: true } }, _count: { select: { items: true } } },
+  });
+  const serviceUnit = serviceStatus?.basis === "KM" ? "km" : "hr";
+
+  // Breakdown episodes over the last 6 months, for the Service tab strip.
+  const breakdownLog = await getBreakdownEpisodes({
+    from: new Date(Date.now() - 183 * 86400000),
+    to: new Date(),
+    assetId: asset.id,
+  });
+
+  // Filters that fit this machine (merged from the Service Record System).
+  const machineFilters = await prisma.assetFilter.findMany({
+    where: { assetId: asset.id },
+    include: { filter: true },
+    orderBy: { filter: { category: "asc" } },
   });
 
   // 3. Compute efficiency metrics
@@ -100,6 +131,11 @@ export default async function AssetDetailPage(props: PageProps) {
       efficiency = `${value.toFixed(2)} L/hr`;
     }
   }
+
+  // Lifetime fuel-derived recommendation vs the recorded meter (reuses the
+  // totals already computed above — no extra query).
+  const recommendedLifetime = recommendedUnits(totalLitres, asset.rentalRate?.fuelConsTyp ?? null);
+  const lifetimeVariance = varianceFlag(runGrowth, recommendedLifetime);
 
   // 4. Format Chart Data (Sorted chronologically)
   const readingsChartData = readings
@@ -205,6 +241,59 @@ export default async function AssetDetailPage(props: PageProps) {
         </div>
       </div>
 
+      {/* Fuel-derived recommended hrs/km vs recorded meter */}
+      <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-xl">
+        <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+          <Activity className="w-4 h-4 text-indigo-400" /> Fuel vs Meter — System-Recommended ({asset.meterType})
+        </h3>
+        {asset.rentalRate?.fuelConsTyp ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Actual Meter</span>
+              <span className="text-md font-bold text-white block mt-1">{runGrowth.toLocaleString()} {asset.meterType}</span>
+            </div>
+            <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Recommended (fuel)</span>
+              <span className="text-md font-bold text-indigo-400 block mt-1">
+                {recommendedLifetime != null ? `${recommendedLifetime.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${asset.meterType}` : "—"}
+              </span>
+            </div>
+            <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Variance</span>
+              <span className={`text-md font-bold block mt-1 ${
+                lifetimeVariance.flag === "METER_LOW" ? "text-red-400" : lifetimeVariance.flag === "METER_HIGH" ? "text-amber-400" : "text-white"
+              }`}>
+                {formatVariancePct(lifetimeVariance.variancePct) ?? "—"}
+              </span>
+              <span className="text-[10px] text-gray-500 block mt-0.5">
+                {lifetimeVariance.flag === "METER_LOW" ? "meter under-recorded?" : lifetimeVariance.flag === "METER_HIGH" ? "meter high" : "within tolerance"}
+              </span>
+            </div>
+            <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
+              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Consumption Band</span>
+              <span className="text-md font-bold text-white block mt-1">
+                {asset.rentalRate.fuelConsEcon ?? "—"} / {asset.rentalRate.fuelConsTyp} / {asset.rentalRate.fuelConsHeavy ?? "—"} L/{asset.meterType === "KM" ? "km" : "hr"}
+              </span>
+              {(() => {
+                const rate = runGrowth > 0 && totalLitres > 0 ? totalLitres / runGrowth : null;
+                const st = classifyConsumption(rate, asset.rentalRate.fuelConsEcon, asset.rentalRate.fuelConsTyp, asset.rentalRate.fuelConsHeavy);
+                const style =
+                  st === "OVER" ? "text-rose-400" : st === "HEAVY" ? "text-amber-400" : st === "NORMAL" ? "text-emerald-400" : st === "BELOW_ECON" ? "text-sky-400" : "text-gray-500";
+                const label =
+                  st === "OVER" ? "over heavy — repair candidate" : st === "HEAVY" ? "heavy burn" : st === "NORMAL" ? "within band" : st === "BELOW_ECON" ? "below econ — check reporting" : "no meter data";
+                return (
+                  <span className={`text-[10px] block mt-0.5 ${style}`}>
+                    actual {rate != null ? rate.toFixed(2) : "—"} L/{asset.meterType === "KM" ? "km" : "hr"} — {label}
+                  </span>
+                );
+              })()}
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-500">No typical consumption rate set{isAdmin ? " — add one above" : ""} to compute the fuel-derived recommendation.</p>
+        )}
+      </div>
+
       {/* Visual Analytics */}
       <AssetCharts
         readingsData={readingsChartData}
@@ -260,6 +349,17 @@ export default async function AssetDetailPage(props: PageProps) {
             <Activity className="w-4 h-4" />
             Meter Readings ({readings.length})
           </Link>
+          <Link
+            href={`/fleet/${asset.code}?tab=service`}
+            className={`flex items-center gap-2 px-6 py-4 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === "service"
+                ? "border-indigo-500 text-white bg-[#121420]"
+                : "border-transparent text-gray-400 hover:text-white"
+            }`}
+          >
+            <Wrench className="w-4 h-4" />
+            Service ({serviceRecords.length})
+          </Link>
         </div>
 
         {/* Tab Body */}
@@ -281,6 +381,7 @@ export default async function AssetDetailPage(props: PageProps) {
                       <th className="py-3">Total Cost</th>
                       <th className="py-3">Issued By</th>
                       <th className="py-3">Source</th>
+                      <th className="py-3">Proof</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -301,6 +402,15 @@ export default async function AssetDetailPage(props: PageProps) {
                         </td>
                         <td className="py-3.5 text-gray-400">{issue.issuedBy.name}</td>
                         <td className="py-3.5"><span className="bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400">{issue.source}</span></td>
+                        <td className="py-3.5">
+                          {issue.photoName ? (
+                            <a href={`/api/fuel-issues/${issue.id}/photo`} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 text-[10px] font-semibold underline">
+                              View
+                            </a>
+                          ) : (
+                            <span className="text-gray-600 text-[10px]">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -396,6 +506,176 @@ export default async function AssetDetailPage(props: PageProps) {
                   </tbody>
                 </table>
               )}
+            </div>
+          )}
+
+          {/* D. Service Planner */}
+          {activeTab === "service" && (
+            <div className="space-y-6">
+              {serviceStatus ? (
+                <div className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Service Status</h4>
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold border ${
+                      serviceStatus.state === "OVERDUE" ? "bg-red-500/10 text-red-400 border-red-500/15"
+                      : serviceStatus.state === "DUE_SOON" ? "bg-amber-500/10 text-amber-400 border-amber-500/15"
+                      : serviceStatus.state === "OK" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/15"
+                      : "bg-gray-500/10 text-gray-400 border-gray-500/15"}`}>{serviceStatus.state.replace("_", " ")}</span>
+                  </div>
+                  {serviceStatus.usedSince != null && (
+                    <div className="mb-4">
+                      <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                        <span>{serviceStatus.usedSince.toFixed(0)} / {serviceStatus.intervalValue.toFixed(0)} {serviceUnit} used</span>
+                        <span>{serviceStatus.remaining != null ? `${Math.max(0, serviceStatus.remaining).toFixed(0)} ${serviceUnit} left` : ""}</span>
+                      </div>
+                      <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                        <div className={`h-full ${serviceStatus.state === "OVERDUE" ? "bg-red-500" : serviceStatus.state === "DUE_SOON" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.min(100, (serviceStatus.usedSince / serviceStatus.intervalValue) * 100)}%` }} />
+                      </div>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Recorded since</span><span className="text-white font-bold">{serviceStatus.recordedSince != null ? `${serviceStatus.recordedSince.toFixed(0)} ${serviceUnit}` : "—"}</span></div>
+                    <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Fuel-derived since</span><span className="text-white font-bold">{serviceStatus.fuelDerivedSince != null ? `${serviceStatus.fuelDerivedSince.toFixed(0)} ${serviceUnit}` : "—"}</span></div>
+                    <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Interval ({serviceStatus.intervalSource})</span><span className="text-white font-bold">{serviceStatus.intervalValue.toFixed(0)} {serviceUnit}</span></div>
+                    <div className="bg-[#121420] border border-white/5 rounded-xl p-3"><span className="text-[10px] text-gray-500 uppercase block">Projected due</span><span className="text-white font-bold">{serviceStatus.projectedDueDate ? new Date(serviceStatus.projectedDueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—"}</span></div>
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-3">
+                    Last service: {serviceStatus.lastServiceDate ? new Date(serviceStatus.lastServiceDate).toLocaleDateString("en-GB") : "none on record — measuring since commissioning"}. Countdown uses the higher of recorded and fuel-derived running.{" "}
+                    <Link href={`/service/plan/${encodeURIComponent(asset.code)}`} className="text-indigo-400 hover:underline font-bold">Full service plan →</Link>
+                  </p>
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500">No service data available for this vehicle.</div>
+              )}
+
+              {breakdownLog.episodes.length > 0 && (
+                <div className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Breakdown History (6 months)</h4>
+                    <Link href="/breakdowns" className="text-[10px] font-bold text-indigo-400 hover:underline">Breakdown log →</Link>
+                  </div>
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="text-gray-400 font-semibold border-b border-white/5">
+                        <th className="py-2">From</th>
+                        <th className="py-2">To</th>
+                        <th className="py-2 text-right">Days</th>
+                        <th className="py-2">Status</th>
+                        <th className="py-2">Last note</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {breakdownLog.episodes.slice(0, 8).map((e) => (
+                        <tr key={e.startDay}>
+                          <td className="py-2.5 text-gray-300">{new Date(`${e.startDay}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
+                          <td className="py-2.5 text-gray-300">{new Date(`${e.endDay}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
+                          <td className="py-2.5 text-right font-bold text-amber-400">{e.days}</td>
+                          <td className="py-2.5">
+                            {e.open ? (
+                              <span className="text-[9px] font-bold rounded px-2 py-0.5 bg-rose-500/10 text-rose-400">STILL DOWN</span>
+                            ) : (
+                              <span className="text-[9px] font-bold rounded px-2 py-0.5 bg-emerald-500/10 text-emerald-400">REPAIRED</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 text-gray-500 max-w-[220px] truncate" title={e.lastNote || ""}>{e.lastNote || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {machineFilters.length > 0 && (
+                <div className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Filters &amp; Oils for this Machine</h4>
+                    <Link href="/filters" className="text-[10px] font-bold text-indigo-400 hover:underline">Filter database →</Link>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                    {machineFilters.map((mf) => (
+                      <Link
+                        key={mf.id}
+                        href={`/filters?q=${encodeURIComponent(mf.filter.hifiPartNo || mf.filter.oemPartNo || "")}`}
+                        className="bg-[#121420] border border-white/5 hover:border-indigo-500/30 rounded-xl px-3 py-2.5"
+                      >
+                        <span className="text-[10px] text-gray-500 uppercase block truncate">{mf.filter.category ?? "Filter"}</span>
+                        <span className="text-xs font-bold text-white font-mono block truncate">{mf.filter.hifiPartNo || mf.filter.oemPartNo || "—"}</span>
+                        <span className="text-[10px] text-gray-500 block">
+                          {mf.filter.priceCents != null ? `Rs ${(mf.filter.priceCents / 100).toLocaleString("en-LK", { maximumFractionDigits: 0 })}` : "no price"}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {isAdmin && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <form action={async (fd) => { "use server"; await logServiceAction(fd); }} className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5 space-y-3">
+                    <input type="hidden" name="assetId" value={asset.id} />
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Log a Service</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="date" name="serviceDate" required defaultValue={new Date().toISOString().split("T")[0]} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="number" step="0.1" name="meterAtService" placeholder={`Meter (${asset.meterType})`} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="text" name="serviceType" placeholder="Type e.g. 500HR / Oil" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="number" step="0.01" name="costLkr" placeholder="Cost (LKR)" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="text" name="jobNo" placeholder="Job No (optional)" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs col-span-2" />
+                    </div>
+                    <input type="text" name="note" placeholder="Note (optional)" className="w-full bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg px-4 py-2">Log service</button>
+                  </form>
+
+                  <form action={async (fd) => { "use server"; await setServiceIntervalAction(fd); }} className="bg-[#1b1e30] border border-white/5 rounded-2xl p-5 space-y-3">
+                    <input type="hidden" name="scope" value="asset" />
+                    <input type="hidden" name="assetId" value={asset.id} />
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Override Interval (this vehicle)</h4>
+                    <div className="grid grid-cols-3 gap-2">
+                      <select name="basis" defaultValue={serviceStatus?.basis || (asset.meterType === "KM" ? "KM" : "HOURS")} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs">
+                        <option value="HOURS">Hours</option>
+                        <option value="KM">KM</option>
+                      </select>
+                      <input type="number" step="1" name="intervalValue" required placeholder="Interval" defaultValue={serviceStatus?.intervalValue} className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                      <input type="number" step="1" name="intervalMonths" placeholder="Months?" className="bg-[#121420] border border-white/5 rounded-lg px-3 py-2 text-white text-xs" />
+                    </div>
+                    <button type="submit" className="bg-white/10 hover:bg-white/20 text-white font-semibold text-xs rounded-lg px-4 py-2">Save override</button>
+                  </form>
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                {serviceRecords.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-gray-500">No services logged yet.</div>
+                ) : (
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="text-gray-400 font-semibold border-b border-white/5">
+                        <th className="py-3">Date</th>
+                        <th className="py-3">Job No</th>
+                        <th className="py-3">Meter</th>
+                        <th className="py-3">Type</th>
+                        <th className="py-3 text-right">Parts</th>
+                        <th className="py-3">Cost</th>
+                        <th className="py-3">Note</th>
+                        <th className="py-3">Logged By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {serviceRecords.map((s) => (
+                        <tr key={s.id} className="hover:bg-white/[0.01]">
+                          <td className="py-3 text-gray-300">{new Date(s.serviceDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td>
+                          <td className="py-3 text-gray-400 font-mono">{s.jobNo || "—"}</td>
+                          <td className="py-3 text-gray-400 font-mono">{s.meterAtService != null ? `${s.meterAtService.toLocaleString()} ${s.meterType}` : "—"}</td>
+                          <td className="py-3 text-gray-300">{s.serviceType || "—"}</td>
+                          <td className="py-3 text-right text-gray-400">{s._count.items > 0 ? s._count.items : "—"}</td>
+                          <td className="py-3 text-gray-400" title={s.labourCents != null || s.sundryCents != null ? `parts ${s.partsCents != null ? (s.partsCents / 100).toLocaleString("en-LK") : "—"} · labour ${s.labourCents != null ? (s.labourCents / 100).toLocaleString("en-LK") : "—"} · sundry ${s.sundryCents != null ? (s.sundryCents / 100).toLocaleString("en-LK") : "—"}` : ""}>{s.costCents != null ? `Rs. ${(s.costCents / 100).toLocaleString("en-LK")}` : "—"}</td>
+                          <td className="py-3 text-gray-500 max-w-[220px] truncate" title={s.note || ""}>{s.note || "—"}</td>
+                          <td className="py-3 text-gray-400">{s.recordedBy.name}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
 

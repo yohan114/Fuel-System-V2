@@ -23,7 +23,7 @@ Set these in `.env` (not committed):
 | Variable | Purpose |
 | --- | --- |
 | `DATABASE_URL` | SQLite database path |
-| `AUTH_SECRET` | JWT signing secret |
+| `AUTH_SECRET` | JWT signing secret. **Required in production** — the app refuses to sign/verify sessions without it (dev falls back to an insecure default with a warning). Use a long random value, e.g. `openssl rand -hex 32` |
 | `CRON_SECRET` | Auth for `/api/cron/billing` |
 | `SMTP_HOST` | SMTP server host (email invoices) |
 | `SMTP_PORT` | SMTP port (587 STARTTLS, 465 implicit TLS) |

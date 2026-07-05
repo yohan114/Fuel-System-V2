@@ -38,6 +38,7 @@ export default async function FuelIssuesPage(props: PageProps) {
   // 2. Query dispatches
   const issues = await prisma.fuelIssue.findMany({
     where,
+    omit: { photoData: true },
     include: {
       asset: true,
       issuedBy: true,
@@ -200,6 +201,11 @@ export default async function FuelIssuesPage(props: PageProps) {
                     <span className="bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400 border border-white/5">
                       {issue.source}
                     </span>
+                    {issue.photoName && (
+                      <a href={`/api/fuel-issues/${issue.id}/photo`} target="_blank" rel="noopener noreferrer" className="ml-2 text-indigo-400 hover:text-indigo-300 text-[10px] font-semibold underline">
+                        photo
+                      </a>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-right">
                     {issue.voided ? (

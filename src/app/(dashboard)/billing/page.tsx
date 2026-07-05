@@ -2,14 +2,33 @@ import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { currentMonthPeriod } from "@/lib/billing/period";
-import { Receipt, Wallet, FileText, AlertTriangle } from "lucide-react";
+import { VARIANCE_THRESHOLD, formatVariancePct } from "@/lib/reports/recommended";
+import { Receipt, Wallet, FileText, AlertTriangle, Gauge } from "lucide-react";
+import Link from "next/link";
 import GenerateBillsPanel from "./components/GenerateBillsPanel";
 import ConsolidatedBillPanel from "./components/ConsolidatedBillPanel";
 import BillsTable from "./components/BillsTable";
 import AgingReport from "./components/AgingReport";
 
 interface PageProps {
-  searchParams: Promise<{ month?: string; site?: string; status?: string }>;
+  searchParams: Promise<{ month?: string; site?: string; status?: string; check?: string }>;
+}
+
+// Fuel-implied units vs the running-chart units, from the bill's snapshots
+// (e.g. 500 L at 5 L/hr implies 100 h; a 75 h chart is +33% — clarify with the
+// site before finalizing). Null when the bill isn't metered or has no fuel
+// derivation to compare against.
+function meterVsFuelVariance(b: {
+  billingMode: string;
+  derivedStandardUnits: number | null;
+  actualMeterUnits: number | null;
+  actualUnits: number;
+  derivedFromFuel: boolean;
+}): number | null {
+  const metered = b.billingMode === "hourly" || b.billingMode === "perkm";
+  if (!metered || b.derivedStandardUnits == null) return null;
+  const actual = b.actualMeterUnits ?? (b.derivedFromFuel ? 0 : b.actualUnits);
+  return (b.derivedStandardUnits - actual) / Math.max(actual, 1);
 }
 
 function rs(cents: number) {
@@ -41,10 +60,16 @@ export default async function BillingPage(props: PageProps) {
   }
   if (statusFilter !== "all") where.status = statusFilter;
 
-  const bills = await prisma.bill.findMany({
+  const allBills = await prisma.bill.findMany({
     where,
     orderBy: [{ grandTotalCents: "desc" }],
   });
+
+  // Meter-vs-fuel check across the (unfiltered) month for the tile count.
+  const needsClarify = (v: number | null) => v != null && Math.abs(v) >= VARIANCE_THRESHOLD;
+  const clarifyCount = allBills.filter((b) => needsClarify(meterVsFuelVariance(b))).length;
+  const checkFilter = searchParams.check === "clarify";
+  const bills = checkFilter ? allBills.filter((b) => needsClarify(meterVsFuelVariance(b))) : allBills;
 
   const totalGrand = bills.reduce((s, b) => s + b.grandTotalCents, 0);
   const totalRental = bills.reduce((s, b) => s + b.rentalAmountCents, 0);
@@ -70,7 +95,7 @@ export default async function BillingPage(props: PageProps) {
       </div>
 
       {/* Filters */}
-      <form method="get" className="bg-[#121420] border border-white/5 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+      <form method="get" className="bg-[#121420] border border-white/5 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
         <div>
           <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Billing Month</label>
           <input
@@ -110,6 +135,17 @@ export default async function BillingPage(props: PageProps) {
             <option value="OVERDUE">Overdue</option>
           </select>
         </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Meter check</label>
+          <select
+            name="check"
+            defaultValue={checkFilter ? "clarify" : "all"}
+            className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
+          >
+            <option value="all">All bills</option>
+            <option value="clarify">Needs clarification (±{VARIANCE_THRESHOLD * 100}%+)</option>
+          </select>
+        </div>
         <button
           type="submit"
           className="bg-white/5 hover:bg-white/10 border border-white/5 text-white font-semibold text-xs px-4 py-2.5 rounded-xl transition-all"
@@ -119,11 +155,19 @@ export default async function BillingPage(props: PageProps) {
       </form>
 
       {/* KPI strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-[#121420] border border-white/5 p-4 rounded-2xl">
           <div className="flex items-center gap-2 text-[10px] text-gray-500 font-semibold uppercase tracking-wider"><FileText className="w-3.5 h-3.5" /> Bills</div>
           <div className="text-lg font-bold text-white mt-1">{bills.length}</div>
         </div>
+        <Link
+          href={`/billing?month=${periodKey}${siteFilter !== "all" ? `&site=${siteFilter}` : ""}&check=clarify`}
+          className={`bg-[#121420] border p-4 rounded-2xl transition-colors ${checkFilter ? "border-amber-500/40" : "border-white/5 hover:border-amber-500/30"}`}
+          title="Fuel-implied hours/km differ from the running chart by 20% or more — clarify these vehicles with the site"
+        >
+          <div className="flex items-center gap-2 text-[10px] text-gray-500 font-semibold uppercase tracking-wider"><Gauge className="w-3.5 h-3.5" /> Meter vs fuel — clarify</div>
+          <div className={`text-lg font-bold mt-1 ${clarifyCount ? "text-amber-400" : "text-white"}`}>{clarifyCount}</div>
+        </Link>
         <div className="bg-[#121420] border border-white/5 p-4 rounded-2xl">
           <div className="flex items-center gap-2 text-[10px] text-gray-500 font-semibold uppercase tracking-wider"><Wallet className="w-3.5 h-3.5" /> Grand Total</div>
           <div className="text-lg font-bold text-white mt-1">{rs(totalGrand)}</div>
@@ -159,19 +203,23 @@ export default async function BillingPage(props: PageProps) {
       ) : (
         <BillsTable
           isAdmin={isAdmin}
-          bills={bills.map((b) => ({
-            id: b.id,
-            assetCode: b.assetCode,
-            assetLabel: b.assetLabel,
-            projectName: b.projectName,
-            billingMode: b.billingMode,
-            rateBasis: b.rateBasis,
-            billableUnits: b.billableUnits,
-            rentalAmountCents: b.rentalAmountCents,
-            fuelCostCents: b.fuelCostCents,
-            grandTotalCents: b.grandTotalCents,
-            status: b.status,
-          }))}
+          bills={bills.map((b) => {
+            const v = meterVsFuelVariance(b);
+            return {
+              id: b.id,
+              assetCode: b.assetCode,
+              assetLabel: b.assetLabel,
+              projectName: b.projectName,
+              billingMode: b.billingMode,
+              rateBasis: b.rateBasis,
+              billableUnits: b.billableUnits,
+              rentalAmountCents: b.rentalAmountCents,
+              fuelCostCents: b.fuelCostCents,
+              grandTotalCents: b.grandTotalCents,
+              status: b.status,
+              meterCheck: needsClarify(v) ? formatVariancePct(v) : null,
+            };
+          })}
         />
       )}
     </div>

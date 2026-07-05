@@ -64,7 +64,9 @@ export async function GET(request: NextRequest) {
       "E&C No", "Vehicle", "Reg No", "Mode", "Basis",
       "Billable Units", "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)",
       "SSCL (LKR)", "VAT (LKR)", "Grand Total (LKR)", "Status", "Invoice No",
+      "Actual Meter", "Recommended (fuel)",
     ];
+    const round1 = (n: number) => Math.round(n * 10) / 10;
     const tot = sumBills(bills);
 
     // Sheet 1: site-wise consolidated (section per site)
@@ -82,17 +84,19 @@ export async function GET(request: NextRequest) {
           b.billingMode, b.rateBasis,
           b.billableUnits, lkr(b.rentalAmountCents), lkr(b.fuelCostCents), lkr(b.subtotalCents),
           lkr(b.ssclCents), lkr(b.vatCents), lkr(b.grandTotalCents), b.status, b.invoiceNumber || "",
+          b.actualMeterUnits != null ? round1(b.actualMeterUnits) : "",
+          b.derivedStandardUnits != null ? round1(b.derivedStandardUnits) : "",
         ]);
       }
       sheet1.push([
         "SITE TOTAL", "", "", "", "", "",
-        lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "",
+        lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "", "", "",
       ]);
       sheet1.push([]);
     }
     sheet1.push([
       "GRAND TOTAL (ALL SITES)", "", "", "", "", "",
-      lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "",
+      lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "", "", "",
     ]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet1), "By Site");
 

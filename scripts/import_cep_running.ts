@@ -26,6 +26,7 @@ import XLSX from "xlsx";
 import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -154,16 +155,18 @@ async function main() {
     projectCache.set(code, p);
     stats.projects++;
 
-    // Login user: username = project name, password = username + "@123"
+    // Login user: username = project name. Password is generated randomly on
+    // first creation and printed once; re-imports never touch credentials.
     const username = name;
-    const password = `${username}@123`;
+    const existingUser = await prisma.user.findUnique({ where: { username } });
+    const password = crypto.randomBytes(6).toString("base64url");
     await prisma.user.upsert({
       where: { username },
-      update: { passwordHash: bcrypt.hashSync(password, 10), projectId: p.id, name: `${name} Site User`, active: true },
+      update: { projectId: p.id, name: `${name} Site User`, active: true },
       create: { username, name: `${name} Site User`, role: "USER", passwordHash: bcrypt.hashSync(password, 10), projectId: p.id, createdById: sysUserId },
     });
     stats.users++;
-    console.log(`Project "${name}" [${code}] — user="${username}" password="${password}"`);
+    console.log(`Project "${name}" [${code}] — user="${username}" ${existingUser ? "(password unchanged)" : `password="${password}" (generated once — record it now)`}`);
     return p;
   }
 

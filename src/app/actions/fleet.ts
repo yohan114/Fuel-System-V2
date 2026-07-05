@@ -25,6 +25,9 @@ export async function createAssetAction(formData: FormData) {
   const site = formData.get("site")?.toString().trim() || null;
   const categoryId = formData.get("categoryId")?.toString();
   const meterType = formData.get("meterType")?.toString() || "KM";
+  const dailyCapStr = formData.get("dailyCapLitres")?.toString();
+  const dailyCapParsed = dailyCapStr && dailyCapStr.trim() !== "" ? parseInt(dailyCapStr, 10) : null;
+  const dailyCapLitres = dailyCapParsed != null && !isNaN(dailyCapParsed) && dailyCapParsed > 0 ? dailyCapParsed : null;
 
   if (!code || !categoryId) {
     return { error: "Asset Code and Category are required fields" };
@@ -64,6 +67,7 @@ export async function createAssetAction(formData: FormData) {
         site,
         categoryId,
         meterType,
+        dailyCapLitres,
         status: "ACTIVE",
       },
     });
@@ -106,6 +110,9 @@ export async function updateAssetAction(assetId: string, formData: FormData) {
   const site = formData.get("site")?.toString().trim() || null;
   const status = formData.get("status")?.toString() || "ACTIVE";
   const meterType = formData.get("meterType")?.toString() || "KM";
+  const dailyCapStr = formData.get("dailyCapLitres")?.toString();
+  const dailyCapParsed = dailyCapStr && dailyCapStr.trim() !== "" ? parseInt(dailyCapStr, 10) : null;
+  const dailyCapLitres = dailyCapParsed != null && !isNaN(dailyCapParsed) && dailyCapParsed > 0 ? dailyCapParsed : null;
 
   const yom = yomStr ? parseInt(yomStr, 10) : null;
 
@@ -133,6 +140,7 @@ export async function updateAssetAction(assetId: string, formData: FormData) {
         site,
         status,
         meterType,
+        dailyCapLitres,
       },
     });
 

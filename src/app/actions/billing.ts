@@ -392,6 +392,8 @@ export async function emailInvoiceAction(billId: string) {
       attachments: [{ filename: `invoice_${bill.assetCode}_${bill.periodKey}.pdf`, content: pdf, contentType: "application/pdf" }],
     });
 
+    await prisma.bill.update({ where: { id: billId }, data: { emailedAt: new Date(), emailedTo: toEmail } });
+
     await prisma.auditLog.create({
       data: {
         actorId: admin.id,

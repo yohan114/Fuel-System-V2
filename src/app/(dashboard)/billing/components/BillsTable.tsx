@@ -30,6 +30,7 @@ export interface BillRow {
   fuelCostCents: number;
   grandTotalCents: number;
   status: string;
+  meterCheck: string | null; // formatted variance when fuel-implied units differ ≥20% from the chart
 }
 
 export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdmin: boolean }) {
@@ -146,6 +147,7 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
               <th className="px-4 py-3 text-right">Rental</th>
               <th className="px-4 py-3 text-right">Fuel</th>
               <th className="px-4 py-3 text-right">Grand Total</th>
+              <th className="px-4 py-3">Meter check</th>
               <th className="px-4 py-3">Status</th>
             </tr>
           </thead>
@@ -178,6 +180,18 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
                 <td className="px-4 py-3 text-right text-gray-300">{rs(b.rentalAmountCents)}</td>
                 <td className="px-4 py-3 text-right text-gray-300">{b.fuelCostCents > 0 ? rs(b.fuelCostCents) : "—"}</td>
                 <td className="px-4 py-3 text-right font-bold text-white">{rs(b.grandTotalCents)}</td>
+                <td className="px-4 py-3">
+                  {b.meterCheck ? (
+                    <span
+                      className="px-2 py-0.5 rounded text-[9px] font-bold border bg-amber-500/10 text-amber-400 border-amber-500/10 whitespace-nowrap"
+                      title="Fuel-implied running differs from the running chart — clarify with the site (see the bill's usage panel)"
+                    >
+                      CLARIFY {b.meterCheck}
+                    </span>
+                  ) : (
+                    <span className="text-gray-600">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded text-[9px] font-bold border ${STATUS_STYLES[b.status] || "bg-white/5 text-gray-400 border-white/5"}`}>
                     {b.status}

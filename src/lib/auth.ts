@@ -1,11 +1,30 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { prisma } from "./db";
+import { resolveAuthSecret } from "./auth-secret";
 
-const SECRET = new TextEncoder().encode(
-  process.env.AUTH_SECRET || "default_auth_secret_must_be_changed_in_env_file"
-);
 const COOKIE_NAME = "session";
+
+// Resolved lazily so `next build` (which runs without runtime secrets) still
+// works; any attempt to sign or verify a session in production without a real
+// AUTH_SECRET fails hard instead of silently using the known fallback.
+let cachedSecret: Uint8Array | null = null;
+let warnedDevFallback = false;
+
+function getSecret(): Uint8Array {
+  if (cachedSecret) return cachedSecret;
+  // Prefer a system-scoped secret so co-hosting alongside other E&C systems on
+  // one box (shared machine-level AUTH_SECRET) cannot silently share a signing
+  // key. Falls back to AUTH_SECRET so existing deployments keep working.
+  const configured = process.env.FUEL_AUTH_SECRET || process.env.AUTH_SECRET;
+  const { secret, usedFallback } = resolveAuthSecret(configured, process.env.NODE_ENV);
+  if (usedFallback && !warnedDevFallback) {
+    warnedDevFallback = true;
+    console.warn("[auth] AUTH_SECRET not set — using the insecure development fallback secret.");
+  }
+  cachedSecret = new TextEncoder().encode(secret);
+  return cachedSecret;
+}
 
 export interface SessionPayload {
   userId: string;
@@ -29,7 +48,7 @@ export async function createSession(
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
-    .sign(SECRET);
+    .sign(getSecret());
 
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {
@@ -51,7 +70,7 @@ export async function getSession(): Promise<SessionPayload | null> {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value;
     if (!token) return null;
-    const { payload } = await jwtVerify(token, SECRET);
+    const { payload } = await jwtVerify(token, getSecret());
     return payload as unknown as SessionPayload;
   } catch (err) {
     return null;
@@ -59,7 +78,9 @@ export async function getSession(): Promise<SessionPayload | null> {
 }
 
 export async function requireUser() {
-  if (process.env.TEST_ENV === "true") {
+  // The TEST_ENV bypass returns the admin user without a session — it must
+  // never be reachable in production, even if the env var leaks onto the box.
+  if (process.env.TEST_ENV === "true" && process.env.NODE_ENV !== "production") {
     const user = await prisma.user.findFirst({
       where: { username: "admin" },
     });
