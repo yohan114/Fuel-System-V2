@@ -26,6 +26,7 @@ import {
   Target,
   Building2,
   AlertTriangle,
+  ClipboardList,
   Filter as FilterIcon
 } from "lucide-react";
 
@@ -70,6 +71,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
       { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Filter Database", href: "/filters", icon: FilterIcon },
       { label: "Lubricants", href: "/lubricants", icon: Droplets },
@@ -92,6 +94,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Filter Database", href: "/filters", icon: FilterIcon },
       { label: "Analytics", href: "/analytics", icon: Activity },
@@ -118,6 +121,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },

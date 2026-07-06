@@ -101,29 +101,35 @@ try {
 
     const insertF = v2.prepare(`INSERT INTO "Filter" (id,category,oemPartNo,hifiPartNo,description,priceCents,priceNote,createdAt,updatedAt) VALUES (?,?,?,?,?,?,?,?,?)`);
     const insertX = v2.prepare(`INSERT INTO "FilterCrossRef" (id,filterId,brand,partNumber,normalizedPN,refType) VALUES (?,?,?,?,?,?)`);
-    const already = new Set((v2.prepare("SELECT category, hifiPartNo, oemPartNo FROM Filter").all() as any[]).map((r) => `${r.category ?? ""}|${r.hifiPartNo ?? ""}|${r.oemPartNo ?? ""}`));
+    // key → existing V2 Filter id, so filterIdMap resolves on re-runs too.
+    const byKey = new Map((v2.prepare("SELECT id, category, hifiPartNo, oemPartNo FROM Filter").all() as any[]).map((r) => [`${r.category ?? ""}|${r.hifiPartNo ?? ""}|${r.oemPartNo ?? ""}`, r.id as string]));
 
     for (const f of srdb.prepare("SELECT * FROM Filters").all() as any[]) {
       const hifi = String(f.HIFIPartNumber || "").trim() || null;
       const oem = String(f.OEMPartNumber || "").trim() || null;
       const cat = String(f.FilterCategory || "").trim() || null;
       const key = `${cat ?? ""}|${hifi ?? ""}|${oem ?? ""}`;
-      if (already.has(key)) { stat("Filter").matched++; continue; }
-      already.add(key);
+      const existing = byKey.get(key);
+      if (existing) { filterIdMap.set(f.FilterID, existing); stat("Filter").matched++; continue; }
       const p = priceByPN.get(norm(hifi)) ?? priceByPN.get(norm(oem)) ?? null;
       const id = randomUUID();
+      byKey.set(key, id);
       filterIdMap.set(f.FilterID, id);
       if (APPLY) insertF.run(id, cat, oem, hifi, f.Description || null, p?.cents ?? null, p?.supplier ?? null, now, now);
       stat("Filter").created++;
       if (p) stat("Filter").skipped++; // reuse skipped as "priced" counter
     }
 
+    const xrefSeen = new Set((v2.prepare("SELECT filterId, normalizedPN FROM FilterCrossRef").all() as any[]).map((r) => `${r.filterId}|${r.normalizedPN}`));
     for (const x of srdb.prepare("SELECT * FROM FilterCrossRefs").all() as any[]) {
       const fid = filterIdMap.get(x.FilterID);
       if (!fid) { stat("FilterCrossRef").skipped++; continue; }
       const pn = String(x.PartNumber || "").trim();
       if (!pn) { stat("FilterCrossRef").skipped++; continue; }
-      if (APPLY) insertX.run(randomUUID(), fid, x.Brand || null, pn, x.NormalizedPN || normalizePN(pn), x.RefType || null);
+      const npn = x.NormalizedPN || normalizePN(pn);
+      if (xrefSeen.has(`${fid}|${npn}`)) { stat("FilterCrossRef").matched++; continue; }
+      xrefSeen.add(`${fid}|${npn}`);
+      if (APPLY) insertX.run(randomUUID(), fid, x.Brand || null, pn, npn, x.RefType || null);
       stat("FilterCrossRef").created++;
     }
   }
@@ -197,6 +203,23 @@ try {
       assetByCode.set(norm(code), id);
       vehToAsset.set(v.VehicleID, id);
       stat("Vehicle").created++;
+    }
+  }
+
+  // ---- 3b. Vehicle → filter links (the per-vehicle recommended-filter list) --
+  {
+    const insLink = v2.prepare(`INSERT INTO "AssetFilter" (id,filterId,assetId,vehicleRef) VALUES (?,?,?,?)`);
+    const linkSeen = new Set((v2.prepare("SELECT filterId, assetId FROM AssetFilter WHERE assetId IS NOT NULL").all() as any[]).map((r) => `${r.filterId}|${r.assetId}`));
+    for (const vf of srdb.prepare("SELECT * FROM VehicleFilters").all() as any[]) {
+      const fid = filterIdMap.get(vf.FilterID);
+      if (!fid) { stat("AssetFilter").skipped++; continue; }
+      const assetId = assetByAnyCode.get(norm(vf.MatchedECNumber)) ?? resolveLabel(vf.VehicleReference) ?? resolveLabel(vf.MatchedECNumber);
+      if (!assetId) { stat("AssetFilter").skipped++; continue; }
+      const key = `${fid}|${assetId}`;
+      if (linkSeen.has(key)) { stat("AssetFilter").matched++; continue; }
+      linkSeen.add(key);
+      if (APPLY) insLink.run(randomUUID(), fid, assetId, String(vf.VehicleReference || vf.MatchedECNumber || "").trim() || "—");
+      stat("AssetFilter").created++;
     }
   }
 
