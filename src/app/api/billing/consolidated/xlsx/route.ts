@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { buildSiteStatements, totalStatement } from "@/lib/billing/statement";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest) {
@@ -32,6 +33,22 @@ export async function GET(request: NextRequest) {
   if (bills.length === 0) {
     return new NextResponse(`No bills found for ${periodKey}${siteCode ? ` at site ${siteCode}` : ""}`, { status: 404 });
   }
+
+  // Statement of account: credit notes + payments booked against these bills.
+  const billIds = bills.map((b) => b.id);
+  const [creditRows, paymentRows] = await Promise.all([
+    prisma.creditNote.findMany({ where: { billId: { in: billIds } } }),
+    prisma.payment.findMany({ where: { billId: { in: billIds } }, orderBy: { paidDate: "asc" } }),
+  ]);
+  const statements = buildSiteStatements(
+    bills.map((b) => ({
+      billId: b.id, projectId: b.projectId, projectName: b.projectName, projectCode: b.projectCode,
+      assetCode: b.assetCode, invoiceNumber: b.invoiceNumber, status: b.status, grandTotalCents: b.grandTotalCents,
+    })),
+    creditRows.map((c) => ({ billId: c.billId, number: c.number, reason: c.reason, amountCents: c.amountCents, status: c.status })),
+    paymentRows.map((p) => ({ billId: p.billId, amountCents: p.amountCents, paidDate: p.paidDate, method: p.method, reference: p.reference })),
+  );
+  const stmtTotals = totalStatement(statements);
 
   const lkr = (cents: number) => cents / 100;
   const sumBills = (list: typeof bills) =>
@@ -115,6 +132,60 @@ export async function GET(request: NextRequest) {
     }
     siteSummary.push(["GRAND TOTAL", bills.length, lkr(tot.rental), lkr(tot.fuel), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand)]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(siteSummary), "Site Summary");
+
+    // Sheet 3: statement-of-account summary — invoiced / credited / paid /
+    // outstanding per site (the reconciled closing balance).
+    const stmtSummary: any[][] = [
+      [`STATEMENT OF ACCOUNT — ${monthLabel}`],
+      [],
+      ["Site", "Invoices", "Invoiced (LKR)", "Credits (LKR)", "Paid (LKR)", "Outstanding (LKR)"],
+    ];
+    for (const s of statements) {
+      stmtSummary.push([
+        s.projectName, s.invoices.length,
+        lkr(s.invoicedCents), lkr(s.creditedCents), lkr(s.paidCents), lkr(s.outstandingCents),
+      ]);
+    }
+    stmtSummary.push([
+      "GRAND TOTAL", "",
+      lkr(stmtTotals.invoicedCents), lkr(stmtTotals.creditedCents), lkr(stmtTotals.paidCents), lkr(stmtTotals.outstandingCents),
+    ]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stmtSummary), "Statement");
+
+    // Sheet 4: statement detail — every invoice, credit note and payment per
+    // site, closing with the outstanding balance.
+    const stmtDetail: any[][] = [[`STATEMENT OF ACCOUNT (DETAIL) — ${monthLabel}`], []];
+    for (const s of statements) {
+      stmtDetail.push([`SITE: ${s.projectName}${s.projectCode ? `  (${s.projectCode})` : ""}`]);
+      stmtDetail.push(["Invoices", "Vehicle", "Status", "Amount (LKR)"]);
+      for (const inv of s.invoices) {
+        stmtDetail.push([inv.invoiceNumber || "(unissued)", inv.assetCode, inv.status, lkr(inv.grandTotalCents)]);
+      }
+      stmtDetail.push(["", "", "Invoiced", lkr(s.invoicedCents)]);
+      if (s.creditNotes.length > 0) {
+        stmtDetail.push([]);
+        stmtDetail.push(["Credit Notes", "Reason", "Status", "Amount (LKR)"]);
+        for (const c of s.creditNotes) {
+          stmtDetail.push([c.number || "(draft)", c.reason, c.status, lkr(c.amountCents)]);
+        }
+        stmtDetail.push(["", "", "Credited (issued)", lkr(s.creditedCents)]);
+      }
+      if (s.payments.length > 0) {
+        stmtDetail.push([]);
+        stmtDetail.push(["Payments", "Method", "Reference", "Amount (LKR)"]);
+        for (const p of s.payments) {
+          stmtDetail.push([
+            new Date(p.paidDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }),
+            p.method || "—", p.reference || "—", lkr(p.amountCents),
+          ]);
+        }
+        stmtDetail.push(["", "", "Paid", lkr(s.paidCents)]);
+      }
+      stmtDetail.push(["", "", "OUTSTANDING", lkr(s.outstandingCents)]);
+      stmtDetail.push([]);
+    }
+    stmtDetail.push(["GRAND OUTSTANDING (ALL SITES)", "", "", lkr(stmtTotals.outstandingCents)]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stmtDetail), "Statement Detail");
 
     const fileSuffix = siteCode ? `${siteCode}_${periodKey}` : periodKey;
     const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });

@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { Document, Page, Text, View, StyleSheet, renderToStream } from "@react-pdf/renderer";
 import { COMPANY, EcLogo } from "@/lib/billing/invoice-document";
+import { buildSiteStatements, totalStatement, type SiteStatement, type StatementTotals } from "@/lib/billing/statement";
 
 const NAVY = "#1e3a5f";
 const AMBER = "#f59e0b";
@@ -80,6 +81,18 @@ const styles = StyleSheet.create({
   siteSubtotalRow: { flexDirection: "row", justifyContent: "flex-end", gap: 16, backgroundColor: LIGHT, borderRadius: 3, padding: "5 12", marginTop: 4, borderWidth: 1, borderColor: GRAY_LIGHT },
   siteSubLabel: { fontSize: 7.5, color: GRAY, fontFamily: "Helvetica-Bold", textTransform: "uppercase" },
   siteSubVal: { fontSize: 8.5, color: NAVY, fontFamily: "Helvetica-Bold" },
+
+  // Statement of account table
+  stmtHeading: { fontSize: 11, fontFamily: "Helvetica-Bold", color: NAVY, marginTop: 20, marginBottom: 6, borderTopWidth: 2, borderTopColor: NAVY, paddingTop: 10 },
+  stmtSub: { fontSize: 7.5, color: GRAY, marginTop: -4, marginBottom: 6 },
+  stmtHead: { flexDirection: "row", backgroundColor: NAVY, borderRadius: 3, paddingVertical: 5, paddingHorizontal: 6 },
+  stmtHeadCell: { fontSize: 7, fontFamily: "Helvetica-Bold", color: WHITE, textTransform: "uppercase", letterSpacing: 0.4 },
+  stmtRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: GRAY_LIGHT, paddingVertical: 5, paddingHorizontal: 6 },
+  stmtTotRow: { flexDirection: "row", backgroundColor: NAVY, borderRadius: 3, paddingVertical: 6, paddingHorizontal: 6, marginTop: 3 },
+  sSite: { width: "28%" },
+  sNum:  { width: "18%", textAlign: "right" },
+  stmtCell: { fontSize: 7.5, color: "#334155" },
+  stmtTotCell: { fontSize: 8, fontFamily: "Helvetica-Bold", color: WHITE },
 });
 
 function rs(cents: number) {
@@ -107,7 +120,7 @@ function sumBills(list: any[]) {
   );
 }
 
-function ConsolidatedDocument({ bills, periodKey, generatedAt }: { bills: any[]; periodKey: string; generatedAt: string }) {
+function ConsolidatedDocument({ bills, periodKey, generatedAt, statements, stmtTotals }: { bills: any[]; periodKey: string; generatedAt: string; statements: SiteStatement[]; stmtTotals: StatementTotals }) {
   const monthLabel = (() => {
     const [y, m] = periodKey.split("-").map(Number);
     return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
@@ -274,6 +287,38 @@ function ConsolidatedDocument({ bills, periodKey, generatedAt }: { bills: any[];
               </View>
             </View>
           </View>
+
+          {/* Statement of account — reconciles the month's invoices against
+              credit notes and payments to a closing balance per site. */}
+          {statements.length > 0 && (
+            <View wrap={false}>
+              <Text style={styles.stmtHeading}>Statement of Account</Text>
+              <Text style={styles.stmtSub}>Invoiced this period, less issued credits and payments received, equals the amount outstanding.</Text>
+              <View style={styles.stmtHead}>
+                <Text style={[styles.stmtHeadCell, styles.sSite]}>Site</Text>
+                <Text style={[styles.stmtHeadCell, styles.sNum]}>Invoiced</Text>
+                <Text style={[styles.stmtHeadCell, styles.sNum]}>Credits</Text>
+                <Text style={[styles.stmtHeadCell, styles.sNum]}>Paid</Text>
+                <Text style={[styles.stmtHeadCell, styles.sNum]}>Outstanding</Text>
+              </View>
+              {statements.map((s, i) => (
+                <View key={s.projectKey} style={[styles.stmtRow, i % 2 === 1 ? styles.tRowAlt : {}]}>
+                  <Text style={[styles.stmtCell, styles.sSite, styles.tCellBold]}>{s.projectName}</Text>
+                  <Text style={[styles.stmtCell, styles.sNum]}>{rs(s.invoicedCents)}</Text>
+                  <Text style={[styles.stmtCell, styles.sNum]}>{s.creditedCents > 0 ? "−" + rs(s.creditedCents) : "—"}</Text>
+                  <Text style={[styles.stmtCell, styles.sNum]}>{s.paidCents > 0 ? "−" + rs(s.paidCents) : "—"}</Text>
+                  <Text style={[styles.stmtCell, styles.sNum, styles.tCellBold]}>{rs(s.outstandingCents)}</Text>
+                </View>
+              ))}
+              <View style={styles.stmtTotRow}>
+                <Text style={[styles.stmtTotCell, styles.sSite]}>ALL SITES</Text>
+                <Text style={[styles.stmtTotCell, styles.sNum]}>{rs(stmtTotals.invoicedCents)}</Text>
+                <Text style={[styles.stmtTotCell, styles.sNum]}>{stmtTotals.creditedCents > 0 ? "−" + rs(stmtTotals.creditedCents) : "—"}</Text>
+                <Text style={[styles.stmtTotCell, styles.sNum]}>{stmtTotals.paidCents > 0 ? "−" + rs(stmtTotals.paidCents) : "—"}</Text>
+                <Text style={[styles.stmtTotCell, styles.sNum, { color: AMBER }]}>{rs(stmtTotals.outstandingCents)}</Text>
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Footer — amber band like TAX INVOICE */}
@@ -315,12 +360,28 @@ export async function GET(request: NextRequest) {
     return new NextResponse(`No bills found for ${periodKey}${siteCode ? ` at site ${siteCode}` : ""}`, { status: 404 });
   }
 
+  // Statement of account: reconcile invoices with credit notes + payments.
+  const billIds = bills.map((b) => b.id);
+  const [creditRows, paymentRows] = await Promise.all([
+    prisma.creditNote.findMany({ where: { billId: { in: billIds } } }),
+    prisma.payment.findMany({ where: { billId: { in: billIds } } }),
+  ]);
+  const statements = buildSiteStatements(
+    bills.map((b) => ({
+      billId: b.id, projectId: b.projectId, projectName: b.projectName, projectCode: b.projectCode,
+      assetCode: b.assetCode, invoiceNumber: b.invoiceNumber, status: b.status, grandTotalCents: b.grandTotalCents,
+    })),
+    creditRows.map((c) => ({ billId: c.billId, number: c.number, reason: c.reason, amountCents: c.amountCents, status: c.status })),
+    paymentRows.map((p) => ({ billId: p.billId, amountCents: p.amountCents, paidDate: p.paidDate, method: p.method, reference: p.reference })),
+  );
+  const stmtTotals = totalStatement(statements);
+
   const generatedAt = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   const fileSuffix = siteCode ? `${siteCode}_${periodKey}` : periodKey;
 
   try {
     const stream = await renderToStream(
-      <ConsolidatedDocument bills={bills} periodKey={periodKey} generatedAt={generatedAt} />
+      <ConsolidatedDocument bills={bills} periodKey={periodKey} generatedAt={generatedAt} statements={statements} stmtTotals={stmtTotals} />
     );
     const response = new NextResponse(stream as any);
     response.headers.set("Content-Type", "application/pdf");
