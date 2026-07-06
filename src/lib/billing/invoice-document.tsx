@@ -70,8 +70,19 @@ const styles = StyleSheet.create({
   tCellFuel: { color: "#b45309" },
   tCellAdj: { color: "#b91c1c" },
 
-  totalsOuter: { flexDirection: "row", justifyContent: "flex-end", marginTop: 10 },
+  totalsOuter: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginTop: 10 },
   totalsBox: { width: "44%", borderWidth: 1, borderColor: GRAY_LIGHT, borderRadius: 4, overflow: "hidden" },
+
+  // Formal VAT summary — the tax breakdown a compliant SL tax invoice must show:
+  // the value liable to VAT (supply + SSCL) and the output VAT charged on it.
+  vatBox: { width: "50%", borderWidth: 1, borderColor: GRAY_LIGHT, borderRadius: 4, overflow: "hidden" },
+  vatHead: { backgroundColor: NAVY, padding: "4 10" },
+  vatHeadText: { fontSize: 7.5, fontFamily: "Helvetica-Bold", color: WHITE, textTransform: "uppercase", letterSpacing: 0.5 },
+  vatRow: { flexDirection: "row", justifyContent: "space-between", padding: "4 10", borderBottomWidth: 1, borderBottomColor: GRAY_LIGHT },
+  vatBaseRow: { flexDirection: "row", justifyContent: "space-between", padding: "4 10", borderBottomWidth: 1, borderBottomColor: GRAY_LIGHT, backgroundColor: LIGHT },
+  vatLabel: { fontSize: 7.5, color: GRAY },
+  vatVal: { fontSize: 7.5, color: "#334155", fontFamily: "Helvetica-Bold" },
+  vatRegText: { fontSize: 7, color: GRAY, padding: "4 10" },
   totRow: { flexDirection: "row", justifyContent: "space-between", padding: "5 10", borderBottomWidth: 1, borderBottomColor: GRAY_LIGHT },
   totLabel: { fontSize: 8, color: GRAY },
   totVal: { fontSize: 8, color: "#334155", fontFamily: "Helvetica-Bold" },
@@ -268,6 +279,28 @@ export function InvoiceDocument({ bill }: { bill: any }) {
           </View>
 
           <View style={styles.totalsOuter}>
+            <View style={styles.vatBox}>
+              <View style={styles.vatHead}>
+                <Text style={styles.vatHeadText}>VAT Summary</Text>
+              </View>
+              <View style={styles.vatRow}>
+                <Text style={styles.vatLabel}>Value of supply</Text>
+                <Text style={styles.vatVal}>{rs(bill.subtotalCents)}</Text>
+              </View>
+              <View style={styles.vatRow}>
+                <Text style={styles.vatLabel}>SSCL @ {(bill.ssclRate * 100).toFixed(1)}%</Text>
+                <Text style={styles.vatVal}>{rs(bill.ssclCents)}</Text>
+              </View>
+              <View style={styles.vatBaseRow}>
+                <Text style={[styles.vatLabel, { fontFamily: "Helvetica-Bold", color: NAVY }]}>Value liable to VAT</Text>
+                <Text style={styles.vatVal}>{rs(bill.subtotalCents + bill.ssclCents)}</Text>
+              </View>
+              <View style={styles.vatRow}>
+                <Text style={styles.vatLabel}>Output VAT @ {(bill.vatRate * 100).toFixed(1)}%</Text>
+                <Text style={styles.vatVal}>{rs(bill.vatCents)}</Text>
+              </View>
+              <Text style={styles.vatRegText}>{COMPANY.vatReg}</Text>
+            </View>
             <View style={styles.totalsBox}>
               <View style={styles.totRow}>
                 <Text style={styles.totLabel}>Subtotal</Text>

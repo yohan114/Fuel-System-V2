@@ -13,6 +13,7 @@ export const BILLING_DEFAULTS = {
   dueDays: 30,
   invoicePrefix: "EC-INV",
   fuelRateFallbackCents: 0, // price/L fallback when issues carry no priced total
+  autoEmailOnIssue: false, // email the invoice PDF to the site contact on finalize
 };
 
 export interface BillingConfig {
@@ -26,6 +27,7 @@ export interface BillingConfig {
   dueDays: number;
   invoicePrefix: string;
   fuelRateFallbackCents: number;
+  autoEmailOnIssue: boolean;
 }
 
 const KEY = (k: string) => `billing.${k}`;
@@ -57,6 +59,7 @@ export async function getBillingConfig(): Promise<BillingConfig> {
     dueDays: num(map, "dueDays", BILLING_DEFAULTS.dueDays),
     invoicePrefix: map[KEY("invoicePrefix")] || BILLING_DEFAULTS.invoicePrefix,
     fuelRateFallbackCents: num(map, "fuelRateFallbackCents", BILLING_DEFAULTS.fuelRateFallbackCents),
+    autoEmailOnIssue: (map[KEY("autoEmailOnIssue")] ?? String(BILLING_DEFAULTS.autoEmailOnIssue)) === "true",
   };
 }
 

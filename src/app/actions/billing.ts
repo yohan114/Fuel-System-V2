@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { getBillingConfig } from "@/lib/billing/config";
 import { resolvePeriod } from "@/lib/billing/period";
 import { billClarifyReasons } from "@/lib/billing/clarify";
+import { nextInvoiceNumber } from "@/lib/billing/invoice-number";
 import {
   generateBillsForMonth,
   generateBillForAsset,
@@ -14,10 +15,6 @@ import {
 
 const MODES = ["hourly", "perkm", "perday"];
 const BASES = ["fw", "w", "d"];
-
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
 
 // Generate (or regenerate) all bills for a month.
 export async function generateBillsForMonthAction(formData: FormData) {
@@ -144,11 +141,7 @@ export async function finalizeBillAction(billId: string, overrideReason?: string
       if (!bill) throw new Error("Bill not found");
       if (bill.status !== "DRAFT") throw new Error("Only draft bills can be issued");
 
-      const issuedCount = await tx.bill.count({
-        where: { year: bill.year, month: bill.month, invoiceNumber: { not: null } },
-      });
-      const seq = String(issuedCount + 1).padStart(4, "0");
-      const number = `${cfg.invoicePrefix}-${bill.year}-${pad2(bill.month)}-${seq}`;
+      const number = await nextInvoiceNumber(tx, cfg.invoicePrefix, bill.year);
 
       const issuedDate = new Date();
       const dueDate = new Date(issuedDate.getTime() + cfg.dueDays * 24 * 60 * 60 * 1000);
@@ -178,9 +171,18 @@ export async function finalizeBillAction(billId: string, overrideReason?: string
       return number;
     });
 
+    // Optional: auto-email the freshly issued invoice to the site contact.
+    // Best-effort — a mail hiccup must never undo a successful issue, so we
+    // swallow anything the delivery reports and just surface who it reached.
+    let emailedTo: string | undefined;
+    if (cfg.autoEmailOnIssue) {
+      const mail = await deliverInvoiceEmail(billId, admin.id);
+      if (mail.sentTo) emailedTo = mail.sentTo;
+    }
+
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
-    return { success: true, invoiceNumber };
+    return { success: true, invoiceNumber, emailedTo };
   } catch (err: any) {
     console.error("Finalize bill error:", err);
     return { error: err.message || "Failed to issue invoice" };
@@ -294,11 +296,7 @@ export async function bulkFinalizeBillsAction(billIds: string[]) {
           needsClarify++;
           return;
         }
-        const issuedCount = await tx.bill.count({
-          where: { year: bill.year, month: bill.month, invoiceNumber: { not: null } },
-        });
-        const seq = String(issuedCount + 1).padStart(4, "0");
-        const number = `${cfg.invoicePrefix}-${bill.year}-${pad2(bill.month)}-${seq}`;
+        const number = await nextInvoiceNumber(tx, cfg.invoicePrefix, bill.year);
         const issuedDate = new Date();
         const dueDate = new Date(issuedDate.getTime() + cfg.dueDays * 24 * 60 * 60 * 1000);
 
@@ -386,26 +384,26 @@ export async function bulkMarkPaidAction(billIds: string[]) {
   return { success: true, paid, skipped, errors };
 }
 
-// Email an invoice PDF to the bill's project/site contact email.
-export async function emailInvoiceAction(billId: string) {
-  let admin;
-  try {
-    admin = await assertCan("manage");
-  } catch {
-    return { error: "You are not authorized to send invoices" };
-  }
-
+// Render and send an invoice PDF to the bill's site contact. Shared by the
+// manual "Email invoice" action and the auto-email-on-issue path. Returns a
+// discriminated result — { sentTo } on success, { skipped } when it can't send
+// for a benign reason (email off, no contact, still a draft), { error } on an
+// actual send failure — so callers decide how loudly to surface it.
+async function deliverInvoiceEmail(
+  billId: string,
+  actorId: string | null,
+): Promise<{ sentTo?: string; skipped?: string; error?: string }> {
   const { isMailConfigured, sendMail } = await import("@/lib/mail");
   const { renderInvoicePdfBuffer, COMPANY } = await import("@/lib/billing/invoice-document");
 
   if (!isMailConfigured()) {
-    return { error: "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM in the environment." };
+    return { skipped: "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM in the environment." };
   }
 
   try {
     const bill = await prisma.bill.findUnique({ where: { id: billId }, include: { lineItems: true } });
     if (!bill) return { error: "Bill not found" };
-    if (bill.status === "DRAFT") return { error: "Issue the invoice before emailing it" };
+    if (bill.status === "DRAFT") return { skipped: "Issue the invoice before emailing it" };
 
     // Resolve the recipient from the project contact.
     let toEmail: string | null = null;
@@ -416,7 +414,7 @@ export async function emailInvoiceAction(billId: string) {
       contactName = project?.contactName || null;
     }
     if (!toEmail) {
-      return { error: "No contact email on file for this site. Add one on the project before sending." };
+      return { skipped: "No contact email on file for this site. Add one on the project before sending." };
     }
 
     const monthLabel = new Date(bill.year, bill.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
@@ -456,7 +454,7 @@ export async function emailInvoiceAction(billId: string) {
 
     await prisma.auditLog.create({
       data: {
-        actorId: admin.id,
+        actorId,
         action: "UPDATE",
         entity: "Bill",
         entityId: billId,
@@ -464,12 +462,27 @@ export async function emailInvoiceAction(billId: string) {
       },
     });
 
-    revalidatePath(`/billing/${billId}`);
-    return { success: true, sentTo: toEmail };
+    return { sentTo: toEmail };
   } catch (err: any) {
     console.error("Email invoice error:", err);
     return { error: err.message || "Failed to email invoice" };
   }
+}
+
+// Email an invoice PDF to the bill's project/site contact email.
+export async function emailInvoiceAction(billId: string) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to send invoices" };
+  }
+
+  const r = await deliverInvoiceEmail(billId, admin.id);
+  if (r.error) return { error: r.error };
+  if (r.skipped) return { error: r.skipped };
+  revalidatePath(`/billing/${billId}`);
+  return { success: true, sentTo: r.sentTo };
 }
 
 // Sweep ISSUED bills past their due date to OVERDUE.
@@ -560,6 +573,7 @@ export async function updateBillingSettingsAction(formData: FormData) {
   const vatPct = formData.get("vatPct")?.toString().trim();
   const dueDays = formData.get("dueDays")?.toString().trim() || "30";
   const invoicePrefix = formData.get("invoicePrefix")?.toString().trim() || "EC-INV";
+  const autoEmailOnIssue = formData.get("autoEmailOnIssue") === "true" || formData.get("autoEmailOnIssue") === "on" ? "true" : "false";
 
   // Tax fields are entered as percentages in the UI; stored as fractions.
   const ssclRate = ssclPct ? (parseFloat(ssclPct) / 100).toString() : "0.025";
@@ -575,6 +589,7 @@ export async function updateBillingSettingsAction(formData: FormData) {
     { key: "billing.vatRate", value: vatRate },
     { key: "billing.dueDays", value: dueDays },
     { key: "billing.invoicePrefix", value: invoicePrefix },
+    { key: "billing.autoEmailOnIssue", value: autoEmailOnIssue },
   ];
 
   try {

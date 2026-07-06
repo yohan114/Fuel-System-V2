@@ -601,6 +601,16 @@ model BillRevision {
   @@index([billId])
 }
 
+// Per-year invoice sequence allocator. One row per calendar year; lastSeq is
+// the highest sequence handed out so far. Incremented atomically inside the
+// issuing transaction so two finalizes can never mint the same invoice number.
+// See lib/billing/invoice-number.ts.
+model InvoiceCounter {
+  id       Int @id @default(autoincrement())
+  year     Int @unique
+  lastSeq  Int @default(0)
+}
+
 // A receipt against an issued invoice. An invoice can take several part-
 // payments; the sum of its payments is the true amount received, and the
 // invoice flips to PAID once that sum covers the grand total. The legacy
