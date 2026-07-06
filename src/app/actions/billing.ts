@@ -28,13 +28,18 @@ export async function generateBillsForMonthAction(formData: FormData) {
   const year = parseInt(formData.get("year")?.toString() || "", 10);
   const month = parseInt(formData.get("month")?.toString() || "", 10);
   const regenerate = formData.get("regenerate") === "true" || formData.get("regenerate") === "on";
+  // Optional whole-month hire basis: force every bill in the run onto Dry / Wet
+  // / Fully Wet. Empty = respect each vehicle's default. Forcing implies a
+  // regenerate so existing drafts are re-costed onto the chosen basis.
+  const basisRaw = formData.get("basis")?.toString() || "";
+  const basis = BASES.includes(basisRaw) ? (basisRaw as "fw" | "w" | "d") : undefined;
 
   if (!year || !month || month < 1 || month > 12) {
     return { error: "A valid year and month are required" };
   }
 
   try {
-    const result = await generateBillsForMonth({ year, month, regenerate, actorId: admin.id });
+    const result = await generateBillsForMonth({ year, month, regenerate: regenerate || !!basis, actorId: admin.id, basis });
     revalidatePath("/billing");
     return { success: true, result };
   } catch (err: any) {

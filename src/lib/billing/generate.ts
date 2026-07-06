@@ -28,6 +28,7 @@ export interface GenerateOptions {
   assetIds?: string[];
   regenerate?: boolean;
   actorId?: string | null;
+  basis?: RateBasis; // force every bill in this run onto one hire basis
 }
 
 export interface AssetOutcome {
@@ -129,7 +130,7 @@ async function snapshotPriorRevision(
 export async function generateBillForAsset(
   assetId: string,
   period: BillingPeriod,
-  opts: { regenerate: boolean; actorId?: string | null }
+  opts: { regenerate: boolean; actorId?: string | null; basis?: RateBasis }
 ): Promise<{ status: GenerateStatus; billId?: string }> {
   const cfg = await getBillingConfig();
 
@@ -157,9 +158,10 @@ export async function generateBillForAsset(
   // legacy single-site billing paths.
   const billingMode: BillingMode = (existing?.billingMode as BillingMode) ||
     defaultModeForAsset(asset.meterType, asset.rentalRate.equipType);
-  // Basis precedence (explicit draft choice → vehicle default → Wet). A
-  // dry-hired machine bills dry — dry rate, no fuel — automatically.
-  const rateBasis: RateBasis = resolveRateBasis(existing?.rateBasis, asset.rentalRate.defaultBasis);
+  // Basis: a forced run-level choice (whole-month "generate as Dry/Wet") wins
+  // and overrides everything; otherwise precedence is explicit draft choice →
+  // vehicle default → Wet. A dry-hired machine bills dry (dry rate, no fuel).
+  const rateBasis: RateBasis = opts.basis ?? resolveRateBasis(existing?.rateBasis, asset.rentalRate.defaultBasis);
   const minimumUnits = existing ? existing.minimumUnits : minimumForMode(cfg, billingMode);
 
   const pickedRate = pickRateCents(asset.rentalRate, billingMode, rateBasis);
@@ -646,6 +648,7 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
       const r = await generateBillForAsset(a.id, period, {
         regenerate: opts.regenerate ?? false,
         actorId: opts.actorId,
+        basis: opts.basis,
       });
       if (r.status === "created") result.created++;
       else if (r.status === "regenerated") result.regenerated++;
