@@ -72,6 +72,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Service Planner", href: "/service", icon: Wrench },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Filter Database", href: "/filters", icon: FilterIcon },
+      { label: "Lubricants", href: "/lubricants", icon: Droplets },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },

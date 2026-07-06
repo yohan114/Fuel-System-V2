@@ -738,9 +738,16 @@ model ServiceRecord {
   partsCents     Int?
   labourCents    Int?
   sundryCents    Int?
+  manpowerCents  Int?     // manual labour/other lines (bottom table of the sheet)
   sourceRef      String?  @unique // e.g. "SRDB:123" for merged records
 
+  // Extra fields from the paper "Vehicle/Machinery Service Details" sheet.
+  location         String?  // site / workshop
+  nextServiceMeter Float?   // meter at which the next service falls due
+  condition        String?  // up-keeping: "G" (good) | "F" (fair) | "B" (bad)
+
   items          ServiceItem[]
+  attachments    ServiceAttachment[]
 
   recordedById   String
   recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
@@ -764,6 +771,45 @@ model ServiceItem {
   qty             Float   @default(1)
   unitPriceCents  Int?
   amountCents     Int?
+
+  @@index([serviceRecordId])
+}
+
+// Lubricant catalogue — the priced oils/greases used on a service. Mirrors the
+// left "Oil Name / Type" table of the paper sheet: `oilType` is the fixed slot
+// (Engine Oil, Hydraulic Oil, Grease …) and `name` the specific grade/product
+// (e.g. "CJ4 15W40"). Price is per unit (litre by default); a service oil line
+// costs qty × pricePerUnitCents.
+model Lubricant {
+  id                String   @id @default(uuid())
+  name              String   // grade / product, e.g. "CJ4 15W40"
+  oilType           String?  // sheet slot: "Engine Oil", "Hydraulic Oil", "Grease" …
+  unit              String   @default("L") // "L" | "kg" | "unit"
+  pricePerUnitCents Int?
+  note              String?
+  active            Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, oilType])
+}
+
+// A file (scanned service sheet, photo …) attached to a service record. Bytes
+// stored inline and streamed back via /api/service/[id]/attachment/[attId],
+// mirroring the fuel-issue photo / correction-document pattern.
+model ServiceAttachment {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  fileName        String
+  mimeType        String
+  data            Bytes
+  uploadedById    String?
+
+  createdAt       DateTime @default(now())
 
   @@index([serviceRecordId])
 }
