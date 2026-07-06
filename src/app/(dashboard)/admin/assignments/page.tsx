@@ -1,11 +1,15 @@
 import React from "react";
 import { prisma } from "@/lib/db";
 import { resolvePeriod } from "@/lib/billing/period";
+import { getAssignmentOverlaps } from "@/lib/assignments/overlaps";
 import AssignmentsConsole from "./AssignmentsConsole";
+import OverlapResolver from "./OverlapResolver";
 
 export default async function AssignmentsPage() {
   const now = new Date();
   const period = resolvePeriod(now.getFullYear(), now.getMonth() + 1);
+
+  const overlaps = await getAssignmentOverlaps();
 
   const [projects, assets, assignments] = await Promise.all([
     prisma.project.findMany({ orderBy: { name: "asc" }, select: { id: true, code: true, name: true } }),
@@ -45,6 +49,7 @@ export default async function AssignmentsPage() {
           the vehicles assigned to them.
         </p>
       </div>
+      <OverlapResolver overlaps={overlaps} />
       <AssignmentsConsole projects={projects} assets={assets} initialAssignments={serialized} />
     </div>
   );
