@@ -3,51 +3,83 @@ import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { visibleAssetIdsForUser } from "@/lib/assignments";
+import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
 import CorrectionButton from "./CorrectionButton";
 import Link from "next/link";
-import { Search, Fuel, Coins, Calendar, User, CornerDownRight } from "lucide-react";
+import { Search, MapPin } from "lucide-react";
 
 interface PageProps {
-  searchParams: Promise<{ q?: string; fuelKind?: string }>;
+  searchParams: Promise<{ q?: string; fuelKind?: string; site?: string; issuedBy?: string; source?: string }>;
 }
+
+const ISSUE_LIMIT = 1000;
 
 export default async function FuelIssuesPage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
+  const isPrivileged = session.role === "ADMIN" || session.role === "ALLOCATOR";
 
   const searchParams = await props.searchParams;
   const q = searchParams.q || "";
   const fuelKindFilter = searchParams.fuelKind || "";
+  const siteFilter = searchParams.site || "";
+  const issuedByFilter = searchParams.issuedBy || "";
+  const sourceFilter = searchParams.source || "";
 
   // 1. Build where query
   const where: any = {};
-  if (fuelKindFilter) {
-    where.fuelKind = fuelKindFilter;
-  }
+  if (fuelKindFilter) where.fuelKind = fuelKindFilter;
+  if (issuedByFilter) where.issuedById = issuedByFilter;
+  if (sourceFilter) where.source = sourceFilter;
+  if (q) where.asset = { code: { contains: q.trim().toUpperCase() } };
 
-  if (q) {
-    where.asset = {
-      code: { contains: q.trim().toUpperCase() },
-    };
-  }
-
+  // USER role only ever sees its own site's vehicles.
   const visible = await visibleAssetIdsForUser(session);
-  if (visible) {
-    where.assetId = { in: [...visible] };
-  }
+  let allowedIds: Set<string> | null = visible ? new Set(visible) : null;
 
-  // 2. Query dispatches
-  const issues = await prisma.fuelIssue.findMany({
+  // Site filter attributes an issue to the vehicle's *assigned* site (not the
+  // pump it was drawn from). Restrict the query to assets ever posted to the
+  // site (or legacy-pinned to it); the exact per-issue check happens below.
+  if (siteFilter) {
+    const spans = await prisma.assetAssignment.findMany({ where: { projectId: siteFilter }, select: { assetId: true }, distinct: ["assetId"] });
+    const pinned = await prisma.asset.findMany({ where: { projectId: siteFilter }, select: { id: true } });
+    const siteAssets = new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)]);
+    allowedIds = allowedIds ? new Set([...allowedIds].filter((id) => siteAssets.has(id))) : siteAssets;
+  }
+  if (allowedIds) where.assetId = { in: [...allowedIds] };
+
+  // 2. Query dispatches (most-recent first, capped)
+  let issues = await prisma.fuelIssue.findMany({
     where,
     omit: { photoData: true },
-    include: {
-      asset: true,
-      issuedBy: true,
-    },
-    orderBy: {
-      issueDate: "desc",
-    },
+    include: { asset: { include: { project: true } }, issuedBy: true },
+    orderBy: { issueDate: "desc" },
+    take: ISSUE_LIMIT,
   });
+
+  // 3. Resolve each issue's assigned site (assignment covering the issue date;
+  // fall back to the vehicle's current project pointer).
+  const assetIds = [...new Set(issues.map((i) => i.assetId))];
+  const assignments = await prisma.assetAssignment.findMany({
+    where: { assetId: { in: assetIds } },
+    select: { assetId: true, projectId: true, startDate: true, endDate: true },
+  });
+  const idx = indexAssignments(assignments);
+  const projects = await prisma.project.findMany({ select: { id: true, name: true, code: true }, orderBy: { name: "asc" } });
+  const projById = new Map(projects.map((p) => [p.id, p]));
+  const siteOfIssue = (i: (typeof issues)[number]) => {
+    const pid = assignedSiteOn(idx, i.assetId, i.issueDate) ?? i.asset.projectId;
+    return pid ? projById.get(pid) ?? (i.asset.project ? { id: pid, name: i.asset.project.name, code: i.asset.project.code } : null) : null;
+  };
+
+  // Apply the exact assigned-site filter in memory.
+  if (siteFilter) issues = issues.filter((i) => siteOfIssue(i)?.id === siteFilter);
+
+  // Dropdown option sources.
+  const [issuerRows, sourceRows] = await Promise.all([
+    prisma.fuelIssue.findMany({ where: allowedIds ? { assetId: { in: [...allowedIds] } } : {}, select: { issuedById: true, issuedBy: { select: { name: true } } }, distinct: ["issuedById"], orderBy: { issuedBy: { name: "asc" } } }),
+    prisma.fuelIssue.findMany({ select: { source: true }, distinct: ["source"], orderBy: { source: "asc" } }),
+  ]);
 
 
 
@@ -82,31 +114,63 @@ export default async function FuelIssuesPage(props: PageProps) {
         {/* Filters Form */}
         <div className="lg:col-span-2 bg-[#121420] border border-white/5 rounded-2xl p-5 shadow-lg flex items-center">
           <form method="GET" action="/fuel/issues" className="w-full grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {/* Search by asset */}
+            {/* Search by vehicle */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
               <input
                 type="text"
                 name="q"
                 defaultValue={q}
-                placeholder="Search asset e.g. DT-01"
+                placeholder="Vehicle e.g. DT-01"
                 className="w-full bg-[#1b1e30] border border-white/5 rounded-xl pl-10 pr-3 py-2.5 text-white placeholder-gray-500 text-xs focus:outline-none"
               />
             </div>
 
             {/* Fuel Kind dropdown */}
             <div>
-              <select
-                name="fuelKind"
-                defaultValue={fuelKindFilter}
-                className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none"
-              >
+              <select name="fuelKind" defaultValue={fuelKindFilter} className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none">
                 <option value="">All Fuel Kinds</option>
                 {FUEL_KINDS.map((k) => (
                   <option key={k.code} value={k.code}>{k.short}</option>
                 ))}
               </select>
             </div>
+
+            {/* Assigned Site dropdown — attributes each issue to the vehicle's posted site */}
+            {isPrivileged && (
+              <div>
+                <select name="site" defaultValue={siteFilter} className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none">
+                  <option value="">All Sites (assigned)</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Issued By dropdown */}
+            {isPrivileged && (
+              <div>
+                <select name="issuedBy" defaultValue={issuedByFilter} className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none">
+                  <option value="">All Issuers</option>
+                  {issuerRows.map((r) => (
+                    <option key={r.issuedById} value={r.issuedById}>{r.issuedBy.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Source (pump/station) dropdown */}
+            {isPrivileged && (
+              <div>
+                <select name="source" defaultValue={sourceFilter} className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none">
+                  <option value="">All Sources</option>
+                  {sourceRows.map((r) => (
+                    <option key={r.source} value={r.source}>{r.source}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Actions */}
             <div className="flex gap-2">
@@ -158,6 +222,7 @@ export default async function FuelIssuesPage(props: PageProps) {
               <tr className="bg-white/5 text-gray-400 border-b border-white/5">
                 <th className="px-6 py-4 font-semibold">Date</th>
                 <th className="px-6 py-4 font-semibold">Asset Code</th>
+                <th className="px-6 py-4 font-semibold">Assigned Site</th>
                 <th className="px-6 py-4 font-semibold">Fuel Kind</th>
                 <th className="px-6 py-4 font-semibold">Volume</th>
                 <th className="px-6 py-4 font-semibold">Pump Price</th>
@@ -183,6 +248,19 @@ export default async function FuelIssuesPage(props: PageProps) {
                     {issue.voided && (
                       <span className="ml-2 bg-red-500/10 text-red-300 border border-red-500/10 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">Voided</span>
                     )}
+                  </td>
+                  <td className="px-6 py-4">
+                    {(() => {
+                      const s = siteOfIssue(issue);
+                      const drawnElsewhere = s && issue.source && s.code && issue.source.toUpperCase() !== s.code.toUpperCase() && !issue.source.toUpperCase().includes(s.code.toUpperCase());
+                      return s ? (
+                        <span className="inline-flex items-center gap-1 text-gray-300">
+                          <MapPin className="w-3 h-3 text-indigo-400 shrink-0" />
+                          {s.name}
+                          {drawnElsewhere && <span title={`Fuel drawn at ${issue.source}`} className="text-[9px] text-amber-400/70">↩ {issue.source}</span>}
+                        </span>
+                      ) : <span className="text-gray-600">Unassigned</span>;
+                    })()}
                   </td>
                   <td className="px-6 py-4 text-gray-400 capitalize">
                     {issue.fuelKind.replace("_", " ").toLowerCase()}
