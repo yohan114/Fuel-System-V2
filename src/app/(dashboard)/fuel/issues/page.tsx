@@ -1,4 +1,5 @@
 import React from "react";
+import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { visibleAssetIdsForUser } from "@/lib/assignments";
@@ -101,8 +102,9 @@ export default async function FuelIssuesPage(props: PageProps) {
                 className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none"
               >
                 <option value="">All Fuel Kinds</option>
-                <option value="AUTO_DIESEL">Auto Diesel</option>
-                <option value="SUPER_DIESEL">Super Diesel</option>
+                {FUEL_KINDS.map((k) => (
+                  <option key={k.code} value={k.code}>{k.short}</option>
+                ))}
               </select>
             </div>
 

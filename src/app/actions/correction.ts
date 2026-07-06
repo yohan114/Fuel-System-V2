@@ -1,5 +1,6 @@
 "use server";
 
+import { isFuelKind } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset, getActiveAssignment } from "@/lib/assignments";
@@ -101,7 +102,7 @@ export async function submitCorrectionAction(formData: FormData) {
       if (newMeterReading !== null && newMeterReading < 0) {
         return { error: "Corrected meter reading must be zero or greater" };
       }
-      if (newFuelKind && newFuelKind !== "AUTO_DIESEL" && newFuelKind !== "SUPER_DIESEL") {
+      if (newFuelKind && !isFuelKind(newFuelKind)) {
         return { error: "Invalid fuel type" };
       }
       if (newLitres === null && newMeterReading === null && !newFuelKind && !newIssueDate) {

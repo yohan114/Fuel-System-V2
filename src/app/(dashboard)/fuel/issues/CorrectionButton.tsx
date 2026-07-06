@@ -1,5 +1,6 @@
 "use client";
 
+import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import React, { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { submitCorrectionAction } from "@/app/actions/correction";
@@ -99,8 +100,9 @@ export default function CorrectionButton({ issue }: { issue: IssueProp }) {
                     <div>
                       <label className="text-[10px] text-gray-500 font-semibold uppercase">Fuel type</label>
                       <select name="newFuelKind" defaultValue={issue.fuelKind} className={inputCls}>
-                        <option value="AUTO_DIESEL">Auto Diesel</option>
-                        <option value="SUPER_DIESEL">Super Diesel</option>
+                        {FUEL_KINDS.map((k) => (
+                          <option key={k.code} value={k.code}>{k.short}</option>
+                        ))}
                       </select>
                     </div>
                     <div>

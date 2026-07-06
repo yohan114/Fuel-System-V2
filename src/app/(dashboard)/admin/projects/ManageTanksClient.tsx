@@ -1,5 +1,6 @@
 "use client";
 
+import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import React, { useState, useTransition } from "react";
 import { updateBulkTankAction, deleteBulkTankAction } from "@/app/actions/workshop";
 import { Database, Edit, X, AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
@@ -232,8 +233,9 @@ export default function ManageTanksClient({ initialTanks, projects }: ManageTank
                   defaultValue={editingTank.fuelKind}
                   className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white focus:outline-none"
                 >
-                  <option value="AUTO_DIESEL">Auto Diesel</option>
-                  <option value="SUPER_DIESEL">Super Diesel</option>
+                  {FUEL_KINDS.map((k) => (
+                    <option key={k.code} value={k.code}>{k.short}</option>
+                  ))}
                 </select>
               </div>
 

@@ -1,3 +1,4 @@
+import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession, requireUser } from "@/lib/auth";
@@ -105,10 +106,8 @@ export default async function DashboardPage() {
     },
   });
 
-  let autoDieselLitres = 0;
-  let superDieselLitres = 0;
-  let autoDieselCost = 0;
-  let superDieselCost = 0;
+  // Litres/cost per fuel product this month (diesel, petrol, kerosene …)
+  const kindTotals: Record<string, { litres: number; cost: number }> = {};
 
   // Group by day for the chart
   const dailyGroups: Record<string, { date: string; litres: number; cost: number }> = {};
@@ -121,13 +120,9 @@ export default async function DashboardPage() {
   }
 
   for (const issue of issuesThisMonth) {
-    if (issue.fuelKind === "AUTO_DIESEL") {
-      autoDieselLitres += issue.litres;
-      autoDieselCost += issue.totalCost;
-    } else {
-      superDieselLitres += issue.litres;
-      superDieselCost += issue.totalCost;
-    }
+    const kt = (kindTotals[issue.fuelKind] ??= { litres: 0, cost: 0 });
+    kt.litres += issue.litres;
+    kt.cost += issue.totalCost;
 
     const dayStr = issue.issueDate.getDate().toString().padStart(2, "0");
     if (dailyGroups[dayStr]) {
@@ -140,18 +135,12 @@ export default async function DashboardPage() {
 
   const trendData = Object.values(dailyGroups).sort((a, b) => a.date.localeCompare(b.date));
 
-  // 3. Fetch active prices
-  const autoPriceRecord = await prisma.fuelPrice.findFirst({
-    where: { fuelKind: "AUTO_DIESEL" },
-    orderBy: { effectiveFrom: "desc" },
-  });
-  const superPriceRecord = await prisma.fuelPrice.findFirst({
-    where: { fuelKind: "SUPER_DIESEL" },
-    orderBy: { effectiveFrom: "desc" },
-  });
-
-  const autoPrice = autoPriceRecord ? autoPriceRecord.pricePerLitre / 100 : 407.00;
-  const superPrice = superPriceRecord ? superPriceRecord.pricePerLitre / 100 : 478.00;
+  // 3. Latest active price per product (diesel, petrol, kerosene)
+  const priceRows = await prisma.fuelPrice.findMany({ orderBy: { effectiveFrom: "desc" } });
+  const pumpPrices = FUEL_KINDS.map((k) => ({
+    kind: k,
+    price: priceRows.find((p) => p.fuelKind === k.code) ?? null,
+  })).filter((p) => p.price != null || p.kind.code === "AUTO_DIESEL" || p.kind.code === "SUPER_DIESEL");
 
   // 4. Fetch assets for Condition Widget and Quick Actions
   const assets = await prisma.asset.findMany({
@@ -334,21 +323,17 @@ export default async function DashboardPage() {
             Ceypetco Pump Prices
           </h3>
           <div className="space-y-4">
-            <div className="flex items-center justify-between p-3.5 bg-white/5 rounded-xl border border-white/5">
-              <div>
-                <span className="text-xs text-gray-400 block font-semibold">Auto Diesel</span>
-                <span className="text-xs text-[10px] text-gray-500 block">Lanka Auto Diesel</span>
+            {pumpPrices.map(({ kind, price }) => (
+              <div key={kind.code} className="flex items-center justify-between p-3.5 bg-white/5 rounded-xl border border-white/5">
+                <div>
+                  <span className="text-xs text-gray-400 block font-semibold">{kind.short}</span>
+                  <span className="text-xs text-[10px] text-gray-500 block">{kind.label}</span>
+                </div>
+                <span className={`text-md font-bold ${price ? "text-white" : "text-gray-600"}`}>
+                  {price ? `Rs. ${(price.pricePerLitre / 100).toFixed(2)}` : "—"}
+                </span>
               </div>
-              <span className="text-md font-bold text-white">Rs. {autoPrice.toFixed(2)}</span>
-            </div>
-
-            <div className="flex items-center justify-between p-3.5 bg-white/5 rounded-xl border border-white/5">
-              <div>
-                <span className="text-xs text-gray-400 block font-semibold">Super Diesel</span>
-                <span className="text-xs text-[10px] text-gray-500 block">Lanka Super Diesel E4</span>
-              </div>
-              <span className="text-md font-bold text-white">Rs. {superPrice.toFixed(2)}</span>
-            </div>
+            ))}
           </div>
           {isAdmin && (
             <Link 
@@ -372,10 +357,11 @@ export default async function DashboardPage() {
       {/* Visual Analytics Charts */}
       <DashboardCharts 
         trendData={trendData}
-        autoDieselLitres={autoDieselLitres}
-        superDieselLitres={superDieselLitres}
-        autoDieselCost={autoDieselCost}
-        superDieselCost={superDieselCost}
+        kindSplit={FUEL_KINDS.filter((k) => kindTotals[k.code]).map((k) => ({
+          name: k.short,
+          value: kindTotals[k.code].litres,
+          cost: kindTotals[k.code].cost,
+        }))}
       />
 
       {/* Tables Row */}

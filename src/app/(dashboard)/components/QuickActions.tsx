@@ -1,5 +1,6 @@
 "use client";
 
+import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import React, { useState } from "react";
 import { submitRequestAction, recordDirectIssueAction } from "@/app/actions/fuel";
 import { addReadingAction } from "@/app/actions/readings";
@@ -258,8 +259,9 @@ export default function QuickActions({ assets, isAdmin, isLocked }: QuickActions
                         required
                         className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-indigo-500/50"
                       >
-                        <option value="AUTO_DIESEL">Auto Diesel</option>
-                        <option value="SUPER_DIESEL">Super Diesel</option>
+                        {FUEL_KINDS.map((k) => (
+                          <option key={k.code} value={k.code}>{k.short}</option>
+                        ))}
                       </select>
                     </div>
 

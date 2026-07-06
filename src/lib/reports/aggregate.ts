@@ -1,4 +1,5 @@
 import { prisma } from "../db";
+import { FUEL_KIND_CODES } from "../fuel-kinds";
 import { recommendedUnits, varianceFlag } from "./recommended";
 
 export interface ReportFilter {
@@ -55,10 +56,9 @@ export async function aggregateFuelData(filter: ReportFilter) {
   const categoryTotals: Record<string, { name: string; code: string; litres: number; costCents: number }> = {};
   const assetTotals: Record<string, { code: string; brand: string | null; typeLabel: string | null; litres: number; costCents: number; meterType: string; assetId: string; fuelConsTyp: number | null; categoryName: string; projectName: string | null; projectCode: string | null; issueCount: number }> = {};
   const trendTotals: Record<string, { date: string; litres: number; costCents: number }> = {};
-  const fuelKindTotals: Record<string, { litres: number; costCents: number }> = {
-    AUTO_DIESEL: { litres: 0, costCents: 0 },
-    SUPER_DIESEL: { litres: 0, costCents: 0 },
-  };
+  const fuelKindTotals: Record<string, { litres: number; costCents: number }> = Object.fromEntries(
+    FUEL_KIND_CODES.map((code) => [code, { litres: 0, costCents: 0 }]),
+  );
 
   interface SiteTotalPoint {
     id: string;

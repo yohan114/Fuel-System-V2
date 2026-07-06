@@ -1,4 +1,5 @@
 import React from "react";
+import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { addManualPriceAction } from "@/app/actions/admin";
 import { Coins, Plus, Calendar, Bookmark, RefreshCw } from "lucide-react";
@@ -14,9 +15,8 @@ export default async function AdminPricesPage() {
     },
   });
 
-  // 2. Fetch latest current prices
-  const activeAuto = prices.find(p => p.fuelKind === "AUTO_DIESEL");
-  const activeSuper = prices.find(p => p.fuelKind === "SUPER_DIESEL");
+  // 2. Latest active price per product (first hit wins — list is date-desc).
+  const activeByKind = FUEL_KINDS.map((k) => ({ kind: k, price: prices.find((p) => p.fuelKind === k.code) }));
 
   return (
     <div className="space-y-8">
@@ -25,30 +25,25 @@ export default async function AdminPricesPage() {
         <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4">
           Current Active Prices
         </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="bg-white/5 border border-white/5 p-4 rounded-xl flex items-center justify-between">
-            <div>
-              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Lanka Auto Diesel</span>
-              <span className="text-lg font-bold text-white block mt-1">
-                Rs. {activeAuto ? (activeAuto.pricePerLitre / 100).toFixed(2) : "0.00"}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {activeByKind.map(({ kind, price }) => (
+            <div key={kind.code} className="bg-white/5 border border-white/5 p-4 rounded-xl flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">{kind.label}</span>
+                <span className={`text-lg font-bold block mt-1 ${price ? "text-white" : "text-gray-600"}`}>
+                  {price ? `Rs. ${(price.pricePerLitre / 100).toFixed(2)}` : "no price yet"}
+                </span>
+                {price && (
+                  <span className="text-[10px] text-gray-500">
+                    since {new Date(price.effectiveFrom).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                  </span>
+                )}
+              </div>
+              <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase ${price?.source === "CEYPETCO" ? "bg-emerald-500/10 text-emerald-400" : "bg-indigo-500/10 text-indigo-400"}`}>
+                {price?.source || "—"}
               </span>
             </div>
-            <span className="bg-indigo-500/10 text-indigo-400 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
-              {activeAuto?.source || "—"}
-            </span>
-          </div>
-
-          <div className="bg-white/5 border border-white/5 p-4 rounded-xl flex items-center justify-between">
-            <div>
-              <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider">Lanka Super Diesel E4</span>
-              <span className="text-lg font-bold text-white block mt-1">
-                Rs. {activeSuper ? (activeSuper.pricePerLitre / 100).toFixed(2) : "0.00"}
-              </span>
-            </div>
-            <span className="bg-emerald-500/10 text-emerald-400 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
-              {activeSuper?.source || "—"}
-            </span>
-          </div>
+          ))}
         </div>
       </div>
 
@@ -74,8 +69,9 @@ export default async function AdminPricesPage() {
                 required
                 className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
               >
-                <option value="AUTO_DIESEL">Lanka Auto Diesel</option>
-                <option value="SUPER_DIESEL">Lanka Super Diesel Euro 4</option>
+                {FUEL_KINDS.map((k) => (
+                  <option key={k.code} value={k.code}>{k.short}</option>
+                ))}
               </select>
             </div>
 
