@@ -72,7 +72,9 @@ export async function logServiceSheetAction(formData: FormData) {
     for (const l of oilLines) {
       const qty = Number(l.qty) || 0;
       const unit = l.unitPriceCents != null ? Math.round(Number(l.unitPriceCents)) : null;
-      if (!l.slot && !l.label && qty === 0) continue;
+      // Chart rows always carry a slot — a row is real only once a grade, an
+      // action (C/V) or a quantity was entered on it.
+      if (!l.label && !l.action && qty === 0) continue;
       const amount = lineAmountCents(qty, unit);
       items.push({ kind: "OIL", description: [l.slot, l.label].filter(Boolean).join(" — ") || "Oil", partNo: l.label || null, action: l.action || null, qty, unitPriceCents: unit, amountCents: amount });
       costItems.push({ kind: "OIL", amountCents: amount });
@@ -80,7 +82,9 @@ export async function logServiceSheetAction(formData: FormData) {
     for (const l of filterLines) {
       const qty = Number(l.qty) || 1;
       const unit = l.unitPriceCents != null ? Math.round(Number(l.unitPriceCents)) : null;
-      if (!l.slot && !l.partNo) continue;
+      // Real once a part number, an action (X/E) or a price was entered — a
+      // cleaned filter (E) with no part no is still a recorded event.
+      if (!l.partNo && !l.action && !(unit && unit > 0)) continue;
       const amount = lineAmountCents(qty, unit);
       items.push({ kind: "FILTER", description: l.slot || "Filter", partNo: l.partNo || null, action: l.action || null, qty, unitPriceCents: unit, amountCents: amount });
       costItems.push({ kind: "FILTER", amountCents: amount });

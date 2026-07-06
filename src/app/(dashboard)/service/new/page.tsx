@@ -30,16 +30,19 @@ export default async function NewServicePage(props: PageProps) {
       orderBy: [{ oilType: "asc" }, { name: "asc" }],
     }),
     prisma.filter.findMany({
-      where: { priceCents: { not: null } },
-      select: { hifiPartNo: true, oemPartNo: true, priceCents: true },
-      take: 2000,
+      where: { OR: [{ hifiPartNo: { not: null } }, { oemPartNo: { not: null } }] },
+      select: { hifiPartNo: true, oemPartNo: true, category: true, priceCents: true },
+      orderBy: [{ priceCents: { sort: "desc", nulls: "last" } }, { hifiPartNo: "asc" }],
+      take: 600,
     }),
   ]).then(async ([a, l, f]) => [a, l, f, await getServiceConfig()] as const);
 
   const assetOpts = assets.map((a) => ({ code: a.code, regNo: a.regNo, model: a.model || a.brand || null, meterType: a.meterType }));
+  const seen = new Set<string>();
   const filterOpts = pricedFilters
-    .map((f) => ({ partNo: (f.hifiPartNo || f.oemPartNo || "").trim(), priceCents: f.priceCents }))
-    .filter((f) => f.partNo);
+    .map((f) => ({ partNo: (f.hifiPartNo || f.oemPartNo || "").trim(), category: f.category, priceCents: f.priceCents }))
+    .filter((f) => f.partNo && !seen.has(f.partNo) && seen.add(f.partNo))
+    .sort((a, b) => a.partNo.localeCompare(b.partNo));
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
