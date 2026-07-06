@@ -6,6 +6,7 @@ import { VARIANCE_THRESHOLD, formatVariancePct } from "@/lib/reports/recommended
 import { Receipt, Wallet, FileText, AlertTriangle, Gauge } from "lucide-react";
 import Link from "next/link";
 import GenerateBillsPanel from "./components/GenerateBillsPanel";
+import ReadinessReport from "./components/ReadinessReport";
 import ConsolidatedBillPanel from "./components/ConsolidatedBillPanel";
 import BillsTable from "./components/BillsTable";
 import AgingReport from "./components/AgingReport";
@@ -186,6 +187,7 @@ export default async function BillingPage(props: PageProps) {
       <AgingReport projectId={session.role === "USER" ? session.projectId : null} />
 
       {/* Admin generate panels */}
+      {isAdmin && <ReadinessReport year={y || cur.year} month={m || cur.month} />}
       {isAdmin && <GenerateBillsPanel defaultYear={y || cur.year} defaultMonth={m || cur.month} />}
       {isAdmin && (
         <ConsolidatedBillPanel
