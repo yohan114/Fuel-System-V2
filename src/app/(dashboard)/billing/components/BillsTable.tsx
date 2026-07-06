@@ -70,7 +70,10 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
       if ((res as any).error) setMsg({ ok: false, text: (res as any).error });
       else {
         const r = res as any;
-        setMsg({ ok: true, text: `Finalized ${r.finalized}, skipped ${r.skipped}${r.errors?.length ? `, ${r.errors.length} errors` : ""}.` });
+        setMsg({
+          ok: true,
+          text: `Finalized ${r.finalized}${r.needsClarify ? `, ${r.needsClarify} left for clarification (open them to review)` : ""}${r.skipped ? `, skipped ${r.skipped}` : ""}${r.errors?.length ? `, ${r.errors.length} errors` : ""}.`,
+        });
         setSelected(new Set());
         router.refresh();
       }

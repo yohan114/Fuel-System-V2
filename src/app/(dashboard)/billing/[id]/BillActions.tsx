@@ -2,7 +2,7 @@
 
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, RefreshCw, CheckCircle2, Banknote, Save, Mail } from "lucide-react";
+import { Loader2, RefreshCw, CheckCircle2, Banknote, Save, Mail, AlertTriangle } from "lucide-react";
 import {
   updateBillDraftAction,
   regenerateBillAction,
@@ -54,6 +54,8 @@ export default function BillActions({ bill }: { bill: BillSnapshot }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
+  const [clarify, setClarify] = useState<string[] | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
 
   function refreshAfter(promise: Promise<any>) {
     setErr(null);
@@ -61,6 +63,24 @@ export default function BillActions({ bill }: { bill: BillSnapshot }) {
       const res = await promise;
       if (res?.error) setErr(res.error);
       else router.refresh();
+    });
+  }
+
+  // Finalize with the clarification guard: a blocked response surfaces the
+  // reasons and an override box instead of issuing.
+  function finalize(reason?: string) {
+    setErr(null);
+    startTransition(async () => {
+      const res = await finalizeBillAction(bill.id, reason);
+      if ((res as any).blocked) {
+        setClarify((res as any).reasons);
+      } else if ((res as any).error) {
+        setErr((res as any).error);
+      } else {
+        setClarify(null);
+        setOverrideReason("");
+        router.refresh();
+      }
     });
   }
 
@@ -117,7 +137,7 @@ export default function BillActions({ bill }: { bill: BillSnapshot }) {
           <button
             onClick={() => {
               if (confirm("Issue this invoice? It will be locked from further edits.")) {
-                refreshAfter(finalizeBillAction(bill.id));
+                finalize();
               }
             }}
             disabled={pending}
@@ -126,6 +146,48 @@ export default function BillActions({ bill }: { bill: BillSnapshot }) {
             <CheckCircle2 className="w-4 h-4" /> Finalize & Issue Invoice
           </button>
         </div>
+
+        {clarify && (
+          <div className="bg-amber-500/10 border border-amber-500/25 rounded-2xl p-5 space-y-3">
+            <h3 className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" /> Needs clarification before issuing
+            </h3>
+            <ul className="space-y-1.5">
+              {clarify.map((r, i) => (
+                <li key={i} className="text-xs text-amber-100/90 flex gap-2">
+                  <span className="text-amber-400 mt-0.5">•</span>
+                  <span>{r}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[11px] text-gray-400">
+              Fix the draft (adjust the reading, price the fuel, then Regenerate) — or issue anyway with a reason, which is recorded on the invoice and in the audit log.
+            </p>
+            <textarea
+              value={overrideReason}
+              onChange={(e) => setOverrideReason(e.target.value)}
+              placeholder="Reason for issuing despite the flags (e.g. confirmed heavy-work hours with the site)"
+              className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none min-h-[60px]"
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => finalize(overrideReason)}
+                disabled={pending || overrideReason.trim().length === 0}
+                className="bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-semibold text-xs px-4 py-2.5 rounded-xl flex items-center gap-2"
+              >
+                {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Issue anyway with this reason
+              </button>
+              <button
+                onClick={() => { setClarify(null); setOverrideReason(""); }}
+                disabled={pending}
+                className="bg-white/5 hover:bg-white/10 border border-white/5 text-gray-300 font-semibold text-xs px-4 py-2.5 rounded-xl"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

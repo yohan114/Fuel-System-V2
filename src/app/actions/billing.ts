@@ -5,6 +5,7 @@ import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { getBillingConfig } from "@/lib/billing/config";
 import { resolvePeriod } from "@/lib/billing/period";
+import { billClarifyReasons } from "@/lib/billing/clarify";
 import {
   generateBillsForMonth,
   generateBillForAsset,
@@ -115,7 +116,7 @@ export async function updateBillDraftAction(billId: string, formData: FormData) 
 }
 
 // Finalize a DRAFT into an ISSUED invoice with a unique invoice number + due date.
-export async function finalizeBillAction(billId: string) {
+export async function finalizeBillAction(billId: string, overrideReason?: string | null) {
   let admin;
   try {
     admin = await assertCan("manage");
@@ -125,6 +126,19 @@ export async function finalizeBillAction(billId: string) {
 
   try {
     const cfg = await getBillingConfig();
+
+    // Gate: a bill that needs clarification (meter vs fuel, or unpriced fuel)
+    // cannot be issued unless the admin supplies an override reason, which is
+    // recorded on the invoice and in the audit log.
+    const draft = await prisma.bill.findUnique({ where: { id: billId } });
+    if (!draft) return { error: "Bill not found" };
+    if (draft.status !== "DRAFT") return { error: "Only draft bills can be issued" };
+    const reasons = billClarifyReasons(draft);
+    const reason = overrideReason?.trim();
+    if (reasons.length > 0 && !reason) {
+      return { blocked: true as const, reasons };
+    }
+
     const invoiceNumber = await prisma.$transaction(async (tx) => {
       const bill = await tx.bill.findUnique({ where: { id: billId } });
       if (!bill) throw new Error("Bill not found");
@@ -139,9 +153,14 @@ export async function finalizeBillAction(billId: string) {
       const issuedDate = new Date();
       const dueDate = new Date(issuedDate.getTime() + cfg.dueDays * 24 * 60 * 60 * 1000);
 
+      const overrideNote =
+        reasons.length > 0 && reason
+          ? `${bill.notes ? bill.notes + " · " : ""}Issued with override: ${reason}`
+          : bill.notes;
+
       await tx.bill.update({
         where: { id: billId },
-        data: { status: "ISSUED", invoiceNumber: number, issuedDate, dueDate },
+        data: { status: "ISSUED", invoiceNumber: number, issuedDate, dueDate, notes: overrideNote },
       });
 
       await tx.auditLog.create({
@@ -150,7 +169,10 @@ export async function finalizeBillAction(billId: string) {
           action: "UPDATE",
           entity: "Bill",
           entityId: billId,
-          summary: `Issued invoice ${number} for ${bill.assetCode} (${bill.periodKey})`,
+          summary:
+            reasons.length > 0 && reason
+              ? `Issued invoice ${number} for ${bill.assetCode} (${bill.periodKey}) — OVERRIDE despite ${reasons.length} clarification flag(s): ${reason}`
+              : `Issued invoice ${number} for ${bill.assetCode} (${bill.periodKey})`,
         },
       });
       return number;
@@ -235,6 +257,7 @@ export async function bulkFinalizeBillsAction(billIds: string[]) {
   const cfg = await getBillingConfig();
   let finalized = 0;
   let skipped = 0;
+  let needsClarify = 0;
   const errors: { billId: string; message: string }[] = [];
 
   for (const billId of billIds) {
@@ -244,6 +267,12 @@ export async function bulkFinalizeBillsAction(billIds: string[]) {
         if (!bill) throw new Error("Bill not found");
         if (bill.status !== "DRAFT") {
           skipped++;
+          return;
+        }
+        // Bulk never force-overrides: bills needing clarification are left as
+        // drafts to be reviewed and issued individually.
+        if (billClarifyReasons(bill).length > 0) {
+          needsClarify++;
           return;
         }
         const issuedCount = await tx.bill.count({
@@ -275,7 +304,7 @@ export async function bulkFinalizeBillsAction(billIds: string[]) {
   }
 
   revalidatePath("/billing");
-  return { success: true, finalized, skipped, errors };
+  return { success: true, finalized, skipped, needsClarify, errors };
 }
 
 // Bulk-record full payment against many ISSUED / OVERDUE invoices. Each is
