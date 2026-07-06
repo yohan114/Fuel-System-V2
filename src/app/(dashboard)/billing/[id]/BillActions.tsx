@@ -40,6 +40,13 @@ function EmailInvoiceButton({ billId }: { billId: string }) {
   );
 }
 
+interface PaymentView {
+  amountCents: number;
+  paidDate: string;
+  method: string | null;
+  reference: string | null;
+}
+
 interface BillSnapshot {
   id: string;
   status: string;
@@ -48,6 +55,11 @@ interface BillSnapshot {
   minimumUnits: number;
   notes: string | null;
   grandTotalCents: number;
+  payments: PaymentView[];
+}
+
+function rs(cents: number) {
+  return "Rs. " + (cents / 100).toLocaleString("en-LK", { maximumFractionDigits: 2 });
 }
 
 export default function BillActions({ bill }: { bill: BillSnapshot }) {
@@ -193,22 +205,55 @@ export default function BillActions({ bill }: { bill: BillSnapshot }) {
   }
 
   if (bill.status === "ISSUED" || bill.status === "OVERDUE") {
+    const paidCents = bill.payments.reduce((s, p) => s + p.amountCents, 0);
+    const outstandingCents = Math.max(bill.grandTotalCents - paidCents, 0);
     return (
       <div className="space-y-4">
         {err && <div className="text-xs rounded-xl px-4 py-3 border bg-red-500/10 text-red-300 border-red-500/10">{err}</div>}
+
+        {/* Payments ledger + running balance */}
+        <div className="bg-white/5 border border-white/5 rounded-2xl p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Payments</h3>
+            <span className={`text-xs font-bold ${outstandingCents > 0 ? "text-amber-400" : "text-emerald-400"}`}>
+              {rs(paidCents)} of {rs(bill.grandTotalCents)} · {rs(outstandingCents)} outstanding
+            </span>
+          </div>
+          {bill.payments.length > 0 && (
+            <div className="rounded-xl border border-white/5 divide-y divide-white/5">
+              {bill.payments.map((p, i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-2 text-xs">
+                  <span className="text-gray-400 w-24 shrink-0">{new Date(p.paidDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>
+                  <span className="text-white font-semibold">{rs(p.amountCents)}</span>
+                  <span className="text-gray-500 truncate flex-1">{[p.method, p.reference].filter(Boolean).join(" · ")}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <form
           action={(fd) => refreshAfter(markBillPaidAction(bill.id, fd))}
           className="bg-white/5 border border-white/5 rounded-2xl p-5 space-y-4"
         >
-          <h3 className="text-xs font-bold text-white uppercase tracking-wider">Record Payment</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider">Record a Payment</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div>
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Amount (LKR)</label>
-              <input name="paidLkr" type="number" step="0.01" min="0" defaultValue={(bill.grandTotalCents / 100).toFixed(2)} className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none" />
+              <input name="paidLkr" type="number" step="0.01" min="0" defaultValue={(outstandingCents / 100).toFixed(2)} className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none" />
             </div>
             <div>
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Payment Date</label>
               <input name="paidDate" type="date" defaultValue={new Date().toISOString().split("T")[0]} className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Method</label>
+              <select name="method" className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none">
+                <option value="">—</option>
+                <option value="Cash">Cash</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Transfer">Transfer</option>
+              </select>
             </div>
             <div>
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Reference</label>
@@ -217,7 +262,7 @@ export default function BillActions({ bill }: { bill: BillSnapshot }) {
           </div>
           <button type="submit" disabled={pending} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold text-xs px-4 py-2.5 rounded-xl active:scale-95 transition-all flex items-center gap-2">
             {pending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Banknote className="w-4 h-4" />}
-            Mark as Paid
+            Record payment {outstandingCents > 0 ? `· settles at ${rs(outstandingCents)}` : ""}
           </button>
         </form>
         <EmailInvoiceButton billId={bill.id} />

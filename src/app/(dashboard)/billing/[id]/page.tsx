@@ -38,7 +38,7 @@ export default async function BillDetailPage(props: PageProps) {
 
   const bill = await prisma.bill.findUnique({
     where: { id },
-    include: { lineItems: true },
+    include: { lineItems: true, payments: { orderBy: { paidDate: "asc" } } },
   });
   if (!bill) notFound();
 
@@ -441,6 +441,12 @@ export default async function BillDetailPage(props: PageProps) {
         minimumUnits: bill.minimumUnits,
         notes: bill.notes,
         grandTotalCents: bill.grandTotalCents,
+        payments: bill.payments.map((p) => ({
+          amountCents: p.amountCents,
+          paidDate: p.paidDate.toISOString(),
+          method: p.method,
+          reference: p.reference,
+        })),
       }} />}
     </div>
   );

@@ -569,10 +569,33 @@ model Bill {
 
   lineItems     BillLineItem[]
   creditNotes   CreditNote[]
+  payments      Payment[]
 
   @@unique([assetId, year, month])
   @@index([periodKey, status])
   @@index([projectId, periodKey])
+}
+
+// A receipt against an issued invoice. An invoice can take several part-
+// payments; the sum of its payments is the true amount received, and the
+// invoice flips to PAID once that sum covers the grand total. The legacy
+// Bill.paidAmountCents/paidDate mirror the running total for display.
+model Payment {
+  id           String   @id @default(uuid())
+
+  billId       String
+  bill         Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  amountCents  Int
+  paidDate     DateTime
+  method       String?  // Cash / Cheque / Transfer …
+  reference    String?
+  note         String?
+
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  @@index([billId])
 }
 
 model BillLineItem {

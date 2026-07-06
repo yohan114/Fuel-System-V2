@@ -187,7 +187,10 @@ export async function finalizeBillAction(billId: string, overrideReason?: string
   }
 }
 
-// Record payment against an ISSUED / OVERDUE invoice.
+// Record a (possibly partial) payment against an ISSUED / OVERDUE invoice. The
+// invoice flips to PAID only once the ledger covers the grand total; otherwise
+// it keeps its outstanding balance. Bill.paidAmountCents/paidDate mirror the
+// running total for display and backward compatibility.
 export async function markBillPaidAction(billId: string, formData: FormData) {
   let admin;
   try {
@@ -198,45 +201,61 @@ export async function markBillPaidAction(billId: string, formData: FormData) {
 
   const paidLkrStr = formData.get("paidLkr")?.toString() || "";
   const paymentRef = formData.get("paymentRef")?.toString().trim() || null;
+  const method = formData.get("method")?.toString().trim() || null;
   const paymentNote = formData.get("paymentNote")?.toString().trim() || null;
   const paidDateStr = formData.get("paidDate")?.toString() || "";
 
   try {
-    const bill = await prisma.bill.findUnique({ where: { id: billId } });
-    if (!bill) return { error: "Bill not found" };
-    if (bill.status !== "ISSUED" && bill.status !== "OVERDUE") {
-      return { error: "Only issued invoices can be marked as paid" };
-    }
+    const result = await prisma.$transaction(async (tx) => {
+      const bill = await tx.bill.findUnique({ where: { id: billId }, include: { payments: true } });
+      if (!bill) throw new Error("Bill not found");
+      if (bill.status !== "ISSUED" && bill.status !== "OVERDUE") {
+        throw new Error("Only issued invoices can take a payment");
+      }
 
-    // Default the paid amount to the grand total when not supplied.
-    const paidAmountCents = paidLkrStr
-      ? Math.round(parseFloat(paidLkrStr) * 100)
-      : bill.grandTotalCents;
-    if (isNaN(paidAmountCents) || paidAmountCents < 0) {
-      return { error: "Paid amount must be a valid number" };
-    }
-    const paidDate = paidDateStr ? new Date(paidDateStr) : new Date();
+      const priorPaid = bill.payments.reduce((s, p) => s + p.amountCents, 0);
+      const outstanding = Math.max(bill.grandTotalCents - priorPaid, 0);
+      // Default the amount to the remaining balance, not the whole invoice.
+      const amountCents = paidLkrStr ? Math.round(parseFloat(paidLkrStr) * 100) : outstanding;
+      if (isNaN(amountCents) || amountCents <= 0) {
+        throw new Error("Payment amount must be greater than zero");
+      }
+      const paidDate = paidDateStr ? new Date(paidDateStr) : new Date();
 
-    await prisma.bill.update({
-      where: { id: billId },
-      data: { status: "PAID", paidDate, paidAmountCents, paymentRef, paymentNote },
-    });
+      await tx.payment.create({
+        data: { billId, amountCents, paidDate, method, reference: paymentRef, note: paymentNote, createdById: admin.id },
+      });
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: admin.id,
-        action: "UPDATE",
-        entity: "Bill",
-        entityId: billId,
-        summary: `Recorded payment for ${bill.invoiceNumber || bill.assetCode}: Rs. ${(paidAmountCents / 100).toLocaleString("en-LK")}`,
-      },
+      const paidCents = priorPaid + amountCents;
+      const fullyPaid = paidCents >= bill.grandTotalCents;
+      await tx.bill.update({
+        where: { id: billId },
+        data: {
+          paidAmountCents: paidCents,
+          paidDate,
+          paymentRef,
+          paymentNote,
+          ...(fullyPaid ? { status: "PAID" } : {}),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: admin.id,
+          action: "UPDATE",
+          entity: "Bill",
+          entityId: billId,
+          summary: `${fullyPaid ? "Settled" : "Part-paid"} ${bill.invoiceNumber || bill.assetCode}: Rs. ${(amountCents / 100).toLocaleString("en-LK")} (paid Rs. ${(paidCents / 100).toLocaleString("en-LK")} of ${(bill.grandTotalCents / 100).toLocaleString("en-LK")})`,
+        },
+      });
+      return { fullyPaid };
     });
 
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
-    return { success: true };
+    return { success: true, fullyPaid: result.fullyPaid };
   } catch (err: any) {
-    console.error("Mark bill paid error:", err);
+    console.error("Record payment error:", err);
     return { error: err.message || "Failed to record payment" };
   }
 }
@@ -332,18 +351,30 @@ export async function bulkMarkPaidAction(billIds: string[]) {
         skipped++;
         continue;
       }
-      await prisma.bill.update({
-        where: { id: billId },
-        data: { status: "PAID", paidDate: new Date(), paidAmountCents: bill.grandTotalCents },
-      });
-      await prisma.auditLog.create({
-        data: {
-          actorId: admin.id,
-          action: "UPDATE",
-          entity: "Bill",
-          entityId: billId,
-          summary: `Recorded full payment for ${bill.invoiceNumber || bill.assetCode}: Rs. ${(bill.grandTotalCents / 100).toLocaleString("en-LK")} [bulk]`,
-        },
+      // Settle the remaining balance in full: one payment for the outstanding.
+      const priorPaid = await prisma.payment.aggregate({ where: { billId }, _sum: { amountCents: true } });
+      const outstanding = Math.max(bill.grandTotalCents - (priorPaid._sum.amountCents ?? 0), 0);
+      if (outstanding <= 0) {
+        skipped++;
+        continue;
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.payment.create({
+          data: { billId, amountCents: outstanding, paidDate: new Date(), method: null, reference: null, note: "Bulk settle", createdById: admin.id },
+        });
+        await tx.bill.update({
+          where: { id: billId },
+          data: { status: "PAID", paidDate: new Date(), paidAmountCents: bill.grandTotalCents },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId: admin.id,
+            action: "UPDATE",
+            entity: "Bill",
+            entityId: billId,
+            summary: `Settled ${bill.invoiceNumber || bill.assetCode}: Rs. ${(outstanding / 100).toLocaleString("en-LK")} [bulk]`,
+          },
+        });
       });
       paid++;
     } catch (err: any) {
