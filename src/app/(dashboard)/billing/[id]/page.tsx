@@ -264,6 +264,27 @@ export default async function BillDetailPage(props: PageProps) {
                   }
                   active={bill.derivedFromFuel && bill.derivedEconUnits != null && Math.abs(bill.actualUnits - bill.derivedEconUnits) < 0.1}
                 />
+                {(() => {
+                  // Heavy-work upper bound of the fuel-derived bracket, from the
+                  // snapshotted heavy consumption rate (litres ÷ heavy L/unit).
+                  const heavyRate = bill.fuelConsHeavySnapshot ?? assetWithRate?.rentalRate?.fuelConsHeavy ?? null;
+                  if (heavyRate == null || heavyRate <= 0 || bill.fuelLitres <= 0) return null;
+                  const heavyUnits = bill.fuelLitres / heavyRate;
+                  return (
+                    <Row
+                      label={`Actual heavy ${unit} (fuel-derived)`}
+                      value={heavyUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })}
+                      active={bill.derivedFromFuel && Math.abs(bill.actualUnits - heavyUnits) < 0.1}
+                    />
+                  );
+                })()}
+                {bill.derivedFromFuel && fuelConsEcon != null && fuelConsTyp != null && (
+                  <div className="rounded-xl bg-indigo-500/5 border border-indigo-500/10 px-3 py-2 mt-1">
+                    <p className="text-[11px] text-indigo-200/90">
+                      Fuel-derived range: <strong>{(bill.fuelLitres / (bill.fuelConsHeavySnapshot ?? assetWithRate?.rentalRate?.fuelConsHeavy ?? fuelConsTyp)).toFixed(0)}</strong>–<strong>{(bill.fuelLitres / fuelConsEcon).toFixed(0)} {unit}</strong> for {bill.fuelLitres.toFixed(0)} L. Billed on the typical rate ({bill.derivedStandardUnits != null ? bill.derivedStandardUnits.toFixed(0) : "—"} {unit}) — the defensible mid-point of the econ→heavy band.
+                    </p>
+                  </div>
+                )}
                 {variancePct != null && (
                   <div className="flex items-center justify-between">
                     <dt className="text-gray-400">Meter vs recommended variance</dt>

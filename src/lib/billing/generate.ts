@@ -344,6 +344,7 @@ export async function generateBillForAsset(
     derivedEconUnits,
     fuelConsEconSnapshot: asset.rentalRate.fuelConsEcon,
     fuelConsTypSnapshot: asset.rentalRate.fuelConsTyp,
+    fuelConsHeavySnapshot: asset.rentalRate.fuelConsHeavy,
   };
 
   const billId = await prisma.$transaction(async (tx) => {
@@ -507,6 +508,7 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     derivedEconUnits: derivedEconSum > 0 ? derivedEconSum : null,
     fuelConsEconSnapshot: rentalRate.fuelConsEcon,
     fuelConsTypSnapshot: rentalRate.fuelConsTyp,
+    fuelConsHeavySnapshot: rentalRate.fuelConsHeavy,
   };
 
   const billId = await prisma.$transaction(async (tx) => {

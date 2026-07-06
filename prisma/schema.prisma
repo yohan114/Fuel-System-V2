@@ -552,6 +552,7 @@ model Bill {
   derivedEconUnits     Float?
   fuelConsEconSnapshot Float?
   fuelConsTypSnapshot  Float?
+  fuelConsHeavySnapshot Float?
 
   // Breakdown deduction
   breakdownDays        Int @default(0)
