@@ -30,6 +30,21 @@ export function getWetRateCents(rate: RentalRate, mode: BillingMode): number | n
   return pickRateCents(rate, mode, "w");
 }
 
+const VALID_BASES = new Set(["fw", "w", "d"]);
+function asBasis(b: unknown): RateBasis | null {
+  return typeof b === "string" && VALID_BASES.has(b) ? (b as RateBasis) : null;
+}
+
+// Precedence for the hire basis of a bill: an explicit choice already on the
+// draft wins (an admin set it, or a bulk re-cost), else the vehicle's configured
+// default (a dry-hired machine bills dry automatically), else Wet.
+export function resolveRateBasis(
+  existingBasis: string | null | undefined,
+  defaultBasis: string | null | undefined,
+): RateBasis {
+  return asBasis(existingBasis) ?? asBasis(defaultBasis) ?? "w";
+}
+
 // Default billing mode for an asset: portables are day-hire; HOURS-metered
 // machines bill hourly; KM-metered vehicles bill per-km.
 export function defaultModeForAsset(

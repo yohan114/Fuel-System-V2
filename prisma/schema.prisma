@@ -473,6 +473,11 @@ model RentalRate {
   portDwCents   Int?
   portDdCents   Int?
 
+  // Default hire basis for this vehicle — "fw" | "w" | "d". Bill generation
+  // uses it (a dry-hired machine bills dry, no fuel, automatically) unless a
+  // draft already carries an explicit basis. Null falls back to Wet.
+  defaultBasis  String?
+
   // Fuel consumption band (L/hr or L/km): econ ≤ typ ≤ heavy. Actual burn
   // above heavy flags a repair candidate on /analytics/consumption.
   fuelConsEcon  Float?   // economic (light load) consumption

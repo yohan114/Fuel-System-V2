@@ -9,7 +9,7 @@ import {
   computeWindowDelta,
   sumFuelForWindow,
 } from "./usage";
-import { pickRateCents, defaultModeForAsset } from "./rate";
+import { pickRateCents, defaultModeForAsset, resolveRateBasis } from "./rate";
 import { computeTotals, unitLabel, basisLabel, type BillingMode, type RateBasis } from "./calc";
 import { computeSegmentedTotals, type SegmentInput } from "./segmented";
 import { buildBillSnapshot } from "./revisions";
@@ -157,9 +157,9 @@ export async function generateBillForAsset(
   // legacy single-site billing paths.
   const billingMode: BillingMode = (existing?.billingMode as BillingMode) ||
     defaultModeForAsset(asset.meterType, asset.rentalRate.equipType);
-  // Default to the Wet basis (machine + driver, no fuel baked into the rate);
-  // the vehicle's actual monthly fuel total is billed as a separate line.
-  const rateBasis: RateBasis = (existing?.rateBasis as RateBasis) || "w";
+  // Basis precedence (explicit draft choice → vehicle default → Wet). A
+  // dry-hired machine bills dry — dry rate, no fuel — automatically.
+  const rateBasis: RateBasis = resolveRateBasis(existing?.rateBasis, asset.rentalRate.defaultBasis);
   const minimumUnits = existing ? existing.minimumUnits : minimumForMode(cfg, billingMode);
 
   const pickedRate = pickRateCents(asset.rentalRate, billingMode, rateBasis);

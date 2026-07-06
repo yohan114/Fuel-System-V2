@@ -84,6 +84,8 @@ export async function GET(request: NextRequest) {
       "Actual Meter", "Recommended (fuel)",
     ];
     const round1 = (n: number) => Math.round(n * 10) / 10;
+    const basisLabel = (b: string) => (b === "d" ? "Dry" : b === "fw" ? "Fully Wet" : "Wet");
+    const isDry = (b: string) => b === "d";
     const tot = sumBills(bills);
 
     // Sheet 1: site-wise consolidated (section per site)
@@ -98,7 +100,7 @@ export async function GET(request: NextRequest) {
       for (const b of g.bills) {
         sheet1.push([
           b.assetCode, b.assetLabel || "", b.assetRegNo || "",
-          b.billingMode, b.rateBasis,
+          b.billingMode, basisLabel(b.rateBasis),
           b.billableUnits, lkr(b.rentalAmountCents), lkr(b.fuelCostCents), lkr(b.subtotalCents),
           lkr(b.ssclCents), lkr(b.vatCents), lkr(b.grandTotalCents), b.status, b.invoiceNumber || "",
           b.actualMeterUnits != null ? round1(b.actualMeterUnits) : "",
@@ -131,6 +133,23 @@ export async function GET(request: NextRequest) {
       siteSummary.push([g.name, g.bills.length, lkr(st.rental), lkr(st.fuel), lkr(st.sscl), lkr(st.vat), lkr(st.grand)]);
     }
     siteSummary.push(["GRAND TOTAL", bills.length, lkr(tot.rental), lkr(tot.fuel), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand)]);
+
+    // Dry vs Wet split — per site and overall.
+    const dryBills = bills.filter((b) => isDry(b.rateBasis));
+    const wetBills = bills.filter((b) => !isDry(b.rateBasis));
+    siteSummary.push([], ["DRY vs WET SPLIT"], ["Basis", "Vehicles", "Rental (LKR)", "Fuel (LKR)", "Grand Total (LKR)"]);
+    for (const g of siteGroups) {
+      const d = g.bills.filter((b: any) => isDry(b.rateBasis));
+      const w = g.bills.filter((b: any) => !isDry(b.rateBasis));
+      const sd = sumBills(d), sw = sumBills(w);
+      if (d.length) siteSummary.push([`${g.name} — Dry`, d.length, lkr(sd.rental), lkr(sd.fuel), lkr(sd.grand)]);
+      if (w.length) siteSummary.push([`${g.name} — Wet`, w.length, lkr(sw.rental), lkr(sw.fuel), lkr(sw.grand)]);
+    }
+    const sdAll = sumBills(dryBills), swAll = sumBills(wetBills);
+    siteSummary.push(
+      ["ALL SITES — Dry", dryBills.length, lkr(sdAll.rental), lkr(sdAll.fuel), lkr(sdAll.grand)],
+      ["ALL SITES — Wet", wetBills.length, lkr(swAll.rental), lkr(swAll.fuel), lkr(swAll.grand)],
+    );
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(siteSummary), "Site Summary");
 
     // Sheet 3: statement-of-account summary — invoiced / credited / paid /

@@ -4,7 +4,7 @@ import React, { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Banknote, Loader2 } from "lucide-react";
-import { bulkFinalizeBillsAction, bulkMarkPaidAction } from "@/app/actions/billing";
+import { bulkFinalizeBillsAction, bulkMarkPaidAction, bulkSetBillBasisAction } from "@/app/actions/billing";
 
 const STATUS_STYLES: Record<string, string> = {
   PAID: "bg-emerald-500/10 text-emerald-400 border-emerald-500/10",
@@ -80,6 +80,23 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
     });
   }
 
+  function runSetBasis(basis: string) {
+    if (selectedDrafts.length === 0 || !basis) return;
+    const label = basis === "d" ? "Dry (rental only, no fuel)" : basis === "fw" ? "Fully Wet" : "Wet";
+    if (!confirm(`Re-cost ${selectedDrafts.length} draft(s) as ${label}? Rental re-rates and fuel is ${basis === "d" ? "removed" : "included"}.`)) return;
+    setMsg(null);
+    startTransition(async () => {
+      const res = await bulkSetBillBasisAction(selectedDrafts, basis);
+      if ((res as any).error) setMsg({ ok: false, text: (res as any).error });
+      else {
+        const r = res as any;
+        setMsg({ ok: true, text: `Re-costed ${r.updated} draft(s) as ${label}${r.skipped ? `, skipped ${r.skipped}` : ""}.` });
+        setSelected(new Set());
+        router.refresh();
+      }
+    });
+  }
+
   function runMarkPaid() {
     if (selectedPayable.length === 0) return;
     if (!confirm(`Mark ${selectedPayable.length} invoice(s) as fully paid (today)?`)) return;
@@ -117,6 +134,14 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
             {pending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Banknote className="w-3.5 h-3.5" />}
             Mark {selectedPayable.length || ""} paid
           </button>
+          {selectedDrafts.length > 0 && (
+            <div className="flex items-center gap-1.5 border-l border-white/10 pl-3">
+              <span className="text-[11px] text-gray-500 uppercase tracking-wider">Set basis</span>
+              <button onClick={() => runSetBasis("d")} disabled={pending} title="Dry — rental only, no fuel" className="bg-amber-600/80 hover:bg-amber-600 disabled:opacity-40 text-white font-semibold text-xs px-2.5 py-2 rounded-lg">Dry</button>
+              <button onClick={() => runSetBasis("w")} disabled={pending} title="Wet — rental + fuel" className="bg-sky-600/80 hover:bg-sky-600 disabled:opacity-40 text-white font-semibold text-xs px-2.5 py-2 rounded-lg">Wet</button>
+              <button onClick={() => runSetBasis("fw")} disabled={pending} title="Fully Wet" className="bg-sky-700/70 hover:bg-sky-700 disabled:opacity-40 text-white font-semibold text-xs px-2.5 py-2 rounded-lg">F.Wet</button>
+            </div>
+          )}
           <button onClick={() => setSelected(new Set())} className="text-xs text-gray-400 hover:text-white ml-auto">
             Clear
           </button>
@@ -175,7 +200,10 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
                 </td>
                 <td className="px-4 py-3 text-gray-400">{b.projectName || "Unassigned"}</td>
                 <td className="px-4 py-3 text-gray-400">
-                  {MODE_LABEL[b.billingMode]} <span className="text-gray-600">·</span> {b.rateBasis.toUpperCase()}
+                  {MODE_LABEL[b.billingMode]} <span className="text-gray-600">·</span>{" "}
+                  <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${b.rateBasis === "d" ? "bg-amber-500/15 text-amber-400" : "bg-sky-500/15 text-sky-400"}`}>
+                    {b.rateBasis === "d" ? "Dry" : b.rateBasis === "fw" ? "F.Wet" : "Wet"}
+                  </span>
                 </td>
                 <td className="px-4 py-3 text-right text-gray-300">
                   {b.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}

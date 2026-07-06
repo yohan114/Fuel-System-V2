@@ -112,6 +112,76 @@ export async function updateBillDraftAction(billId: string, formData: FormData) 
   }
 }
 
+// Set a vehicle's default hire basis (Fully Wet / Wet / Dry). Optionally
+// re-cost every open DRAFT for the vehicle at the new basis so the change is
+// reflected immediately, not just on the next generation run.
+export async function setVehicleBasisAction(assetId: string, basis: string, applyToDrafts: boolean) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to set hire basis" };
+  }
+  if (!BASES.includes(basis)) return { error: "Invalid hire basis" };
+  try {
+    const rate = await prisma.rentalRate.findUnique({ where: { assetId }, include: { asset: { select: { code: true } } } });
+    if (!rate) return { error: "This vehicle has no rate card to configure" };
+    await prisma.rentalRate.update({ where: { assetId }, data: { defaultBasis: basis } });
+
+    let regenerated = 0;
+    if (applyToDrafts) {
+      const drafts = await prisma.bill.findMany({ where: { assetId, status: "DRAFT" }, select: { id: true, year: true, month: true } });
+      for (const d of drafts) {
+        await prisma.bill.update({ where: { id: d.id }, data: { rateBasis: basis } });
+        await generateBillForAsset(assetId, resolvePeriod(d.year, d.month), { regenerate: true, actorId: admin.id });
+        regenerated++;
+      }
+    }
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: "UPDATE", entity: "RentalRate", entityId: assetId, summary: `Set default hire basis for ${rate.asset.code} to ${basis.toUpperCase()}${applyToDrafts ? ` (re-costed ${regenerated} draft${regenerated !== 1 ? "s" : ""})` : ""}` },
+    });
+    revalidatePath(`/fleet/${rate.asset.code}`);
+    revalidatePath("/billing");
+    return { success: true, regenerated };
+  } catch (err: any) {
+    console.error("Set vehicle basis error:", err);
+    return { error: err.message || "Failed to set hire basis" };
+  }
+}
+
+// Bulk re-cost selected DRAFT bills at a chosen hire basis (Fully Wet / Wet /
+// Dry). Skips non-drafts. Used for site-wide / many-vehicle dry-hire changes.
+export async function bulkSetBillBasisAction(billIds: string[], basis: string) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to change bills" };
+  }
+  if (!BASES.includes(basis)) return { error: "Invalid hire basis" };
+  if (!Array.isArray(billIds) || billIds.length === 0) return { error: "No bills selected" };
+
+  let updated = 0;
+  let skipped = 0;
+  const errors: { billId: string; message: string }[] = [];
+  for (const billId of billIds) {
+    try {
+      const bill = await prisma.bill.findUnique({ where: { id: billId }, select: { id: true, assetId: true, year: true, month: true, status: true } });
+      if (!bill || bill.status !== "DRAFT") { skipped++; continue; }
+      await prisma.bill.update({ where: { id: billId }, data: { rateBasis: basis } });
+      await generateBillForAsset(bill.assetId, resolvePeriod(bill.year, bill.month), { regenerate: true, actorId: admin.id });
+      updated++;
+    } catch (err: any) {
+      errors.push({ billId, message: err.message || "error" });
+    }
+  }
+  await prisma.auditLog.create({
+    data: { actorId: admin.id, action: "UPDATE", entity: "Bill", summary: `Bulk set ${updated} draft bill(s) to ${basis.toUpperCase()} basis${skipped ? ` (skipped ${skipped})` : ""}` },
+  });
+  revalidatePath("/billing");
+  return { success: true, updated, skipped, errors };
+}
+
 // Finalize a DRAFT into an ISSUED invoice with a unique invoice number + due date.
 export async function finalizeBillAction(billId: string, overrideReason?: string | null) {
   let admin;

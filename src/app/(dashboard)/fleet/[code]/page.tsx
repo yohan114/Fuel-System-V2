@@ -6,6 +6,7 @@ import Link from "next/link";
 import AssetCharts from "./components/AssetCharts";
 import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
+import HireBasisControl from "./HireBasisControl";
 import { recommendedUnits, varianceFlag, formatVariancePct } from "@/lib/reports/recommended";
 import { classifyConsumption } from "@/lib/analytics/consumption";
 import { computeServiceStatus } from "@/lib/service/compute";
@@ -240,6 +241,11 @@ export default async function AssetDetailPage(props: PageProps) {
           </div>
         </div>
       </div>
+
+      {/* Hire basis (Dry / Wet) — admins only, needs a rate card */}
+      {isAdmin && asset.rentalRate && (
+        <HireBasisControl assetId={asset.id} current={asset.rentalRate.defaultBasis} />
+      )}
 
       {/* Fuel-derived recommended hrs/km vs recorded meter */}
       <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-xl">
