@@ -571,10 +571,34 @@ model Bill {
   lineItems     BillLineItem[]
   creditNotes   CreditNote[]
   payments      Payment[]
+  revisions     BillRevision[]
 
   @@unique([assetId, year, month])
   @@index([periodKey, status])
   @@index([projectId, periodKey])
+}
+
+// An immutable snapshot of a bill's financial state captured the moment before
+// a regenerate overwrote it. Each regenerate of a DRAFT appends one row, so the
+// full history of what an invoice used to say is preserved and diffable. Never
+// mutated after creation.
+model BillRevision {
+  id              String   @id @default(uuid())
+
+  billId          String
+  bill            Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  revision        Int      // 1-based sequence per bill
+  snapshotJson    String   // full prior BillSnapshot (see lib/billing/revisions.ts)
+  subtotalCents   Int      // denormalised for quick display without parsing
+  grandTotalCents Int
+  reason          String?
+
+  createdById     String?
+  createdAt       DateTime @default(now())
+
+  @@unique([billId, revision])
+  @@index([billId])
 }
 
 // A receipt against an issued invoice. An invoice can take several part-

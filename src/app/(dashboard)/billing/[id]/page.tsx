@@ -7,6 +7,7 @@ import { ArrowLeft, Download, FileSpreadsheet, Building2, Calendar } from "lucid
 import { unitLabel, basisLabel, modeLabel, type BillingMode, type RateBasis } from "@/lib/billing/calc";
 import { formatVariancePct } from "@/lib/reports/recommended";
 import { getWetRateCents } from "@/lib/billing/rate";
+import { buildBillSnapshot, parseBillSnapshot, summarizeRevisionDiff } from "@/lib/billing/revisions";
 import BillActions from "./BillActions";
 import BillingRunningChart from "../components/BillingRunningChart";
 import { createCreditNoteAction, issueCreditNoteAction } from "@/app/actions/finance";
@@ -38,7 +39,11 @@ export default async function BillDetailPage(props: PageProps) {
 
   const bill = await prisma.bill.findUnique({
     where: { id },
-    include: { lineItems: true, payments: { orderBy: { paidDate: "asc" } } },
+    include: {
+      lineItems: true,
+      payments: { orderBy: { paidDate: "asc" } },
+      revisions: { orderBy: { revision: "asc" } },
+    },
   });
   if (!bill) notFound();
 
@@ -78,6 +83,28 @@ export default async function BillDetailPage(props: PageProps) {
   // Retrieve consumption rates (prefer snapshots stored on the bill, fallback to rate card)
   const fuelConsEcon = bill.fuelConsEconSnapshot ?? assetWithRate?.rentalRate?.fuelConsEcon ?? null;
   const fuelConsTyp = bill.fuelConsTypSnapshot ?? assetWithRate?.rentalRate?.fuelConsTyp ?? null;
+
+  // Revision history: each stored revision is a prior version of this invoice,
+  // captured just before a regenerate replaced it. Diff every revision against
+  // whatever superseded it (the next revision, or — for the newest — the live
+  // bill) so the reader sees exactly what each regenerate changed. Newest first.
+  const liveSnapshot = buildBillSnapshot(bill, bill.lineItems);
+  const revisionRows = bill.revisions
+    .map((rev, i) => {
+      const prevSnap = parseBillSnapshot(rev.snapshotJson);
+      const nextSnap =
+        i < bill.revisions.length - 1
+          ? parseBillSnapshot(bill.revisions[i + 1].snapshotJson)
+          : liveSnapshot;
+      return {
+        revision: rev.revision,
+        createdAt: rev.createdAt,
+        reason: rev.reason,
+        grandTotalCents: rev.grandTotalCents,
+        diff: prevSnap && nextSnap ? summarizeRevisionDiff(prevSnap, nextSnap) : [],
+      };
+    })
+    .reverse();
 
   // Build running curves
   let runningFuelLitres = 0;
@@ -375,6 +402,48 @@ export default async function BillDetailPage(props: PageProps) {
         <div className="bg-[#121420] border border-white/5 rounded-2xl p-5 text-xs text-gray-400">
           <span className="text-gray-500 font-semibold uppercase tracking-wider text-[10px]">Notes</span>
           <p className="mt-2">{bill.notes}</p>
+        </div>
+      )}
+
+      {/* Revision history — prior versions of this invoice, captured on each regenerate */}
+      {revisionRows.length > 0 && (
+        <div className="bg-[#121420] border border-white/5 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Revision History</h3>
+            <span className="text-xs text-gray-500">
+              {revisionRows.length} prior version{revisionRows.length !== 1 ? "s" : ""} · regenerated in place
+            </span>
+          </div>
+          <div className="space-y-2">
+            {revisionRows.map((r) => (
+              <div key={r.revision} className="rounded-xl bg-white/[0.02] border border-white/5 px-4 py-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 bg-white/5 rounded-md px-2 py-0.5">
+                      Rev {r.revision}
+                    </span>
+                    <span className="text-xs text-gray-400">was {rs(r.grandTotalCents)}</span>
+                    {r.reason && <span className="text-xs text-gray-500 italic">— {r.reason}</span>}
+                  </div>
+                  <span className="text-[11px] text-gray-600">
+                    {new Date(r.createdAt).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+                {r.diff.length > 0 ? (
+                  <ul className="mt-2 space-y-0.5">
+                    {r.diff.map((d, di) => (
+                      <li key={di} className="text-[11px] text-gray-400 flex gap-2">
+                        <span className="text-indigo-400/60 shrink-0">→</span>
+                        <span>{d}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-[11px] text-gray-600">No financial change from this regenerate.</p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

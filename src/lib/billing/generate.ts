@@ -1,4 +1,4 @@
-import type { Asset, Bill, Category, Project, RentalRate } from "@prisma/client";
+import type { Asset, Bill, Category, Prisma, Project, RentalRate } from "@prisma/client";
 import { prisma } from "../db";
 import { getBillingConfig, minimumForMode, type BillingConfig } from "./config";
 import { resolvePeriod, type BillingPeriod } from "./period";
@@ -12,6 +12,7 @@ import {
 import { pickRateCents, defaultModeForAsset } from "./rate";
 import { computeTotals, unitLabel, basisLabel, type BillingMode, type RateBasis } from "./calc";
 import { computeSegmentedTotals, type SegmentInput } from "./segmented";
+import { buildBillSnapshot } from "./revisions";
 import { getMonthSegments, type MonthSegment } from "../assignments";
 
 export type GenerateStatus =
@@ -99,6 +100,29 @@ async function resolveProjectForAssetMonth(
   }
 
   return defaultProject;
+}
+
+// Capture the current persisted state of a DRAFT bill as a BillRevision row
+// before a regenerate overwrites it, preserving an auditable trail of every
+// prior invoice figure. Runs inside the regenerate transaction, before the old
+// line items are deleted, so it sees the bill exactly as it stood.
+async function snapshotPriorRevision(
+  tx: Prisma.TransactionClient,
+  existing: Bill,
+  actorId: string | null,
+): Promise<void> {
+  const priorLines = await tx.billLineItem.findMany({ where: { billId: existing.id } });
+  const priorCount = await tx.billRevision.count({ where: { billId: existing.id } });
+  await tx.billRevision.create({
+    data: {
+      billId: existing.id,
+      revision: priorCount + 1,
+      snapshotJson: JSON.stringify(buildBillSnapshot(existing, priorLines)),
+      subtotalCents: existing.subtotalCents,
+      grandTotalCents: existing.grandTotalCents,
+      createdById: actorId,
+    },
+  });
 }
 
 // Generates (or regenerates a DRAFT) bill for one asset for the given period.
@@ -350,6 +374,7 @@ export async function generateBillForAsset(
   const billId = await prisma.$transaction(async (tx) => {
     let id: string;
     if (existing) {
+      await snapshotPriorRevision(tx, existing, opts.actorId ?? null);
       await tx.billLineItem.deleteMany({ where: { billId: existing.id } });
       await tx.bill.update({
         where: { id: existing.id },
@@ -514,6 +539,7 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
   const billId = await prisma.$transaction(async (tx) => {
     let id: string;
     if (existing) {
+      await snapshotPriorRevision(tx, existing, actorId);
       await tx.billLineItem.deleteMany({ where: { billId: existing.id } });
       // Stamp a one-time site-split note on multi-site bills without clobbering
       // an admin's manual notes.
