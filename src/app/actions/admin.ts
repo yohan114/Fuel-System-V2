@@ -380,3 +380,149 @@ export async function updateUserAssignmentAction(targetUserId: string, formData:
   }
 }
 
+// 7. Reset a User's Password (Admin only)
+export async function resetUserPasswordAction(targetUserId: string, formData: FormData) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch (err) {
+    return { error: "You are not authorized to perform this action" };
+  }
+
+  const password = formData.get("password")?.toString() || "";
+  const confirm = formData.get("confirmPassword")?.toString() || "";
+
+  if (password.length < 6) {
+    return { error: "Password must be at least 6 characters long" };
+  }
+  if (confirm && password !== confirm) {
+    return { error: "The two passwords do not match" };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!user) {
+      return { error: "User account not found" };
+    }
+
+    const passwordHash = bcrypt.hashSync(password, 10);
+    await prisma.user.update({
+      where: { id: targetUserId },
+      data: { passwordHash },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: admin.id,
+        action: "UPDATE",
+        entity: "User",
+        entityId: targetUserId,
+        summary: `Reset password for user "${user.username}"`,
+      },
+    });
+
+    revalidatePath("/admin/users");
+    return { success: true };
+  } catch (err: any) {
+    console.error("Reset user password error:", err);
+    return { error: err.message || "Failed to reset user password" };
+  }
+}
+
+// 8. Delete a User (Admin only)
+// Hard-deletes an account only when it has no operational footprint. Fuel
+// issues, meter readings, bills, etc. are RESTRICT-linked to their author, so
+// removing a user with history would orphan/destroy financial records — those
+// accounts must be deactivated instead (their history stays attributed).
+export async function deleteUserAction(targetUserId: string) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch (err) {
+    return { error: "You are not authorized to perform this action" };
+  }
+
+  if (targetUserId === admin.id) {
+    return { error: "You cannot delete your own administrator account" };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      include: {
+        _count: {
+          select: {
+            enteredPrices: true,
+            fuelRequests: true,
+            fuelIssues: true,
+            meterReadings: true,
+            dailyConditions: true,
+            bulkRequests: true,
+            generatedBills: true,
+            createdAssignments: true,
+            fuelCorrections: true,
+            tankDips: true,
+            serviceRecords: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return { error: "User account not found" };
+    }
+
+    // Never allow deleting the last remaining active administrator.
+    if (user.role === "ADMIN") {
+      const activeAdmins = await prisma.user.count({
+        where: { role: "ADMIN", active: true, id: { not: targetUserId } },
+      });
+      if (activeAdmins === 0) {
+        return { error: "Cannot delete the last active administrator account" };
+      }
+    }
+
+    // Block deletion when the account authored operational/financial records.
+    const c = user._count;
+    const footprint: Array<[string, number]> = [
+      ["fuel issues", c.fuelIssues],
+      ["meter readings", c.meterReadings],
+      ["fuel requests", c.fuelRequests],
+      ["daily conditions", c.dailyConditions],
+      ["price entries", c.enteredPrices],
+      ["bulk requests", c.bulkRequests],
+      ["generated bills", c.generatedBills],
+      ["asset assignments", c.createdAssignments],
+      ["fuel corrections", c.fuelCorrections],
+      ["tank dips", c.tankDips],
+      ["service records", c.serviceRecords],
+    ];
+    const nonEmpty = footprint.filter(([, n]) => n > 0);
+    if (nonEmpty.length > 0) {
+      const detail = nonEmpty.map(([label, n]) => `${n} ${label}`).join(", ");
+      return {
+        error: `This user has operational history (${detail}) and cannot be deleted. Deactivate the account instead to preserve its records.`,
+      };
+    }
+
+    const username = user.username;
+    await prisma.user.delete({ where: { id: targetUserId } });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: admin.id,
+        action: "DELETE",
+        entity: "User",
+        entityId: targetUserId,
+        summary: `Deleted user account "${username}" (role ${user.role})`,
+      },
+    });
+
+    revalidatePath("/admin/users");
+    return { success: true };
+  } catch (err: any) {
+    console.error("Delete user error:", err);
+    return { error: err.message || "Failed to delete user account" };
+  }
+}
+
