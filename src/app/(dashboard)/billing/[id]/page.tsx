@@ -8,6 +8,7 @@ import { unitLabel, basisLabel, modeLabel, type BillingMode, type RateBasis } fr
 import { formatVariancePct } from "@/lib/reports/recommended";
 import { getWetRateCents } from "@/lib/billing/rate";
 import { buildBillSnapshot, parseBillSnapshot, summarizeRevisionDiff } from "@/lib/billing/revisions";
+import { computeSiteSplit } from "@/lib/billing/site-split";
 import BillActions from "./BillActions";
 import BillingRunningChart from "../components/BillingRunningChart";
 import { createCreditNoteAction, issueCreditNoteAction } from "@/app/actions/finance";
@@ -83,6 +84,10 @@ export default async function BillDetailPage(props: PageProps) {
   // Retrieve consumption rates (prefer snapshots stored on the bill, fallback to rate card)
   const fuelConsEcon = bill.fuelConsEconSnapshot ?? assetWithRate?.rentalRate?.fuelConsEcon ?? null;
   const fuelConsTyp = bill.fuelConsTypSnapshot ?? assetWithRate?.rentalRate?.fuelConsTyp ?? null;
+
+  // Per-site split for months the vehicle worked several sites — rebuilt from
+  // the stored line items so it always matches what was actually billed.
+  const siteSplit = computeSiteSplit(bill.lineItems, bill.minimumUnits);
 
   // Revision history: each stored revision is a prior version of this invoice,
   // captured just before a regenerate replaced it. Diff every revision against
@@ -388,6 +393,64 @@ export default async function BillDetailPage(props: PageProps) {
           </tbody>
         </table>
       </div>
+
+      {/* Multi-site split — the per-site hire calculation, prorated by allocated days */}
+      {siteSplit && (
+        <div className="bg-[#121420] border border-indigo-500/10 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-indigo-400" /> Site Split — {siteSplit.rows.length} sites in this month
+            </h3>
+            <span className="text-[11px] text-gray-500">
+              Minimum {siteSplit.minimumUnits.toLocaleString("en-LK")} {unit} ÷ {siteSplit.totalDays} allocated days, shared by days on site
+            </span>
+          </div>
+          <div className="overflow-x-auto mt-3">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-gray-500 border-b border-white/5">
+                  <th className="px-3 py-2 font-semibold">Site</th>
+                  <th className="px-3 py-2 font-semibold text-right">Days</th>
+                  <th className="px-3 py-2 font-semibold text-right">Min share ({unit})</th>
+                  <th className="px-3 py-2 font-semibold text-right">Billed ({unit})</th>
+                  <th className="px-3 py-2 font-semibold text-right">Rental</th>
+                  <th className="px-3 py-2 font-semibold text-right">Fuel</th>
+                  <th className="px-3 py-2 font-semibold text-right">Site total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {siteSplit.rows.map((r) => (
+                  <tr key={r.projectKey} className="border-b border-white/5">
+                    <td className="px-3 py-2 text-white font-medium">{r.projectName}</td>
+                    <td className="px-3 py-2 text-right text-gray-300 font-mono">{r.days}</td>
+                    <td className="px-3 py-2 text-right text-gray-400 font-mono">{r.minShareUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      <span className="text-gray-200">{r.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</span>
+                      {r.atMinimum && <span className="ml-1.5 text-[9px] uppercase tracking-wider text-amber-400/80 bg-amber-500/10 rounded px-1 py-0.5">min</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right text-gray-200 font-mono">{rs(r.rentalCents)}</td>
+                    <td className="px-3 py-2 text-right text-gray-300 font-mono">{r.fuelCents > 0 ? <>{rs(r.fuelCents)} <span className="text-gray-600">({r.fuelLitres.toLocaleString("en-LK")} L)</span></> : "—"}</td>
+                    <td className="px-3 py-2 text-right text-white font-semibold font-mono">{rs(r.totalCents)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td className="px-3 py-2 text-gray-400 font-semibold uppercase tracking-wider text-[10px]">All sites</td>
+                  <td className="px-3 py-2 text-right text-gray-300 font-mono">{siteSplit.totalDays}</td>
+                  <td className="px-3 py-2 text-right text-gray-400 font-mono">{siteSplit.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</td>
+                  <td className="px-3 py-2 text-right text-gray-200 font-mono">{siteSplit.rows.reduce((s, r) => s + r.billableUnits, 0).toLocaleString("en-LK", { maximumFractionDigits: 1 })}</td>
+                  <td className="px-3 py-2 text-right text-gray-200 font-mono">{rs(siteSplit.rows.reduce((s, r) => s + r.rentalCents, 0))}</td>
+                  <td className="px-3 py-2 text-right text-gray-300 font-mono">{rs(siteSplit.rows.reduce((s, r) => s + r.fuelCents, 0))}</td>
+                  <td className="px-3 py-2 text-right text-indigo-300 font-bold font-mono">{rs(siteSplit.rows.reduce((s, r) => s + r.totalCents, 0))}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-2">
+            Each site is billed the higher of its recorded usage and its share of the monthly minimum
+            ({siteSplit.minimumUnits.toLocaleString("en-LK")} {unit} × days on site ÷ {siteSplit.totalDays} days). Fuel is charged to the site where it was issued.
+          </p>
+        </div>
+      )}
 
       {bill.derivedFromFuel && (
         <div className="bg-amber-500/5 border border-amber-500/15 rounded-2xl p-4 text-xs text-amber-300 flex items-start gap-3">
