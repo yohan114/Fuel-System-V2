@@ -11,6 +11,7 @@ import {
 } from "./usage";
 import { pickRateCents, defaultModeForAsset } from "./rate";
 import { computeTotals, unitLabel, basisLabel, type BillingMode, type RateBasis } from "./calc";
+import { computeSegmentedTotals, type SegmentInput } from "./segmented";
 import { getMonthSegments, type MonthSegment } from "../assignments";
 
 export type GenerateStatus =
@@ -402,164 +403,61 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     billingMode, rateBasis, minimumUnits, rateCents, pickedRate, breakdownDays, segments, actorId,
   } = args;
 
-  const unit = unitLabel(billingMode);
   const isMeter = billingMode === "hourly" || billingMode === "perkm";
   const meterType: "KM" | "HOURS" = billingMode === "perkm" ? "KM" : "HOURS";
-  const chargesFuel = rateBasis === "fw" || rateBasis === "w";
-  const totalDays = segments.reduce((s, seg) => s + seg.days, 0) || 1;
 
-  type Line = {
-    kind: string; description: string; quantity: number; unit: string;
-    unitRateCents: number; amountCents: number; projectId: string | null; projectName: string | null;
-  };
-  const rentalLines: Line[] = [];
-  const fuelLines: Line[] = [];
-
-  let actualUnitsSum = 0;
-  let rawMeterSum = 0;
-  let derivedStdSum = 0;
-  let derivedEconSum = 0;
-  let billableSum = 0;
-  let rentalSum = 0;
-  let litresSum = 0;
-  let fuelCostSum = 0;
-  let derivedFromFuel = false;
-  let fuelConsMidRate: number | null = null;
+  // Gather each segment's raw facts from the DB (meter movement / working days,
+  // fuel). All money math then happens in the pure computeSegmentedTotals so it
+  // is provable and the line items are the single source of truth.
+  const segInputs: SegmentInput[] = [];
   let openingMeter: number | null = null;
   let closingMeter: number | null = null;
-
   for (const seg of segments) {
-    const minShare = minimumUnits * (seg.days / totalDays);
-
-    let rawSeg = 0;
-    let actualSeg = 0;
+    let rawUnits = 0;
     if (isMeter) {
       const rd = await computeWindowDelta(asset.id, meterType, seg.start, seg.end, seg.projectCode);
-      rawSeg = rd.delta;
-      actualSeg = rd.delta;
+      rawUnits = rd.delta;
       if (openingMeter === null && rd.opening != null) openingMeter = rd.opening;
       if (rd.closing != null) closingMeter = rd.closing;
     } else {
-      rawSeg = await countWorkingDays(asset.id, seg.start, seg.end);
-      actualSeg = rawSeg;
+      rawUnits = await countWorkingDays(asset.id, seg.start, seg.end);
     }
-
     const fuelSeg = await sumFuelForWindow(asset.id, seg.start, seg.end);
-
-    // Fuel-derived units: when metered movement is missing/low but fuel was
-    // burnt, back the units out of the consumption rate (mirrors the legacy
-    // single-site logic, applied per segment).
-    let dStd: number | null = null;
-    let dEcon: number | null = null;
-    let segDerived = false;
-    if (
-      isMeter &&
-      fuelSeg.litres > 0 &&
-      rentalRate.fuelConsTyp != null &&
-      rentalRate.fuelConsTyp > 0
-    ) {
-      dStd = fuelSeg.litres / rentalRate.fuelConsTyp;
-      if (rentalRate.fuelConsEcon && rentalRate.fuelConsEcon > 0) {
-        dEcon = fuelSeg.litres / rentalRate.fuelConsEcon;
-      }
-
-      const tolerance = billingMode === "hourly" ? 10 : 50;
-      if (Math.abs(actualSeg - dStd) <= tolerance) {
-        // Within tolerance - keep actual
-      } else {
-        // Outside tolerance - override
-        actualSeg = dStd;
-        segDerived = true;
-        derivedFromFuel = true;
-        fuelConsMidRate = rentalRate.fuelConsTyp;
-      }
-    }
-
-    if (billingMode === "hourly") {
-      const maxSegHours = 720 * (seg.days / totalDays);
-      if (actualSeg > maxSegHours) {
-        actualSeg = maxSegHours;
-      }
-    }
-
-    if (billingMode === "perkm") {
-      const maxSegKm = 200 * seg.days;
-      if (actualSeg > maxSegKm) {
-        actualSeg = maxSegKm;
-      }
-    }
-
-    const billableSeg = Math.max(actualSeg, minShare);
-    const rentalSeg = Math.round(billableSeg * rateCents);
-
-    rawMeterSum += rawSeg;
-    actualUnitsSum += actualSeg;
-    derivedStdSum += dStd ?? 0;
-    derivedEconSum += dEcon ?? 0;
-    billableSum += billableSeg;
-    rentalSum += rentalSeg;
-    litresSum += fuelSeg.litres;
-    fuelCostSum += fuelSeg.costCents;
-
-    rentalLines.push({
-      kind: "RENTAL",
-      description: pickedRate == null
-        ? `Machine rental — ${seg.projectCode} (no rate tier for ${billingMode}/${rateBasis})`
-        : `Machine rental — ${seg.projectCode} · ${billingMode} (${rateBasis.toUpperCase()}) · ${seg.days} day${seg.days !== 1 ? "s" : ""}${segDerived ? " [units incl. fuel]" : ""}`,
-      quantity: billableSeg,
-      unit,
-      unitRateCents: rateCents,
-      amountCents: rentalSeg,
+    segInputs.push({
       projectId: seg.projectId,
       projectName: seg.projectName,
-    });
-
-    if (chargesFuel && fuelSeg.litres > 0) {
-      fuelLines.push({
-        kind: "FUEL",
-        description: `Fuel issued — ${seg.projectCode} (${basisLabel(rateBasis)})`,
-        quantity: fuelSeg.litres,
-        unit: "L",
-        unitRateCents: Math.round(fuelSeg.costCents / fuelSeg.litres),
-        amountCents: fuelSeg.costCents,
-        projectId: seg.projectId,
-        projectName: seg.projectName,
-      });
-    }
-  }
-
-  // RENTAL lines first, then FUEL lines (mirrors the legacy ordering).
-  const lineItems: Line[] = [...rentalLines, ...fuelLines];
-
-  const fuelChargedCents = chargesFuel ? fuelCostSum : 0;
-
-  // Breakdown deduction is shown as an informational line only, mirroring the
-  // legacy path (which does not subtract it from the grand total either).
-  let breakdownDeductCents = 0;
-  if (breakdownDays > 0 && isMeter) {
-    const workingDays = await countWorkingDays(asset.id, period.start, period.end);
-    const totalD = workingDays + breakdownDays;
-    if (totalD > 0 && actualUnitsSum > 0) {
-      breakdownDeductCents = Math.round((actualUnitsSum / totalD) * breakdownDays * rateCents);
-    }
-  }
-  if (breakdownDeductCents > 0) {
-    lineItems.push({
-      kind: "ADJUSTMENT",
-      description: `Breakdown deduction (${breakdownDays} day${breakdownDays !== 1 ? "s" : ""} out of service)`,
-      quantity: breakdownDays,
-      unit: "day",
-      unitRateCents: 0,
-      amountCents: -breakdownDeductCents,
-      projectId: null,
-      projectName: null,
+      projectCode: seg.projectCode,
+      days: seg.days,
+      rawUnits,
+      fuelLitres: fuelSeg.litres,
+      fuelCostCents: fuelSeg.costCents,
     });
   }
 
-  const subtotalCents = rentalSum + fuelChargedCents;
-  const ssclCents = Math.round(subtotalCents * cfg.ssclRate);
-  const vatCents = Math.round((subtotalCents + ssclCents) * cfg.vatRate);
-  const grandTotalCents = subtotalCents + ssclCents + vatCents;
+  // Working days across the whole period feed the breakdown-deduction estimate.
+  const workingDaysForBreakdown =
+    breakdownDays > 0 && isMeter ? await countWorkingDays(asset.id, period.start, period.end) : 0;
+
+  const r = computeSegmentedTotals(segInputs, {
+    billingMode,
+    rateBasis,
+    rateCents,
+    pickedRate,
+    minimumUnits,
+    fuelConsTyp: rentalRate.fuelConsTyp,
+    fuelConsEcon: rentalRate.fuelConsEcon,
+    ssclRate: cfg.ssclRate,
+    vatRate: cfg.vatRate,
+    breakdownDays,
+    workingDays: workingDaysForBreakdown,
+  });
+
+  const lineItems = r.lineItems;
+  const {
+    actualUnitsSum, rawMeterSum, derivedStdSum, derivedEconSum, billableSum,
+    rentalSum, litresSum, fuelCostSum, breakdownDeductCents,
+    subtotalCents, ssclCents, vatCents, grandTotalCents, derivedFromFuel, fuelConsMidRate,
+  } = r;
 
   // Header site = the one the vehicle spent the most days at; the per-site
   // detail lives in the line items.
