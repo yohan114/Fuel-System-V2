@@ -56,13 +56,14 @@ export async function GET(request: NextRequest) {
       (a, b) => {
         a.rental += b.rentalAmountCents;
         a.fuel += b.fuelCostCents;
+        a.litres += b.fuelLitres || 0;
         a.subtotal += b.subtotalCents;
         a.sscl += b.ssclCents;
         a.vat += b.vatCents;
         a.grand += b.grandTotalCents;
         return a;
       },
-      { rental: 0, fuel: 0, subtotal: 0, sscl: 0, vat: 0, grand: 0 }
+      { rental: 0, fuel: 0, litres: 0, subtotal: 0, sscl: 0, vat: 0, grand: 0 }
     );
 
   // Group bills by site
@@ -79,9 +80,10 @@ export async function GET(request: NextRequest) {
 
     const header = [
       "E&C No", "Vehicle", "Reg No", "Mode", "Basis",
-      "Billable Units", "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)",
+      "Fuel (L)", "Actual Meter", "Billable Units",
+      "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)",
       "SSCL (LKR)", "VAT (LKR)", "Grand Total (LKR)", "Status", "Invoice No",
-      "Actual Meter", "Recommended (fuel)",
+      "Recommended (fuel)",
     ];
     const round1 = (n: number) => Math.round(n * 10) / 10;
     const basisLabel = (b: string) => (b === "d" ? "Dry" : b === "fw" ? "Fully Wet" : "Wet");
@@ -98,24 +100,29 @@ export async function GET(request: NextRequest) {
       sheet1.push([`SITE: ${g.name}  (${g.bills.length} vehicles)`]);
       sheet1.push(header);
       for (const b of g.bills) {
+        const fuelOnly = b.rentalAmountCents === 0 && b.fuelCostCents > 0;
         sheet1.push([
           b.assetCode, b.assetLabel || "", b.assetRegNo || "",
-          b.billingMode, basisLabel(b.rateBasis),
-          b.billableUnits, lkr(b.rentalAmountCents), lkr(b.fuelCostCents), lkr(b.subtotalCents),
+          fuelOnly ? "Fuel only" : b.billingMode, fuelOnly ? "" : basisLabel(b.rateBasis),
+          round1(b.fuelLitres || 0),
+          fuelOnly ? "" : (b.actualMeterUnits != null ? round1(b.actualMeterUnits) : ""),
+          fuelOnly ? "" : round1(b.billableUnits),
+          lkr(b.rentalAmountCents), lkr(b.fuelCostCents), lkr(b.subtotalCents),
           lkr(b.ssclCents), lkr(b.vatCents), lkr(b.grandTotalCents), b.status, b.invoiceNumber || "",
-          b.actualMeterUnits != null ? round1(b.actualMeterUnits) : "",
           b.derivedStandardUnits != null ? round1(b.derivedStandardUnits) : "",
         ]);
       }
       sheet1.push([
-        "SITE TOTAL", "", "", "", "", "",
-        lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "", "", "",
+        "SITE TOTAL", "", "", "", "",
+        round1(st.litres), "", "",
+        lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "", "",
       ]);
       sheet1.push([]);
     }
     sheet1.push([
-      "GRAND TOTAL (ALL SITES)", "", "", "", "", "",
-      lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "", "", "",
+      "GRAND TOTAL (ALL SITES)", "", "", "", "",
+      round1(tot.litres), "", "",
+      lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "", "",
     ]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet1), "By Site");
 
