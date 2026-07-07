@@ -31,6 +31,10 @@ export interface SegmentedConfig {
   vatRate: number;
   breakdownDays: number;
   workingDays: number; // period-level, for the breakdown deduction estimate
+  // Fuel-only bill: a privately-owned vehicle E&C fuels but does not rent. No
+  // per-site RENTAL line is emitted and the issued fuel is always charged, so
+  // the subtotal is fuel alone across all the sites it was fuelled at.
+  fuelOnly?: boolean;
 }
 
 export interface SegmentedLine {
@@ -67,7 +71,7 @@ export interface SegmentedResult {
 export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedConfig): SegmentedResult {
   const unit = unitLabel(cfg.billingMode);
   const isMeter = cfg.billingMode === "hourly" || cfg.billingMode === "perkm";
-  const chargesFuel = cfg.rateBasis === "fw" || cfg.rateBasis === "w";
+  const chargesFuel = cfg.fuelOnly || cfg.rateBasis === "fw" || cfg.rateBasis === "w";
   const totalDays = segments.reduce((s, seg) => s + seg.days, 0) || 1;
 
   const rentalLines: SegmentedLine[] = [];
@@ -120,7 +124,8 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
     }
 
     const billableSeg = Math.max(actualSeg, minShare);
-    const rentalSeg = Math.round(billableSeg * cfg.rateCents);
+    // Fuel-only vehicles are not rented — no rental accrues for any segment.
+    const rentalSeg = cfg.fuelOnly ? 0 : Math.round(billableSeg * cfg.rateCents);
 
     rawMeterSum += rawSeg;
     actualUnitsSum += actualSeg;
@@ -131,24 +136,28 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
     litresSum += seg.fuelLitres;
     fuelCostSum += seg.fuelCostCents;
 
-    rentalLines.push({
-      kind: "RENTAL",
-      description:
-        cfg.pickedRate == null
-          ? `Machine rental — ${seg.projectCode} (no rate tier for ${cfg.billingMode}/${cfg.rateBasis})`
-          : `Machine rental — ${seg.projectCode} · ${cfg.billingMode} (${cfg.rateBasis.toUpperCase()}) · ${seg.days} day${seg.days !== 1 ? "s" : ""}${segDerived ? " [units incl. fuel]" : ""}`,
-      quantity: billableSeg,
-      unit,
-      unitRateCents: cfg.rateCents,
-      amountCents: rentalSeg,
-      projectId: seg.projectId,
-      projectName: seg.projectName,
-    });
+    if (!cfg.fuelOnly) {
+      rentalLines.push({
+        kind: "RENTAL",
+        description:
+          cfg.pickedRate == null
+            ? `Machine rental — ${seg.projectCode} (no rate tier for ${cfg.billingMode}/${cfg.rateBasis})`
+            : `Machine rental — ${seg.projectCode} · ${cfg.billingMode} (${cfg.rateBasis.toUpperCase()}) · ${seg.days} day${seg.days !== 1 ? "s" : ""}${segDerived ? " [units incl. fuel]" : ""}`,
+        quantity: billableSeg,
+        unit,
+        unitRateCents: cfg.rateCents,
+        amountCents: rentalSeg,
+        projectId: seg.projectId,
+        projectName: seg.projectName,
+      });
+    }
 
     if (chargesFuel && seg.fuelLitres > 0) {
       fuelLines.push({
         kind: "FUEL",
-        description: `Fuel issued — ${seg.projectCode} (${basisLabel(cfg.rateBasis)})`,
+        description: cfg.fuelOnly
+          ? `Fuel issued — ${seg.projectCode} (E&C-supplied, fuel only)`
+          : `Fuel issued — ${seg.projectCode} (${basisLabel(cfg.rateBasis)})`,
         quantity: seg.fuelLitres,
         unit: "L",
         unitRateCents: Math.round(seg.fuelCostCents / seg.fuelLitres),

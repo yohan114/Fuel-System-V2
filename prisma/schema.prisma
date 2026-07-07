@@ -121,6 +121,12 @@ model Asset {
   // billing.minHours for this asset's hourly bills. Null = use the global.
   minBillHours  Int?
 
+  // Fuel-only billing: a privately-owned vehicle E&C does not rent but does
+  // fuel from its bulk tanks (e.g. a surveyor's own car on a site). When true
+  // the monthly bill charges the issued fuel (+ SSCL/VAT) only — no rental line
+  // and no rate card required. Kept off by default so the fleet bills as usual.
+  billFuelOnly  Boolean        @default(false)
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 

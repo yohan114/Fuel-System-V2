@@ -57,6 +57,11 @@ export default async function BillDetailPage(props: PageProps) {
     ? getWetRateCents(assetWithRate.rentalRate, bill.billingMode as BillingMode)
     : null;
 
+  // A fuel-only bill (private vehicle E&C fuels but does not rent) carries no
+  // RENTAL line item, so the rental/usage breakdown is replaced with a simple
+  // fuel-charge summary.
+  const isFuelOnly = !bill.lineItems.some((l) => l.kind === "RENTAL");
+
   // USER scope: only their own project's bills.
   if (session.role === "USER" && session.projectId && bill.projectId !== session.projectId) {
     notFound();
@@ -242,8 +247,8 @@ export default async function BillDetailPage(props: PageProps) {
           </div>
           <div>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Billing</p>
-            <p className="text-sm font-bold text-white mt-1">{modeLabel(bill.billingMode as BillingMode)}</p>
-            <p className="text-xs text-gray-500">{basisLabel(bill.rateBasis as RateBasis)}</p>
+            <p className="text-sm font-bold text-white mt-1">{isFuelOnly ? "Fuel only" : modeLabel(bill.billingMode as BillingMode)}</p>
+            <p className="text-xs text-gray-500">{isFuelOnly ? "No rental" : basisLabel(bill.rateBasis as RateBasis)}</p>
           </div>
           <div>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Grand Total</p>
@@ -267,7 +272,18 @@ export default async function BillDetailPage(props: PageProps) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Rental / usage breakdown */}
         <div className="bg-[#121420] border border-white/5 rounded-2xl p-6">
-          <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">Rental & Usage</h3>
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">{isFuelOnly ? "Fuel Charge" : "Rental & Usage"}</h3>
+          {isFuelOnly ? (
+            <dl className="space-y-2.5 text-xs">
+              <Row label="Vehicle" value="Private property — fuel only" strong />
+              <Row label={`Fuel issued — monthly total, all sites (${bill.fuelLitres.toLocaleString("en-LK", { maximumFractionDigits: 1 })} L)`} value={rs(bill.fuelCostCents)} strong />
+              <div className="rounded-xl bg-indigo-500/5 border border-indigo-500/10 px-3 py-2 mt-1">
+                <p className="text-[11px] text-indigo-200/90">
+                  E&amp;C issues diesel to this privately-owned vehicle and recharges the fuel cost only — no machine rental is billed.
+                </p>
+              </div>
+            </dl>
+          ) : (
           <dl className="space-y-2.5 text-xs">
             {/* Standard comparison lines if hourly or perkm mode */}
             {(bill.billingMode === "hourly" || bill.billingMode === "perkm") ? (
@@ -352,6 +368,7 @@ export default async function BillDetailPage(props: PageProps) {
             )}
             <Row label={`Fuel — monthly total, all sites (${bill.fuelLitres.toLocaleString("en-LK", { maximumFractionDigits: 1 })} L)`} value={(bill.rateBasis === "fw" || bill.rateBasis === "w") && bill.fuelCostCents > 0 ? rs(bill.fuelCostCents) : `Not billed (${basisLabel(bill.rateBasis as RateBasis)})`} />
           </dl>
+          )}
         </div>
 
         {/* Tax breakdown */}

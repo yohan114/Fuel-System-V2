@@ -28,6 +28,8 @@ export async function createAssetAction(formData: FormData) {
   const dailyCapStr = formData.get("dailyCapLitres")?.toString();
   const dailyCapParsed = dailyCapStr && dailyCapStr.trim() !== "" ? parseInt(dailyCapStr, 10) : null;
   const dailyCapLitres = dailyCapParsed != null && !isNaN(dailyCapParsed) && dailyCapParsed > 0 ? dailyCapParsed : null;
+  // Fuel-only billing flag (private vehicles E&C fuels but does not rent).
+  const billFuelOnly = !!formData.get("billFuelOnly");
 
   if (!code || !categoryId) {
     return { error: "Asset Code and Category are required fields" };
@@ -68,6 +70,7 @@ export async function createAssetAction(formData: FormData) {
         categoryId,
         meterType,
         dailyCapLitres,
+        billFuelOnly,
         status: "ACTIVE",
       },
     });
@@ -113,6 +116,8 @@ export async function updateAssetAction(assetId: string, formData: FormData) {
   const dailyCapStr = formData.get("dailyCapLitres")?.toString();
   const dailyCapParsed = dailyCapStr && dailyCapStr.trim() !== "" ? parseInt(dailyCapStr, 10) : null;
   const dailyCapLitres = dailyCapParsed != null && !isNaN(dailyCapParsed) && dailyCapParsed > 0 ? dailyCapParsed : null;
+  // Fuel-only billing flag (private vehicles E&C fuels but does not rent).
+  const billFuelOnly = !!formData.get("billFuelOnly");
 
   const yom = yomStr ? parseInt(yomStr, 10) : null;
 
@@ -141,6 +146,7 @@ export async function updateAssetAction(assetId: string, formData: FormData) {
         status,
         meterType,
         dailyCapLitres,
+        billFuelOnly,
       },
     });
 

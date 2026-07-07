@@ -139,7 +139,10 @@ export async function generateBillForAsset(
     include: { category: true, project: true, rentalRate: true },
   });
   if (!asset) throw new Error("Asset not found");
-  if (!asset.rentalRate) return { status: "no-rate" };
+  // A fuel-only vehicle (privately owned, E&C fuels but does not rent) bills its
+  // issued fuel without a rate card, so it is allowed through the no-rate gate.
+  if (!asset.rentalRate && !asset.billFuelOnly) return { status: "no-rate" };
+  const fuelOnly = asset.billFuelOnly;
 
   const existing = await prisma.bill.findUnique({
     where: { assetId_year_month: { assetId, year: period.year, month: period.month } },
@@ -157,17 +160,17 @@ export async function generateBillForAsset(
   // are resolved up front for both the per-site (assignment-driven) and the
   // legacy single-site billing paths.
   const billingMode: BillingMode = (existing?.billingMode as BillingMode) ||
-    defaultModeForAsset(asset.meterType, asset.rentalRate.equipType);
+    defaultModeForAsset(asset.meterType, asset.rentalRate?.equipType ?? "");
   // Basis: a forced run-level choice (whole-month "generate as Dry/Wet") wins
   // and overrides everything; otherwise precedence is explicit draft choice →
   // vehicle default → Wet. A dry-hired machine bills dry (dry rate, no fuel).
-  const rateBasis: RateBasis = opts.basis ?? resolveRateBasis(existing?.rateBasis, asset.rentalRate.defaultBasis);
+  const rateBasis: RateBasis = opts.basis ?? resolveRateBasis(existing?.rateBasis, asset.rentalRate?.defaultBasis);
   // A per-asset minimum working-hours floor (set on hired machines) overrides
   // the global billing.minHours for that machine's hourly bills.
   const assetMinHours = billingMode === "hourly" && asset.minBillHours != null && asset.minBillHours > 0 ? asset.minBillHours : null;
   const minimumUnits = existing ? existing.minimumUnits : (assetMinHours ?? minimumForMode(cfg, billingMode));
 
-  const pickedRate = pickRateCents(asset.rentalRate, billingMode, rateBasis);
+  const pickedRate = asset.rentalRate ? pickRateCents(asset.rentalRate, billingMode, rateBasis) : null;
   const rateCents = pickedRate ?? 0;
 
   // Count breakdown days in period (used for display + deduction).
@@ -195,6 +198,7 @@ export async function generateBillForAsset(
       pickedRate,
       breakdownDays,
       segments,
+      fuelOnly,
       actorId: opts.actorId ?? null,
     });
   }
@@ -231,7 +235,7 @@ export async function generateBillForAsset(
   if (
     fuel.litres > 0 &&
     (billingMode === "hourly" || billingMode === "perkm") &&
-    asset.rentalRate.fuelConsTyp != null &&
+    asset.rentalRate?.fuelConsTyp != null &&
     asset.rentalRate.fuelConsTyp > 0
   ) {
     const fuelConsTyp = asset.rentalRate.fuelConsTyp;
@@ -284,13 +288,15 @@ export async function generateBillForAsset(
     fuelCostCents: fuel.costCents,
     ssclRate: cfg.ssclRate,
     vatRate: cfg.vatRate,
+    fuelOnly,
   });
 
   const unit = unitLabel(billingMode);
   const assetLabel =
     [asset.brand, asset.model].filter(Boolean).join(" ").trim() || asset.category.name;
 
-  // Line items: rental always, fuel only when actually charged (fw + litres),
+  // Line items: rental always (except fuel-only vehicles, which carry no rental
+  // line), fuel only when actually charged (fw/w + litres, or fuel-only),
   // breakdown deduction as ADJUSTMENT when applicable.
   const lineItems: {
     kind: string;
@@ -299,8 +305,9 @@ export async function generateBillForAsset(
     unit: string;
     unitRateCents: number;
     amountCents: number;
-  }[] = [
-    {
+  }[] = [];
+  if (!fuelOnly) {
+    lineItems.push({
       kind: "RENTAL",
       description: pickedRate == null
         ? `Machine rental (no rate card tier for ${billingMode}/${rateBasis})`
@@ -309,13 +316,15 @@ export async function generateBillForAsset(
       unit,
       unitRateCents: rateCents,
       amountCents: totals.rentalAmountCents,
-    },
-  ];
+    });
+  }
   if (totals.fuelChargedCents > 0) {
     const avgPerL = fuel.litres > 0 ? Math.round(fuel.costCents / fuel.litres) : 0;
     lineItems.push({
       kind: "FUEL",
-      description: `Fuel issued — monthly total, all sites (${basisLabel(rateBasis)})`,
+      description: fuelOnly
+        ? `Fuel issued — monthly total, all sites (E&C-supplied, fuel only)`
+        : `Fuel issued — monthly total, all sites (${basisLabel(rateBasis)})`,
       quantity: fuel.litres,
       unit: "L",
       unitRateCents: avgPerL,
@@ -371,9 +380,9 @@ export async function generateBillForAsset(
     actualMeterUnits,
     derivedStandardUnits,
     derivedEconUnits,
-    fuelConsEconSnapshot: asset.rentalRate.fuelConsEcon,
-    fuelConsTypSnapshot: asset.rentalRate.fuelConsTyp,
-    fuelConsHeavySnapshot: asset.rentalRate.fuelConsHeavy,
+    fuelConsEconSnapshot: asset.rentalRate?.fuelConsEcon ?? null,
+    fuelConsTypSnapshot: asset.rentalRate?.fuelConsTyp ?? null,
+    fuelConsHeavySnapshot: asset.rentalRate?.fuelConsHeavy ?? null,
   };
 
   const billId = await prisma.$transaction(async (tx) => {
@@ -409,7 +418,7 @@ export async function generateBillForAsset(
 
 interface SegmentedArgs {
   asset: Asset & { category: Category; project: Project | null };
-  rentalRate: RentalRate;
+  rentalRate: RentalRate | null; // null only for fuel-only vehicles (no rate card)
   period: BillingPeriod;
   existing: Bill | null;
   cfg: BillingConfig;
@@ -420,6 +429,7 @@ interface SegmentedArgs {
   pickedRate: number | null;
   breakdownDays: number;
   segments: MonthSegment[];
+  fuelOnly: boolean;
   actorId: string | null;
 }
 
@@ -431,7 +441,7 @@ interface SegmentedArgs {
 async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: GenerateStatus; billId?: string }> {
   const {
     asset, rentalRate, period, existing, cfg,
-    billingMode, rateBasis, minimumUnits, rateCents, pickedRate, breakdownDays, segments, actorId,
+    billingMode, rateBasis, minimumUnits, rateCents, pickedRate, breakdownDays, segments, fuelOnly, actorId,
   } = args;
 
   const isMeter = billingMode === "hourly" || billingMode === "perkm";
@@ -475,12 +485,13 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     rateCents,
     pickedRate,
     minimumUnits,
-    fuelConsTyp: rentalRate.fuelConsTyp,
-    fuelConsEcon: rentalRate.fuelConsEcon,
+    fuelConsTyp: rentalRate?.fuelConsTyp ?? null,
+    fuelConsEcon: rentalRate?.fuelConsEcon ?? null,
     ssclRate: cfg.ssclRate,
     vatRate: cfg.vatRate,
     breakdownDays,
     workingDays: workingDaysForBreakdown,
+    fuelOnly,
   });
 
   const lineItems = r.lineItems;
@@ -536,9 +547,9 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     actualMeterUnits: rawMeterSum,
     derivedStandardUnits: derivedStdSum > 0 ? derivedStdSum : null,
     derivedEconUnits: derivedEconSum > 0 ? derivedEconSum : null,
-    fuelConsEconSnapshot: rentalRate.fuelConsEcon,
-    fuelConsTypSnapshot: rentalRate.fuelConsTyp,
-    fuelConsHeavySnapshot: rentalRate.fuelConsHeavy,
+    fuelConsEconSnapshot: rentalRate?.fuelConsEcon ?? null,
+    fuelConsTypSnapshot: rentalRate?.fuelConsTyp ?? null,
+    fuelConsHeavySnapshot: rentalRate?.fuelConsHeavy ?? null,
   };
 
   const billId = await prisma.$transaction(async (tx) => {
@@ -638,7 +649,9 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
   const assets = await prisma.asset.findMany({
     where: {
       status: { not: "DISPOSED" },
-      rentalRate: { isNot: null },
+      // Billable when it has a rate card, or is a fuel-only vehicle (fuel billed
+      // without a rate card).
+      OR: [{ rentalRate: { isNot: null } }, { billFuelOnly: true }],
       id: { in: idFilter },
     },
     select: { id: true, code: true, brand: true, model: true, regNo: true, category: { select: { name: true } } },

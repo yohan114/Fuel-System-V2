@@ -90,4 +90,25 @@ describe("computeSegmentedTotals — golden scenarios", () => {
     expect(sumChargedLineItems(r.lineItems)).toBe(r.subtotalCents);
     expect(r.breakdownDeductCents).toBeGreaterThan(0);
   });
+
+  it("S5 · fuel-only vehicle across two sites — fuel lines only, no rental", () => {
+    const segs: SegmentInput[] = [
+      { projectId: "p1", projectName: "A", projectCode: "A", days: 10, rawUnits: 40, fuelLitres: 30, fuelCostCents: 1_161_000 },
+      { projectId: "p2", projectName: "B", projectCode: "B", days: 8, rawUnits: 25, fuelLitres: 20, fuelCostCents: 774_000 },
+    ];
+    // rateCents/minimum are irrelevant for a fuel-only vehicle
+    const r = computeSegmentedTotals(segs, cfg({ fuelOnly: true, rateBasis: "d" }));
+    expect(r.rentalSum).toBe(0);
+    expect(r.litresSum).toBe(50);
+    // fuel charged despite the dry basis (E&C supplies the fuel)
+    expect(r.fuelChargedCents).toBe(1_935_000);
+    expect(r.subtotalCents).toBe(1_935_000);
+    expect(r.ssclCents).toBe(48_375); // 2.5%
+    expect(r.vatCents).toBe(357_008); // 18% of 1,983,375
+    expect(r.grandTotalCents).toBe(2_340_383);
+    // no RENTAL lines at all; one FUEL line per site
+    expect(r.lineItems.filter((l) => l.kind === "RENTAL")).toHaveLength(0);
+    expect(r.lineItems.filter((l) => l.kind === "FUEL")).toHaveLength(2);
+    expect(sumChargedLineItems(r.lineItems)).toBe(r.subtotalCents);
+  });
 });

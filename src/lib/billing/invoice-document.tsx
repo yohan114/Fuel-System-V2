@@ -121,9 +121,14 @@ export function InvoiceDocument({ bill }: { bill: any }) {
   const monthLabel = new Date(bill.year, bill.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   const isDraft = bill.status === "DRAFT";
 
+  // A fuel-only bill (private vehicle E&C fuels but does not rent) carries no
+  // RENTAL line — so the rental/usage sections are omitted and only the issued
+  // fuel is shown.
+  const isFuelOnly = Array.isArray(bill.lineItems) && !bill.lineItems.some((li: any) => li.kind === "RENTAL");
+
   // Actual entered meter vs the system-recommended (fuel ÷ typical rate) units.
   const unit = bill.billingMode === "perkm" ? "km" : "hr";
-  const isMetered = bill.billingMode === "hourly" || bill.billingMode === "perkm";
+  const isMetered = (bill.billingMode === "hourly" || bill.billingMode === "perkm") && !isFuelOnly;
   const actualMeter: number = bill.actualMeterUnits ?? (bill.derivedFromFuel ? 0 : bill.actualUnits);
   const recommended: number | null = bill.derivedStandardUnits ?? null;
   const variancePct: number | null =
@@ -166,7 +171,7 @@ export function InvoiceDocument({ bill }: { bill: any }) {
           </View>
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Billing Mode</Text>
-            <Text style={styles.infoVal}>{bill.billingMode.toUpperCase()} · {bill.rateBasis.toUpperCase()}</Text>
+            <Text style={styles.infoVal}>{isFuelOnly ? "FUEL ONLY" : `${bill.billingMode.toUpperCase()} · ${bill.rateBasis.toUpperCase()}`}</Text>
           </View>
         </View>
 
@@ -195,26 +200,37 @@ export function InvoiceDocument({ bill }: { bill: any }) {
 
           <Text style={styles.secHeading}>Usage Summary</Text>
           <View style={styles.usageGrid}>
-            <View style={styles.usageCell}>
-              <Text style={styles.usageCellLabel}>Actual</Text>
-              <Text style={styles.usageCellVal}>{bill.actualUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
-              <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
-            </View>
-            <View style={styles.usageCell}>
-              <Text style={styles.usageCellLabel}>Minimum</Text>
-              <Text style={styles.usageCellVal}>{bill.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
-              <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
-            </View>
-            <View style={[styles.usageCell, { backgroundColor: "#dbeafe" }]}>
-              <Text style={styles.usageCellLabel}>Billable</Text>
-              <Text style={[styles.usageCellVal, { color: NAVY }]}>{bill.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
-              <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
-            </View>
-            <View style={styles.usageCell}>
+            {!isFuelOnly && (
+              <>
+                <View style={styles.usageCell}>
+                  <Text style={styles.usageCellLabel}>Actual</Text>
+                  <Text style={styles.usageCellVal}>{bill.actualUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+                  <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
+                </View>
+                <View style={styles.usageCell}>
+                  <Text style={styles.usageCellLabel}>Minimum</Text>
+                  <Text style={styles.usageCellVal}>{bill.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+                  <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
+                </View>
+                <View style={[styles.usageCell, { backgroundColor: "#dbeafe" }]}>
+                  <Text style={styles.usageCellLabel}>Billable</Text>
+                  <Text style={[styles.usageCellVal, { color: NAVY }]}>{bill.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+                  <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
+                </View>
+              </>
+            )}
+            <View style={[styles.usageCell, isFuelOnly ? { backgroundColor: "#dbeafe" } : {}]}>
               <Text style={styles.usageCellLabel}>Fuel Issued</Text>
-              <Text style={styles.usageCellVal}>{bill.fuelLitres.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+              <Text style={[styles.usageCellVal, isFuelOnly ? { color: NAVY } : {}]}>{bill.fuelLitres.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
               <Text style={styles.usageCellUnit}>litres</Text>
             </View>
+            {isFuelOnly && (
+              <View style={styles.usageCell}>
+                <Text style={styles.usageCellLabel}>Basis</Text>
+                <Text style={[styles.usageCellVal, { fontSize: 9 }]}>Fuel only</Text>
+                <Text style={styles.usageCellUnit}>no rental</Text>
+              </View>
+            )}
             {bill.openingMeter != null && (
               <View style={styles.usageCell}>
                 <Text style={styles.usageCellLabel}>Meter</Text>
