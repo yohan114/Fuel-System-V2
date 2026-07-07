@@ -479,12 +479,17 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
   const workingDaysForBreakdown =
     breakdownDays > 0 && isMeter ? await countWorkingDays(asset.id, period.start, period.end) : 0;
 
+  // Calendar days in the billing month — the base for prorating the guaranteed
+  // minimum by how many days the vehicle was actually posted to a site.
+  const daysInMonth = new Date(period.year, period.month, 0).getDate();
+
   const r = computeSegmentedTotals(segInputs, {
     billingMode,
     rateBasis,
     rateCents,
     pickedRate,
     minimumUnits,
+    daysInMonth,
     fuelConsTyp: rentalRate?.fuelConsTyp ?? null,
     fuelConsEcon: rentalRate?.fuelConsEcon ?? null,
     ssclRate: cfg.ssclRate,
@@ -528,6 +533,9 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     openingMeter,
     closingMeter,
     actualUnits: actualUnitsSum,
+    // Stored minimum is the FULL monthly guarantee (the admin-editable base and
+    // the value a regenerate reads back). The availability-prorated figure that
+    // was actually applied is re-derived for display from the segment days.
     minimumUnits,
     billableUnits: billableSum,
     rentalAmountCents: rentalSum,

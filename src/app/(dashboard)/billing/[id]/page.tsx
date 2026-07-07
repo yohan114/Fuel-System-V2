@@ -8,7 +8,7 @@ import { unitLabel, basisLabel, modeLabel, type BillingMode, type RateBasis } fr
 import { formatVariancePct } from "@/lib/reports/recommended";
 import { getWetRateCents } from "@/lib/billing/rate";
 import { buildBillSnapshot, parseBillSnapshot, summarizeRevisionDiff } from "@/lib/billing/revisions";
-import { computeSiteSplit } from "@/lib/billing/site-split";
+import { computeSiteSplit, effectiveMinimumUnits, assignedDaysFromLines } from "@/lib/billing/site-split";
 import BillActions from "./BillActions";
 import BillingRunningChart from "../components/BillingRunningChart";
 import { createCreditNoteAction, issueCreditNoteAction } from "@/app/actions/finance";
@@ -93,6 +93,14 @@ export default async function BillDetailPage(props: PageProps) {
   // Per-site split for months the vehicle worked several sites — rebuilt from
   // the stored line items so it always matches what was actually billed.
   const siteSplit = computeSiteSplit(bill.lineItems, bill.minimumUnits);
+
+  // Availability proration: a vehicle posted for only part of the month owes a
+  // prorated share of the guaranteed minimum. Re-derive the days-on-site and the
+  // effective (prorated) minimum from the bill's own line items for display.
+  const daysInBillMonth = new Date(bill.year, bill.month, 0).getDate();
+  const daysOnSite = assignedDaysFromLines(bill.lineItems);
+  const effMinimumUnits = effectiveMinimumUnits(bill.lineItems, bill.minimumUnits, daysInBillMonth);
+  const isProrated = daysOnSite > 0 && daysOnSite < daysInBillMonth;
 
   // Revision history: each stored revision is a prior version of this invoice,
   // captured just before a regenerate replaced it. Diff every revision against
@@ -349,7 +357,10 @@ export default async function BillDetailPage(props: PageProps) {
                 value={bill.actualUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })}
               />
             )}
-            <Row label={`Minimum guaranteed ${unit}`} value={bill.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })} />
+            <Row
+              label={isProrated ? `Minimum guaranteed ${unit} (${effMinimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })} of ${bill.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 0 })} — ${daysOnSite} of ${daysInBillMonth} days on site)` : `Minimum guaranteed ${unit}`}
+              value={effMinimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })}
+            />
             <Row label={`Billable ${unit}`} value={bill.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })} strong />
             {bill.openingMeter != null && (
               <Row label="Opening → Closing meter" value={`${bill.openingMeter.toLocaleString()} → ${bill.closingMeter?.toLocaleString() ?? "—"}`} />

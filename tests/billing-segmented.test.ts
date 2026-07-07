@@ -8,7 +8,7 @@ const TAX = { ssclRate: 0.025, vatRate: 0.18 };
 function cfg(over: Partial<SegmentedConfig>): SegmentedConfig {
   return {
     billingMode: "hourly", rateBasis: "w", rateCents: 50000, pickedRate: 50000,
-    minimumUnits: 120, fuelConsTyp: null, fuelConsEcon: null,
+    minimumUnits: 120, daysInMonth: 30, fuelConsTyp: null, fuelConsEcon: null,
     ...TAX, breakdownDays: 0, workingDays: 0, ...over,
   };
 }
@@ -30,25 +30,53 @@ describe("computeSegmentedTotals — golden scenarios", () => {
     expect(sumChargedLineItems(r.lineItems)).toBe(r.subtotalCents); // line items are the truth
   });
 
-  it("S2 · two sites, minimum prorated by days, dry basis excludes fuel", () => {
+  it("S2 · two sites over a partial month, minimum prorated by availability, dry basis excludes fuel", () => {
+    // Vehicle on site only 20 of the month's 30 days (8 at A, then 12 at B).
     const segs: SegmentInput[] = [
       { projectId: "p1", projectName: "A", projectCode: "A", days: 8, rawUnits: 30, fuelLitres: 50, fuelCostCents: 1_000_000 },
       { projectId: "p2", projectName: "B", projectCode: "B", days: 12, rawUnits: 90, fuelLitres: 40, fuelCostCents: 800_000 },
     ];
     const r = computeSegmentedTotals(segs, cfg({ rateBasis: "d" }));
-    // seg1 minShare=120*8/20=48 → billable max(30,48)=48 → 2,400,000
-    // seg2 minShare=120*12/20=72 → billable max(90,72)=90 → 4,500,000
-    expect(r.rentalSum).toBe(6_900_000);
+    // seg1 minShare=120*8/30=32 → billable max(30,32)=32 → 1,600,000
+    // seg2 minShare=120*12/30=48 → billable max(90,48)=90 → 4,500,000
+    expect(r.minimumUnitsProrated).toBe(80); // 32 + 48 (not the full 120)
+    expect(r.rentalSum).toBe(6_100_000);
     expect(r.fuelChargedCents).toBe(0); // dry
     expect(r.litresSum).toBe(90);
-    expect(r.subtotalCents).toBe(6_900_000);
-    expect(r.ssclCents).toBe(172_500);
-    expect(r.vatCents).toBe(1_273_050); // 18% of 7,072,500
-    expect(r.grandTotalCents).toBe(8_345_550);
+    expect(r.subtotalCents).toBe(6_100_000);
+    expect(r.ssclCents).toBe(152_500);
+    expect(r.vatCents).toBe(1_125_450); // 18% of 6,252,500
+    expect(r.grandTotalCents).toBe(7_377_950);
     // dry ⇒ no FUEL lines, one RENTAL per site
     expect(r.lineItems.filter((l) => l.kind === "FUEL")).toHaveLength(0);
     expect(r.lineItems.filter((l) => l.kind === "RENTAL")).toHaveLength(2);
     expect(sumChargedLineItems(r.lineItems)).toBe(r.subtotalCents);
+  });
+
+  it("S2b · single site, arrived mid-month — minimum prorated to days on site", () => {
+    // Arrived on the 11th of a 30-day month ⇒ 20 days available, low usage.
+    const segs: SegmentInput[] = [
+      { projectId: "p1", projectName: "A", projectCode: "A", days: 20, rawUnits: 40, fuelLitres: 0, fuelCostCents: 0 },
+    ];
+    const r = computeSegmentedTotals(segs, cfg({ rateBasis: "d" }));
+    // minShare = 120*20/30 = 80 → billable max(40,80)=80 → 4,000,000
+    expect(r.minimumUnitsProrated).toBe(80);
+    expect(r.billableSum).toBe(80);
+    expect(r.rentalSum).toBe(4_000_000);
+    expect(r.subtotalCents).toBe(4_000_000);
+    // a full-month stay would have billed the whole 120 h (6,000,000) — this is
+    // the accuracy fix: a part-month vehicle owes only its share.
+    expect(r.rentalSum).toBeLessThan(120 * 50000);
+  });
+
+  it("S2c · full month bills exactly the full minimum (no proration loss)", () => {
+    const segs: SegmentInput[] = [
+      { projectId: "p1", projectName: "A", projectCode: "A", days: 30, rawUnits: 10, fuelLitres: 0, fuelCostCents: 0 },
+    ];
+    const r = computeSegmentedTotals(segs, cfg({ rateBasis: "d" }));
+    expect(r.minimumUnitsProrated).toBe(120); // 120 * 30/30
+    expect(r.billableSum).toBe(120);
+    expect(r.rentalSum).toBe(6_000_000);
   });
 
   it("S3 · fuel-derived override when the meter reads far below the fuel", () => {

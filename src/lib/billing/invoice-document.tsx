@@ -1,6 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, renderToBuffer, Svg, Path, Line } from "@react-pdf/renderer";
 import { formatVariancePct } from "../reports/recommended";
+import { effectiveMinimumUnits, assignedDaysFromLines } from "./site-split";
 
 const NAVY = "#1e3a5f";
 const AMBER = "#f59e0b";
@@ -126,6 +127,14 @@ export function InvoiceDocument({ bill }: { bill: any }) {
   // fuel is shown.
   const isFuelOnly = Array.isArray(bill.lineItems) && !bill.lineItems.some((li: any) => li.kind === "RENTAL");
 
+  // Availability-prorated minimum: a part-month vehicle owes only its share of
+  // the monthly guarantee. Re-derive days-on-site and the effective minimum from
+  // the line items so the printed "Minimum" matches what was billed.
+  const daysInBillMonth = new Date(bill.year, bill.month, 0).getDate();
+  const daysOnSite = assignedDaysFromLines(bill.lineItems || []);
+  const effMinimumUnits = effectiveMinimumUnits(bill.lineItems || [], bill.minimumUnits, daysInBillMonth);
+  const isProrated = daysOnSite > 0 && daysOnSite < daysInBillMonth;
+
   // Actual entered meter vs the system-recommended (fuel ÷ typical rate) units.
   const unit = bill.billingMode === "perkm" ? "km" : "hr";
   const isMetered = (bill.billingMode === "hourly" || bill.billingMode === "perkm") && !isFuelOnly;
@@ -208,9 +217,9 @@ export function InvoiceDocument({ bill }: { bill: any }) {
                   <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
                 </View>
                 <View style={styles.usageCell}>
-                  <Text style={styles.usageCellLabel}>Minimum</Text>
-                  <Text style={styles.usageCellVal}>{bill.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
-                  <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
+                  <Text style={styles.usageCellLabel}>Minimum{isProrated ? " (prorated)" : ""}</Text>
+                  <Text style={styles.usageCellVal}>{effMinimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+                  <Text style={styles.usageCellUnit}>{isProrated ? `${daysOnSite}/${daysInBillMonth} days on site` : (bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days")}</Text>
                 </View>
                 <View style={[styles.usageCell, { backgroundColor: "#dbeafe" }]}>
                   <Text style={styles.usageCellLabel}>Billable</Text>

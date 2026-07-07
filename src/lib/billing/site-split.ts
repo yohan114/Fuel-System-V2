@@ -44,6 +44,29 @@ export function parseSegmentDays(description: string): number {
   return m ? parseFloat(m[1]) : 0;
 }
 
+// Total days the vehicle was posted to a site in the billed month, summed from
+// the RENTAL line descriptions ("… · 21 days"). 0 when the bill carries no
+// day-stamped segments (a legacy single-site bill spanning the whole month).
+export function assignedDaysFromLines(lineItems: { kind: string; description: string }[]): number {
+  return lineItems
+    .filter((li) => li.kind === "RENTAL")
+    .reduce((s, li) => s + parseSegmentDays(li.description), 0);
+}
+
+// The guaranteed minimum actually applied to a bill, prorated for how many days
+// of the month the vehicle was on site: fullMinimum × daysOnSite ÷ daysInMonth.
+// A bill with no day-stamped segments (legacy whole-month) or a full-month stay
+// returns the full minimum unchanged.
+export function effectiveMinimumUnits(
+  lineItems: { kind: string; description: string }[],
+  fullMinimum: number,
+  daysInMonth: number,
+): number {
+  const days = assignedDaysFromLines(lineItems);
+  if (days <= 0 || daysInMonth <= 0) return fullMinimum;
+  return fullMinimum * (Math.min(days, daysInMonth) / daysInMonth);
+}
+
 // Returns null unless the bill's charged lines genuinely span 2+ sites.
 export function computeSiteSplit(lineItems: SplitLineItem[], minimumUnits: number): SiteSplit | null {
   const charged = lineItems.filter((li) => li.kind === "RENTAL" || li.kind === "FUEL");

@@ -24,7 +24,8 @@ export interface SegmentedConfig {
   rateBasis: RateBasis;
   rateCents: number;
   pickedRate: number | null; // null = no rate-card tier for this mode/basis
-  minimumUnits: number;
+  minimumUnits: number; // the FULL monthly guarantee (e.g. 120 h); prorated below
+  daysInMonth: number; // calendar days in the billing month — the proration base
   fuelConsTyp: number | null;
   fuelConsEcon: number | null;
   ssclRate: number;
@@ -54,6 +55,7 @@ export interface SegmentedResult {
   rawMeterSum: number;
   derivedStdSum: number;
   derivedEconSum: number;
+  minimumUnitsProrated: number; // Σ per-segment prorated minimum (availability-adjusted)
   billableSum: number;
   rentalSum: number;
   litresSum: number;
@@ -72,7 +74,13 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
   const unit = unitLabel(cfg.billingMode);
   const isMeter = cfg.billingMode === "hourly" || cfg.billingMode === "perkm";
   const chargesFuel = cfg.fuelOnly || cfg.rateBasis === "fw" || cfg.rateBasis === "w";
-  const totalDays = segments.reduce((s, seg) => s + seg.days, 0) || 1;
+  // The guaranteed minimum is prorated by AVAILABILITY: each assigned day is
+  // worth (monthly minimum ÷ calendar days), so a vehicle posted for only part
+  // of the month (e.g. it arrived mid-month) owes only its share, and a vehicle
+  // present the whole month owes exactly the full minimum. This replaces the
+  // old "share of assigned days" split, which billed the full minimum even for
+  // a few days on site.
+  const daysInMonth = cfg.daysInMonth > 0 ? cfg.daysInMonth : 30;
 
   const rentalLines: SegmentedLine[] = [];
   const fuelLines: SegmentedLine[] = [];
@@ -81,6 +89,7 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
   let rawMeterSum = 0;
   let derivedStdSum = 0;
   let derivedEconSum = 0;
+  let minimumUnitsProrated = 0;
   let billableSum = 0;
   let rentalSum = 0;
   let litresSum = 0;
@@ -89,7 +98,7 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
   let fuelConsMidRate: number | null = null;
 
   for (const seg of segments) {
-    const minShare = cfg.minimumUnits * (seg.days / totalDays);
+    const minShare = cfg.minimumUnits * (seg.days / daysInMonth);
 
     const rawSeg = seg.rawUnits;
     let actualSeg = seg.rawUnits;
@@ -115,7 +124,7 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
     }
 
     if (cfg.billingMode === "hourly") {
-      const maxSegHours = 720 * (seg.days / totalDays);
+      const maxSegHours = 24 * seg.days; // physical ceiling: 24 h per assigned day
       if (actualSeg > maxSegHours) actualSeg = maxSegHours;
     }
     if (cfg.billingMode === "perkm") {
@@ -131,6 +140,7 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
     actualUnitsSum += actualSeg;
     derivedStdSum += dStd ?? 0;
     derivedEconSum += dEcon ?? 0;
+    minimumUnitsProrated += minShare;
     billableSum += billableSeg;
     rentalSum += rentalSeg;
     litresSum += seg.fuelLitres;
@@ -204,6 +214,7 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
     rawMeterSum,
     derivedStdSum,
     derivedEconSum,
+    minimumUnitsProrated,
     billableSum,
     rentalSum,
     litresSum,
