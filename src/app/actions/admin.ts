@@ -18,7 +18,7 @@ export async function updateSettingsAction(formData: FormData) {
   }
 
   const scraperEnabled = formData.get("scraperEnabled") === "true" ? "true" : "false";
-  const scraperCron = formData.get("scraperCron")?.toString() || "0 0 1 * *";
+  const scraperCron = formData.get("scraperCron")?.toString() || "0 6 * * *";
   const backupCron = formData.get("backupCron")?.toString() || "30 2 * * *";
   const backupRetentionDays = formData.get("backupRetentionDays")?.toString() || "7";
 
