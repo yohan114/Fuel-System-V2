@@ -104,6 +104,18 @@ model Asset {
   status        String         @default("ACTIVE") // "ACTIVE" | "INACTIVE" | "DISPOSED"
   meterType     String         // "KM" | "HOURS"
   dailyCapLitres Int?          // optional per-vehicle daily fuel cap (litres); blocks over-cap issues
+
+  // Hire ("rented-in") tracking. A HIRED machine is owned by a third party and
+  // rented in by E&C — the hire fields record what E&C pays the owner, kept
+  // separate from the RentalRate E&C charges sites for the same machine.
+  ownership     String         @default("OWNED") // "OWNED" | "HIRED"
+  hireSupplier  String?        // owner / supplier the machine is hired from
+  hireRateCents Int?           // hire charge E&C pays, in LKR cents
+  hireRateBasis String?        // "hour" | "day" | "month"
+  hireStart     DateTime?      // hire commencement date
+  hireEnd       DateTime?      // hire end date; null = ongoing
+  hireNote      String?
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 

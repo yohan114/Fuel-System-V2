@@ -27,6 +27,7 @@ import {
   Building2,
   AlertTriangle,
   ClipboardList,
+  Handshake,
   Filter as FilterIcon
 } from "lucide-react";
 
@@ -65,6 +66,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Allocator Console", href: "/allocator", icon: Car },
       { label: "Workshop Console", href: "/workshop", icon: Database },
       { label: "Fleet Directory", href: "/fleet", icon: Car },
+      { label: "Hire Fleet", href: "/hire", icon: Handshake },
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
