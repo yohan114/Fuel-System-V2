@@ -52,6 +52,7 @@ export default async function HirePage() {
     end: a.hireEnd ? a.hireEnd.toISOString().slice(0, 10) : null,
     note: a.hireNote,
     site: a.project?.name ?? null,
+    minBillHours: a.minBillHours,
   }));
 
   const categoryOpts = categories.map((c) => ({ id: c.id, code: c.code, name: c.name, defaultMeterType: c.defaultMeterType }));

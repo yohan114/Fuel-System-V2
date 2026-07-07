@@ -162,7 +162,10 @@ export async function generateBillForAsset(
   // and overrides everything; otherwise precedence is explicit draft choice →
   // vehicle default → Wet. A dry-hired machine bills dry (dry rate, no fuel).
   const rateBasis: RateBasis = opts.basis ?? resolveRateBasis(existing?.rateBasis, asset.rentalRate.defaultBasis);
-  const minimumUnits = existing ? existing.minimumUnits : minimumForMode(cfg, billingMode);
+  // A per-asset minimum working-hours floor (set on hired machines) overrides
+  // the global billing.minHours for that machine's hourly bills.
+  const assetMinHours = billingMode === "hourly" && asset.minBillHours != null && asset.minBillHours > 0 ? asset.minBillHours : null;
+  const minimumUnits = existing ? existing.minimumUnits : (assetMinHours ?? minimumForMode(cfg, billingMode));
 
   const pickedRate = pickRateCents(asset.rentalRate, billingMode, rateBasis);
   const rateCents = pickedRate ?? 0;

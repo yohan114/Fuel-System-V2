@@ -15,6 +15,7 @@ interface HiredRow {
   id: string; code: string; categoryCode: string; categoryName: string; meterType: string;
   supplier: string | null; rateCents: number | null; basis: string | null;
   start: string | null; end: string | null; note: string | null; site: string | null;
+  minBillHours: number | null;
 }
 interface Props { hired: HiredRow[]; categories: CategoryOpt[]; ownedAssets: OwnedOpt[]; }
 
@@ -194,6 +195,10 @@ export default function HireManager({ hired, categories, ownedAssets }: Props) {
             <input name="hireEnd" type="date" className={inputCls} />
           </div>
           <div>
+            <label className={labelCls}>Min working hrs / month</label>
+            <input name="minBillHours" type="number" step="1" min="0" placeholder="e.g. 120" className={`${inputCls} tabular-nums`} />
+          </div>
+          <div>
             <label className={labelCls}>Note</label>
             <input name="hireNote" placeholder="Agreement ref, terms…" className={inputCls} />
           </div>
@@ -236,6 +241,7 @@ export default function HireManager({ hired, categories, ownedAssets }: Props) {
                   <th className="px-5 py-3">Type</th>
                   <th className="px-5 py-3">Hired from</th>
                   <th className="px-5 py-3">Hire rate</th>
+                  <th className="px-5 py-3">Min hrs/mo</th>
                   <th className="px-5 py-3">Period</th>
                   <th className="px-5 py-3">Site</th>
                   <th className="px-5 py-3 text-right">Actions</th>
@@ -254,6 +260,9 @@ export default function HireManager({ hired, categories, ownedAssets }: Props) {
                     </td>
                     <td className="px-5 py-3.5 text-gray-300">{r.supplier || <span className="text-gray-600">—</span>}</td>
                     <td className="px-5 py-3.5 text-white">{rate(r.rateCents, r.basis)}</td>
+                    <td className="px-5 py-3.5 text-gray-300 tabular-nums">
+                      {r.minBillHours != null ? `${r.minBillHours} h` : <span className="text-gray-600">120 h*</span>}
+                    </td>
                     <td className="px-5 py-3.5 text-gray-400 tabular-nums">
                       {r.start || "—"}{r.end ? ` → ${r.end}` : r.start ? " → ongoing" : ""}
                     </td>
@@ -324,6 +333,10 @@ export default function HireManager({ hired, categories, ownedAssets }: Props) {
                 <div>
                   <label className={labelCls}>Hire end</label>
                   <input name="hireEnd" type="date" defaultValue={editing.end ?? ""} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Min working hrs / month</label>
+                  <input name="minBillHours" type="number" step="1" min="0" defaultValue={editing.minBillHours ?? ""} placeholder="e.g. 120" className={`${inputCls} tabular-nums`} />
                 </div>
               </div>
               <div>

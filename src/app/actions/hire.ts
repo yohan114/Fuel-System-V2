@@ -33,6 +33,7 @@ function readHireFields(formData: FormData): { error: string } | {
   hireStart: Date | null;
   hireEnd: Date | null;
   hireNote: string | null;
+  minBillHours: number | null;
 } {
   const hireSupplier = formData.get("hireSupplier")?.toString().trim() || null;
   const hireRateCents = rsToCents(formData.get("hireRate")?.toString());
@@ -42,11 +43,19 @@ function readHireFields(formData: FormData): { error: string } | {
   const hireEnd = parseDate(formData.get("hireEnd")?.toString());
   const hireNote = formData.get("hireNote")?.toString().trim() || null;
 
+  const minRaw = formData.get("minBillHours")?.toString().trim();
+  let minBillHours: number | null = null;
+  if (minRaw) {
+    const n = parseInt(minRaw, 10);
+    if (Number.isNaN(n) || n < 0) return { error: "Minimum working hours must be zero or a positive whole number" };
+    minBillHours = n > 0 ? n : null;
+  }
+
   if (Number.isNaN(hireRateCents)) return { error: "Hire rate must be zero or a positive number" };
   if (basisRaw && !BASES.has(basisRaw)) return { error: "Hire basis must be hour, day or month" };
   if (hireStart && hireEnd && hireEnd < hireStart) return { error: "Hire end date cannot be before the start date" };
 
-  return { hireSupplier, hireRateCents, hireRateBasis, hireStart, hireEnd, hireNote };
+  return { hireSupplier, hireRateCents, hireRateBasis, hireStart, hireEnd, hireNote, minBillHours };
 }
 
 // Create a brand-new machine already flagged as hired.

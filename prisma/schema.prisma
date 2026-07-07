@@ -116,6 +116,11 @@ model Asset {
   hireEnd       DateTime?      // hire end date; null = ongoing
   hireNote      String?
 
+  // Minimum guaranteed billable hours per month for this machine (hire
+  // agreements often guarantee a floor). When set it overrides the global
+  // billing.minHours for this asset's hourly bills. Null = use the global.
+  minBillHours  Int?
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
