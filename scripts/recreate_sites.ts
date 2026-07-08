@@ -38,6 +38,7 @@ const SITES: [string, string, number][] = [
   ["MDE", "Mundalam Estate", 15000],
   ["MLB", "Mallawagedara Bridge", 15000],
   ["MUTHUR", "MUTHUR PLANT", 5000],
+  ["PNB", "Pallanoya Bridge", 15000],
   ["RWP", "Ruwanwella Water Project", 15000],
   ["TLIN", "Mr Thilina", 15000],
   ["WCP", "Wadakada CEP-3", 15000],

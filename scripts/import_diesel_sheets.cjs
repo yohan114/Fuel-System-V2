@@ -35,6 +35,9 @@ const db = new Database(path.join(process.cwd(), "data", "app.db"));
 const SOURCES = [
   { file: "data/source-sheets/Ambanpola_Diesel_Details.xlsx",    siteName: "Ambanpola" },
   { file: "data/source-sheets/Inginimitiya_Diesel_Details.xlsx", siteName: "Inginimitiya" },
+  { file: "data/source-sheets/Muthur_Plant_Diesel_Details.xlsx", siteName: "MUTHUR PLANT" },
+  { file: "data/source-sheets/Karativu_Diesel_Details.xlsx",     siteName: "Karativu Bridge" },
+  { file: "data/source-sheets/Pallanoya_Diesel_Details.xlsx",    siteName: "Pallanoya Bridge" },
 ];
 
 // ---------- xlsx helpers ----------
@@ -42,7 +45,13 @@ const cellV = (c) => { let v = c.value; if (v && typeof v === "object" && v.resu
 const str = (v) => (v === null || v === undefined) ? "" : String(v).trim();
 const num = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(String(v).replace(/[, ]/g, "")); return Number.isFinite(n) ? n : null; };
 const MONTHS = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12 };
-const parseSheetName = (name) => { const m = name.toLowerCase().match(/([a-z]+)\s*(\d{4})/); if (!m || !MONTHS[m[1]]) return null; return { month: MONTHS[m[1]], year: +m[2] }; };
+// tolerant "Month YYYY" finder: handles "January 2026", "March-2026", "June- 2026"
+function parseMonthText(text) {
+  const m = String(text || "").toLowerCase().match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-\s.]*(\d{4})/);
+  if (!m) return null;
+  const key = Object.keys(MONTHS).find((k) => k.startsWith(m[1]));
+  return key ? { month: MONTHS[key], year: +m[2] } : null;
+}
 const iso = (y, mo, d, endOfDay = false) => new Date(`${y}-${String(mo).padStart(2,"0")}-${String(d).padStart(2,"0")}T${endOfDay?"23:59:59.999":"00:00:00.000"}+05:30`).toISOString();
 const lastDayOfMonth = (y, mo) => new Date(y, mo, 0).getDate();
 
@@ -54,7 +63,10 @@ function parseWorkbook(absPath, siteName) {
   return wb.xlsx.readFile(absPath).then(() => {
     const months = [];
     wb.eachSheet((ws) => {
-      const ym = parseSheetName(ws.name);
+      // month from the sheet name, else from the header band (MUTHUR's single
+      // "Fuel Report" sheet carries "June- 2026" in row 2)
+      let ym = parseMonthText(ws.name);
+      for (let r = 1; r <= 3 && !ym; r++) for (let c = 1; c <= ws.columnCount && !ym; c++) ym = parseMonthText(cellV(ws.getRow(r).getCell(c)));
       if (!ym) return;
       // header row (col1 == "S. No.") and day-number row (col6 numeric 1..3)
       let hdr = null;
@@ -122,15 +134,17 @@ const USABLE_CODE = /^[A-Za-z]{1,6}[-/ ]?\d+[A-Za-z0-9-]*$/; // LB11, MB-11, SL/
 const isUsableCode = (c) => c && USABLE_CODE.test(c.trim()) && !/hired/i.test(c);
 
 function matchAsset(code, reg) {
-  const codeUsable = isUsableCode(code);
-  if (codeUsable) {
+  // only trust reg for matching when it looks like a plate/code (has a digit) —
+  // stops descriptive words ("Generator", "Crane") hitting junk placeholder assets
+  const regReal = reg && /\d/.test(reg);
+  if (isUsableCode(code)) {
     const byC = byCodeAl.get(alnum(code)); if (byC) return { asset: byC, via: "code" };
     // reg-as-code only (safe: exact identity on the code column)
-    if (reg) { const byR = byCodeAl.get(alnum(reg)); if (byR) return { asset: byR, via: "reg-as-code" }; }
+    if (regReal) { const byR = byCodeAl.get(alnum(reg)); if (byR) return { asset: byR, via: "reg-as-code" }; }
     return null; // create under the given code
   }
   // no usable code -> lean on the plate
-  if (reg) {
+  if (regReal) {
     const byR = byCodeAl.get(alnum(reg)); if (byR) return { asset: byR, via: "reg-as-code" };
     const byRn = byRegAl.get(alnum(reg)); if (byRn) return { asset: byRn, via: "regNo" };
   }
@@ -141,7 +155,7 @@ function matchAsset(code, reg) {
 const cats = new Map(db.prepare("SELECT name,id FROM Category").all().map((c) => [c.name, c.id]));
 const catId = (n) => cats.get(n) || cats.get("Other Asset");
 const isPlate = (reg) => /^[A-Za-z]{0,4}[-\s]?\d{2,4}[-\s]?\d{0,4}$/.test((reg || "").trim());
-const SITE_ABBR = { Ambanpola: "AMB", Inginimitiya: "INGI" };
+const SITE_ABBR = { Ambanpola: "AMB", Inginimitiya: "INGI", "MUTHUR PLANT": "MUT", "Karativu Bridge": "KB", "Pallanoya Bridge": "PN" };
 const CAT_PREFIX = { "Generator":"GEN", "PE - Concrete Mixer":"MIX", "PE - Poker / Concrete Vibrator":"PKR", "PE - Power Tool — Other":"PT", "Workshop Plant / Equipment":"WSP", "Vibrating Roller":"RLR", "Static Roller":"RLR", "PE - Engine Water Pump":"PMP" };
 function classify(type, code, reg) {
   const t = `${type} ${code} ${reg}`.toLowerCase();
