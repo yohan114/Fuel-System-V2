@@ -40,6 +40,9 @@ export interface MonthSegment {
   end: Date;
   /** Whole calendar days in the (clipped) window, inclusive of both ends. */
   days: number;
+  /** Per-allocation hire type ("DRY" | "WET") and driver, if set. */
+  billingType: string | null;
+  driverName: string | null;
 }
 
 // The assignment that covers `date` for an asset (start ≤ date ≤ end, or open
@@ -157,6 +160,8 @@ export async function getMonthSegments(
       start,
       end,
       days: aEndNum - aStartNum + 1,
+      billingType: a.billingType,
+      driverName: a.driverName,
     });
   }
   return segments;

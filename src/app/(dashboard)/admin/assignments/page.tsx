@@ -35,6 +35,8 @@ export default async function AssignmentsPage() {
     startDate: a.startDate.toISOString(),
     endDate: a.endDate ? a.endDate.toISOString() : null,
     note: a.note,
+    driverName: a.driverName,
+    billingType: a.billingType,
     asset: { code: a.asset.code, brand: a.asset.brand, typeLabel: a.asset.typeLabel },
     project: { id: a.project.id, code: a.project.code, name: a.project.name },
   }));

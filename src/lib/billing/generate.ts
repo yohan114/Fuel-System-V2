@@ -9,7 +9,7 @@ import {
   computeWindowDelta,
   sumFuelForWindow,
 } from "./usage";
-import { pickRateCents, defaultModeForAsset, resolveRateBasis } from "./rate";
+import { pickRateCents, defaultModeForAsset, resolveRateBasis, basisFromBillingType } from "./rate";
 import { computeTotals, unitLabel, basisLabel, type BillingMode, type RateBasis } from "./calc";
 import { computeSegmentedTotals, type SegmentInput } from "./segmented";
 import { buildBillSnapshot } from "./revisions";
@@ -163,10 +163,22 @@ export async function generateBillForAsset(
   // legacy single-site billing paths.
   const billingMode: BillingMode = (existing?.billingMode as BillingMode) ||
     defaultModeForAsset(asset.meterType, asset.rentalRate?.equipType ?? "");
-  // Basis: a forced run-level choice (whole-month "generate as Dry/Wet") wins
-  // and overrides everything; otherwise precedence is explicit draft choice →
-  // vehicle default → Wet. A dry-hired machine bills dry (dry rate, no fuel).
-  const rateBasis: RateBasis = opts.basis ?? resolveRateBasis(existing?.rateBasis, asset.rentalRate?.defaultBasis);
+
+  // PER-SITE PATH: when the vehicle has saved assignments overlapping this month,
+  // split the month into one segment per site and bill each site for its slice.
+  // Fetched up front because an allocation can also carry a per-allocation
+  // Dry/Wet hire type and a driver, which drive the bill basis below.
+  const segments = await getMonthSegments(asset.id, period.start, period.end);
+  // The allocation covering the most days in the month sets the hire type and
+  // driver (a manually-allocated site is billed exactly as it was allocated).
+  const dominant = [...segments].sort((a, b) => b.days - a.days)[0] ?? null;
+  const allocBasis: RateBasis | undefined = basisFromBillingType(dominant?.billingType);
+  const driverName = dominant?.driverName ?? null;
+
+  // Basis: a forced run-level choice (whole-month "generate as Dry/Wet") wins;
+  // otherwise the allocation's Dry/Wet type → explicit draft choice → vehicle
+  // default → Wet. Dry bills the dry rate with no fuel; Wet adds the fuel cost.
+  const rateBasis: RateBasis = opts.basis ?? allocBasis ?? resolveRateBasis(existing?.rateBasis, asset.rentalRate?.defaultBasis);
   // A per-asset minimum working-hours floor (set on hired machines) overrides
   // the global billing.minHours for that machine's hourly bills.
   const assetMinHours = billingMode === "hourly" && asset.minBillHours != null && asset.minBillHours > 0 ? asset.minBillHours : null;
@@ -180,12 +192,6 @@ export async function generateBillForAsset(
     where: { assetId: asset.id, status: "BREAKDOWN", logDate: { gte: period.start, lte: period.end } },
   });
 
-  // PER-SITE PATH: when the vehicle has saved assignments overlapping this month,
-  // split the month into one segment per site and bill each site for its slice
-  // (minimum prorated by days, fuel attributed by issue date). Vehicles with no
-  // assignment fall through to the legacy single-site path, so previously
-  // generated bills are reproduced unchanged.
-  const segments = await getMonthSegments(asset.id, period.start, period.end);
   if (segments.length > 0) {
     return persistSegmentedBill({
       asset,
@@ -195,6 +201,7 @@ export async function generateBillForAsset(
       cfg,
       billingMode,
       rateBasis,
+      driverName,
       minimumUnits,
       rateCents,
       pickedRate,
@@ -373,6 +380,7 @@ export async function generateBillForAsset(
     projectCode,
     billingMode,
     rateBasis,
+    driverName,
     rateCents,
     openingMeter,
     closingMeter,
@@ -440,6 +448,7 @@ interface SegmentedArgs {
   cfg: BillingConfig;
   billingMode: BillingMode;
   rateBasis: RateBasis;
+  driverName: string | null;
   minimumUnits: number;
   rateCents: number;
   pickedRate: number | null;
@@ -457,7 +466,7 @@ interface SegmentedArgs {
 async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: GenerateStatus; billId?: string }> {
   const {
     asset, rentalRate, period, existing, cfg,
-    billingMode, rateBasis, minimumUnits, rateCents, pickedRate, breakdownDays, segments, fuelOnly, actorId,
+    billingMode, rateBasis, driverName, minimumUnits, rateCents, pickedRate, breakdownDays, segments, fuelOnly, actorId,
   } = args;
 
   const isMeter = billingMode === "hourly" || billingMode === "perkm";
@@ -545,6 +554,7 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     projectCode: dominant.projectCode,
     billingMode,
     rateBasis,
+    driverName,
     rateCents,
     openingMeter,
     closingMeter,

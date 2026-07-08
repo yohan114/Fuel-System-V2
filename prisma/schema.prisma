@@ -170,6 +170,14 @@ model AssetAssignment {
   endDate     DateTime? // inclusive last day; null = ongoing
   note        String?
 
+  // Driver/operator assigned to the vehicle for this posting (shown on the bill).
+  driverName  String?
+  // Hire type for this allocation: "DRY" | "WET". DRY bills the vehicle + driver
+  // for the period with NO fuel cost; WET adds the fuel cost. Null = fall back to
+  // the vehicle's rate-card basis. Lets a site that isn't using the system be
+  // allocated and billed correctly by hand.
+  billingType String?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -536,6 +544,7 @@ model Bill {
   assetCode     String
   assetRegNo    String?
   assetLabel    String?
+  driverName    String?  // driver/operator on the winning allocation (snapshot)
   projectId     String?
   projectName   String?
   projectCode   String?

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveRateBasis, pickRateCents } from "../src/lib/billing/rate";
+import { resolveRateBasis, pickRateCents, basisFromBillingType } from "../src/lib/billing/rate";
 import { computeTotals } from "../src/lib/billing/calc";
 
 describe("resolveRateBasis (dry/wet precedence)", () => {
@@ -16,6 +16,29 @@ describe("resolveRateBasis (dry/wet precedence)", () => {
     expect(resolveRateBasis(null, null)).toBe("w");
     expect(resolveRateBasis("", "")).toBe("w");
     expect(resolveRateBasis("bogus", "nope")).toBe("w");
+  });
+});
+
+describe("basisFromBillingType (Dry/Wet allocation → rate basis)", () => {
+  it("maps a WET allocation to the wet basis and DRY to the dry basis", () => {
+    expect(basisFromBillingType("WET")).toBe("w");
+    expect(basisFromBillingType("DRY")).toBe("d");
+  });
+  it("returns undefined when the allocation has no explicit type (fall back to the rate card)", () => {
+    expect(basisFromBillingType(null)).toBeUndefined();
+    expect(basisFromBillingType(undefined)).toBeUndefined();
+    expect(basisFromBillingType("")).toBeUndefined();
+    expect(basisFromBillingType("something")).toBeUndefined();
+  });
+  it("mirrors the generate.ts precedence — allocation type overrides the vehicle default", () => {
+    // opts.basis ?? basisFromBillingType(alloc) ?? resolveRateBasis(existing, default)
+    const forced = undefined; // no whole-run override
+    const wetAlloc = forced ?? basisFromBillingType("WET") ?? resolveRateBasis(null, "d");
+    const dryAlloc = forced ?? basisFromBillingType("DRY") ?? resolveRateBasis(null, "w");
+    const noAlloc = forced ?? basisFromBillingType(null) ?? resolveRateBasis(null, "d");
+    expect(wetAlloc).toBe("w"); // Wet allocation wins over a dry-default vehicle
+    expect(dryAlloc).toBe("d"); // Dry allocation wins over a wet-default vehicle
+    expect(noAlloc).toBe("d"); // untyped allocation → vehicle default (dry here)
   });
 });
 

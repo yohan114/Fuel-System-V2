@@ -253,11 +253,16 @@ export default async function BillDetailPage(props: PageProps) {
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Vehicle</p>
             <p className="text-sm font-bold text-white mt-1">{bill.assetCode}</p>
             <p className="text-xs text-gray-500">{bill.assetLabel}</p>
+            {bill.driverName && <p className="text-xs text-gray-500 mt-0.5">Driver: <span className="text-gray-300">{bill.driverName}</span></p>}
           </div>
           <div>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Billing</p>
             <p className="text-sm font-bold text-white mt-1">{isFuelOnly ? "Fuel only" : modeLabel(bill.billingMode as BillingMode)}</p>
-            <p className="text-xs text-gray-500">{isFuelOnly ? "No rental" : basisLabel(bill.rateBasis as RateBasis)}</p>
+            <p className="text-xs text-gray-500">
+              {isFuelOnly
+                ? "No rental"
+                : `${basisLabel(bill.rateBasis as RateBasis)} · fuel ${bill.rateBasis === "w" || bill.rateBasis === "fw" ? "included" : "excluded"}`}
+            </p>
           </div>
           <div>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Grand Total</p>

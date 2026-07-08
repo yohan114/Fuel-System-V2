@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
     const wb = XLSX.utils.book_new();
 
     const header = [
-      "E&C No", "Vehicle", "Reg No", "Mode", "Basis",
+      "E&C No", "Vehicle", "Reg No", "Driver", "Mode", "Basis",
       "Fuel (L)", "Actual Meter", "Billable Units",
       "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)",
       "SSCL (LKR)", "VAT (LKR)", "Grand Total (LKR)", "Status", "Invoice No",
@@ -87,6 +87,10 @@ export async function GET(request: NextRequest) {
     ];
     const round1 = (n: number) => Math.round(n * 10) / 10;
     const basisLabel = (b: string) => (b === "d" ? "Dry" : b === "fw" ? "Fully Wet" : "Wet");
+    // Basis label that also states whether fuel is billed — Dry excludes fuel,
+    // Wet/Fully-Wet include it.
+    const basisWithFuel = (b: string) =>
+      b === "d" ? "Dry (no fuel)" : b === "fw" ? "Fully Wet (+fuel)" : "Wet (+fuel)";
     const isDry = (b: string) => b === "d";
     const tot = sumBills(bills);
 
@@ -102,8 +106,8 @@ export async function GET(request: NextRequest) {
       for (const b of g.bills) {
         const fuelOnly = b.rentalAmountCents === 0 && b.fuelCostCents > 0;
         sheet1.push([
-          b.assetCode, b.assetLabel || "", b.assetRegNo || "",
-          fuelOnly ? "Fuel only" : b.billingMode, fuelOnly ? "" : basisLabel(b.rateBasis),
+          b.assetCode, b.assetLabel || "", b.assetRegNo || "", b.driverName || "",
+          fuelOnly ? "Fuel only" : b.billingMode, fuelOnly ? "Fuel only" : basisWithFuel(b.rateBasis),
           round1(b.fuelLitres || 0),
           fuelOnly ? "" : (b.actualMeterUnits != null ? round1(b.actualMeterUnits) : ""),
           fuelOnly ? "" : round1(b.billableUnits),
@@ -113,14 +117,14 @@ export async function GET(request: NextRequest) {
         ]);
       }
       sheet1.push([
-        "SITE TOTAL", "", "", "", "",
+        "SITE TOTAL", "", "", "", "", "",
         round1(st.litres), "", "",
         lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "", "",
       ]);
       sheet1.push([]);
     }
     sheet1.push([
-      "GRAND TOTAL (ALL SITES)", "", "", "", "",
+      "GRAND TOTAL (ALL SITES)", "", "", "", "", "",
       round1(tot.litres), "", "",
       lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "", "",
     ]);

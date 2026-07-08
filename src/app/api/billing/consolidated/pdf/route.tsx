@@ -313,7 +313,10 @@ function ConsolidatedDocument({ bills, periodKey, generatedAt, statements, stmtT
                           <View style={[styles.statusDot, { backgroundColor: STATUS_COLORS[b.status] || MUTE }]} />
                           <Text style={styles.tCellCode}>{b.assetCode}</Text>
                         </View>
-                        <Text style={[styles.tCell, styles.cLabel]}>{b.assetLabel || "—"}</Text>
+                        <View style={styles.cLabel}>
+                          <Text style={styles.tCell}>{b.assetLabel || "—"}</Text>
+                          {b.driverName ? <Text style={styles.tCellMute}>Driver: {b.driverName}</Text> : null}
+                        </View>
                         <Text style={[styles.tCell, styles.cMode]}>{fo ? "Fuel only" : `${modeShort(b.billingMode)} · ${basis}`}</Text>
                         <Text style={[styles.tCellNum, styles.cFuelL]}>{b.fuelLitres > 0 ? num(b.fuelLitres, 0) : "—"}</Text>
                         <Text style={[fo ? styles.tCellMute : styles.tCellNum, styles.cActual]}>

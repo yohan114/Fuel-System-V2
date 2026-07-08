@@ -37,6 +37,8 @@ interface Assignment {
   startDate: string;
   endDate: string | null;
   note: string | null;
+  driverName: string | null;
+  billingType: string | null;
   asset: { code: string; brand: string | null; typeLabel: string | null };
   project: { id: string; code: string; name: string };
 }
@@ -66,9 +68,16 @@ export default function AssignmentsConsole({
   const [assetSearch, setAssetSearch] = useState("");
   const [assetId, setAssetId] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [newSiteName, setNewSiteName] = useState("");
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState("");
   const [note, setNote] = useState("");
+  const [driverName, setDriverName] = useState("");
+  const [billingType, setBillingType] = useState<"" | "DRY" | "WET">("");
+
+  // "__new__" in the site dropdown lets the allocator post to a site that is not
+  // in the system (typed by name below) — it is created on save and billed by hand.
+  const isNewSite = projectId === "__new__";
 
   const filteredAssets = useMemo(() => {
     const q = assetSearch.trim().toLowerCase();
@@ -99,16 +108,20 @@ export default function AssignmentsConsole({
   }
 
   function submit() {
-    if (!assetId || !projectId || !startDate) {
+    const siteChosen = isNewSite ? newSiteName.trim() !== "" : projectId !== "";
+    if (!assetId || !siteChosen || !startDate) {
       flash("error", "Pick a vehicle, a site and a start date.");
       return;
     }
     const fd = new FormData();
     fd.set("assetId", assetId);
-    fd.set("projectId", projectId);
+    if (isNewSite) fd.set("siteName", newSiteName.trim());
+    else fd.set("projectId", projectId);
     fd.set("startDate", startDate);
     if (endDate) fd.set("endDate", endDate);
     if (note) fd.set("note", note);
+    if (driverName.trim()) fd.set("driverName", driverName.trim());
+    if (billingType) fd.set("billingType", billingType);
 
     startTransition(async () => {
       const res = await createAssignmentAction(fd);
@@ -118,8 +131,12 @@ export default function AssignmentsConsole({
         flash("success", "Vehicle assigned.");
         setAssetId("");
         setAssetSearch("");
+        setProjectId("");
+        setNewSiteName("");
         setEndDate("");
         setNote("");
+        setDriverName("");
+        setBillingType("");
         router.refresh();
       }
     });
@@ -209,10 +226,21 @@ export default function AssignmentsConsole({
                   {p.name} ({p.code})
                 </option>
               ))}
+              <option value="__new__">➕ Other site (not in the system)…</option>
             </select>
+            {isNewSite && (
+              <input
+                className={inputCls + " mt-2"}
+                placeholder="Type the site name (e.g. client hire site)…"
+                value={newSiteName}
+                onChange={(e) => setNewSiteName(e.target.value)}
+              />
+            )}
             <p className="text-[10px] text-gray-600 mt-2 leading-relaxed">
               Leave the end date empty for an ongoing posting. Re-assigning the same vehicle later
-              automatically closes the previous posting the day before the new start.
+              automatically closes the previous posting the day before the new start. Pick
+              <span className="text-gray-400"> Other site</span> to allocate to a site that is not in the
+              system — it is created and billed by hand.
             </p>
           </div>
 
@@ -233,6 +261,32 @@ export default function AssignmentsConsole({
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
             />
+          </div>
+
+          <div>
+            <label className="text-[10px] text-gray-500 font-semibold uppercase">Driver / operator (optional)</label>
+            <input
+              className={inputCls + " mt-1"}
+              placeholder="Driver name for this posting…"
+              value={driverName}
+              onChange={(e) => setDriverName(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500 font-semibold uppercase">Billing type</label>
+            <select
+              className={inputCls + " mt-1"}
+              value={billingType}
+              onChange={(e) => setBillingType(e.target.value as "" | "DRY" | "WET")}
+            >
+              <option value="">Vehicle default (rate card)</option>
+              <option value="WET">Wet — hire + driver + fuel</option>
+              <option value="DRY">Dry — hire + driver, no fuel</option>
+            </select>
+            <p className="text-[10px] text-gray-600 mt-2 leading-relaxed">
+              <span className="text-gray-400">Wet</span> adds the month's fuel cost to the bill;{" "}
+              <span className="text-gray-400">Dry</span> bills hire + driver only, with fuel excluded.
+            </p>
           </div>
 
           <div className="md:col-span-2">
@@ -284,7 +338,20 @@ export default function AssignmentsConsole({
                           <span className="flex items-center gap-2 font-bold text-white">
                             <Car className="w-3.5 h-3.5 text-gray-500" />
                             {r.asset.code}
+                            {r.billingType === "DRY" && (
+                              <span className="text-[9px] font-bold uppercase tracking-wide text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
+                                Dry
+                              </span>
+                            )}
+                            {r.billingType === "WET" && (
+                              <span className="text-[9px] font-bold uppercase tracking-wide text-sky-300 bg-sky-500/10 border border-sky-500/20 rounded px-1.5 py-0.5">
+                                Wet
+                              </span>
+                            )}
                           </span>
+                          {r.driverName && (
+                            <span className="text-[10px] text-gray-400 block mt-0.5 ml-5">Driver: {r.driverName}</span>
+                          )}
                           {r.note && <span className="text-[10px] text-gray-500 block mt-0.5 ml-5">{r.note}</span>}
                         </td>
                         <td className="px-5 py-3 text-gray-300 whitespace-nowrap">

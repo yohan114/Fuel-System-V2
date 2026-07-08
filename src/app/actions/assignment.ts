@@ -20,6 +20,65 @@ function fmt(d: Date): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// Normalises a Dry/Wet hire type from the form to the stored "DRY" | "WET"
+// value, or null when unset (bill then falls back to the vehicle's rate card).
+function parseBillingType(value: FormDataEntryValue | null): string | null {
+  const s = value?.toString().trim().toUpperCase();
+  if (s === "DRY" || s === "WET") return s;
+  return null;
+}
+
+// Builds a short, unique, uppercase project code from a free-text site name so a
+// non-system site typed by the allocator gets a stable identifier the billing /
+// segment / reporting code can group on exactly like a built-in site.
+async function uniqueProjectCode(name: string): Promise<string> {
+  const base =
+    name
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 16) || "SITE";
+  let code = base;
+  for (let i = 2; await prisma.project.findUnique({ where: { code } }); i++) {
+    code = `${base}-${i}`;
+  }
+  return code;
+}
+
+// Resolves the target site for an allocation. Either an existing site id is
+// given (system site) OR a free-text name is typed for a site that is not in the
+// system — in which case the matching project is reused if the name already
+// exists, else a new one is created on the fly so it can be billed by hand.
+async function resolveTargetProject(
+  projectId: string | undefined,
+  siteName: string | undefined,
+  actorId: string,
+): Promise<{ id: string; code: string; name: string } | null> {
+  if (projectId) {
+    return prisma.project.findUnique({ where: { id: projectId } });
+  }
+  const name = siteName?.trim();
+  if (!name) return null;
+
+  const existing = await prisma.project.findFirst({
+    where: { name: { equals: name } },
+  });
+  if (existing) return existing;
+
+  const code = await uniqueProjectCode(name);
+  const created = await prisma.project.create({ data: { name, code } });
+  await prisma.auditLog.create({
+    data: {
+      actorId,
+      action: "CREATE",
+      entity: "Project",
+      entityId: created.id,
+      summary: `Created non-system site "${name}" (${code}) for a manual allocation`,
+    },
+  });
+  return created;
+}
+
 // Re-points the legacy Asset.projectId "current site" pointer at whichever
 // assignment is active today (or, failing that, the most recently started one),
 // so the fleet list and any remaining projectId-based views stay accurate.
@@ -61,11 +120,14 @@ export async function createAssignmentAction(formData: FormData) {
 
   const assetId = formData.get("assetId")?.toString();
   const projectId = formData.get("projectId")?.toString();
+  const siteName = formData.get("siteName")?.toString();
   const startDate = parseLocalDate(formData.get("startDate"));
   const endDate = parseLocalDate(formData.get("endDate"));
   const note = formData.get("note")?.toString().trim() || null;
+  const driverName = formData.get("driverName")?.toString().trim() || null;
+  const billingType = parseBillingType(formData.get("billingType"));
 
-  if (!assetId || !projectId || !startDate) {
+  if (!assetId || (!projectId && !siteName?.trim()) || !startDate) {
     return { error: "Vehicle, site and start date are required" };
   }
   if (endDate && endDate < startDate) {
@@ -75,7 +137,7 @@ export async function createAssignmentAction(formData: FormData) {
   try {
     const asset = await prisma.asset.findUnique({ where: { id: assetId } });
     if (!asset) return { error: "Vehicle not found" };
-    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    const project = await resolveTargetProject(projectId, siteName, actor.id);
     if (!project) return { error: "Site not found" };
 
     // Close any open posting that started on/before the new start date.
@@ -95,18 +157,29 @@ export async function createAssignmentAction(formData: FormData) {
     }
 
     await prisma.assetAssignment.create({
-      data: { assetId, projectId, startDate, endDate, note, createdById: actor.id },
+      data: {
+        assetId,
+        projectId: project.id,
+        startDate,
+        endDate,
+        note,
+        driverName,
+        billingType,
+        createdById: actor.id,
+      },
     });
 
     await syncAssetCurrentProject(assetId);
 
+    const typeLabel = billingType === "DRY" ? " · Dry" : billingType === "WET" ? " · Wet" : "";
+    const driverLabel = driverName ? ` · driver ${driverName}` : "";
     await prisma.auditLog.create({
       data: {
         actorId: actor.id,
         action: "CREATE",
         entity: "AssetAssignment",
         entityId: assetId,
-        summary: `Assigned ${asset.code} to ${project.code} from ${fmt(startDate)}${endDate ? ` to ${fmt(endDate)}` : " (ongoing)"}`,
+        summary: `Assigned ${asset.code} to ${project.code} from ${fmt(startDate)}${endDate ? ` to ${fmt(endDate)}` : " (ongoing)"}${typeLabel}${driverLabel}`,
       },
     });
 

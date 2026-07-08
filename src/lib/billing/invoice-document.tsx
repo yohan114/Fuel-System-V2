@@ -135,6 +135,12 @@ export function InvoiceDocument({ bill }: { bill: any }) {
   const effMinimumUnits = effectiveMinimumUnits(bill.lineItems || [], bill.minimumUnits, daysInBillMonth);
   const isProrated = daysOnSite > 0 && daysOnSite < daysInBillMonth;
 
+  // Hire type + whether fuel is billed. A Dry hire ("d") charges the machine +
+  // driver only (fuel excluded); Wet/Fully-Wet ("w"/"fw") add the month's fuel.
+  // A fuel-only bill has no rental at all — only the issued fuel.
+  const hireType = isFuelOnly ? "Fuel only" : bill.rateBasis === "d" ? "Dry" : bill.rateBasis === "fw" ? "Fully Wet" : "Wet";
+  const fuelIncluded = isFuelOnly || bill.rateBasis === "w" || bill.rateBasis === "fw";
+
   // Actual entered meter vs the system-recommended (fuel ÷ typical rate) units.
   const unit = bill.billingMode === "perkm" ? "km" : "hr";
   const isMetered = (bill.billingMode === "hourly" || bill.billingMode === "perkm") && !isFuelOnly;
@@ -204,6 +210,8 @@ export function InvoiceDocument({ bill }: { bill: any }) {
               <Text style={styles.partyLine}>E&C No: {bill.assetCode}</Text>
               <Text style={styles.partyGray}>Reg No: {bill.assetRegNo || "—"}</Text>
               <Text style={styles.partyGray}>{bill.assetLabel || "—"}</Text>
+              <Text style={styles.partyGray}>Driver: {bill.driverName || "—"}</Text>
+              <Text style={styles.partyGray}>Hire: {hireType} · fuel {fuelIncluded ? "included" : "excluded"}</Text>
             </View>
           </View>
 
