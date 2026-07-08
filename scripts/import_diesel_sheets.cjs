@@ -38,6 +38,7 @@ const SOURCES = [
   { file: "data/source-sheets/Muthur_Plant_Diesel_Details.xlsx", siteName: "MUTHUR PLANT" },
   { file: "data/source-sheets/Karativu_Diesel_Details.xlsx",     siteName: "Karativu Bridge" },
   { file: "data/source-sheets/Pallanoya_Diesel_Details.xlsx",    siteName: "Pallanoya Bridge" },
+  { file: "data/source-sheets/Lot02_Batti_Diesel_Details.xlsx",  siteName: "ICDP Batti Lot-02" },
 ];
 
 // ---------- xlsx helpers ----------
@@ -45,12 +46,13 @@ const cellV = (c) => { let v = c.value; if (v && typeof v === "object" && v.resu
 const str = (v) => (v === null || v === undefined) ? "" : String(v).trim();
 const num = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(String(v).replace(/[, ]/g, "")); return Number.isFinite(n) ? n : null; };
 const MONTHS = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12 };
-// tolerant "Month YYYY" finder: handles "January 2026", "March-2026", "June- 2026"
+// tolerant "Month YYYY" finder: "January 2026", "March-2026", "June- 2026", "Feb 26"
 function parseMonthText(text) {
-  const m = String(text || "").toLowerCase().match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-\s.]*(\d{4})/);
+  const m = String(text || "").toLowerCase().match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-\s.']*(\d{2,4})\b/);
   if (!m) return null;
   const key = Object.keys(MONTHS).find((k) => k.startsWith(m[1]));
-  return key ? { month: MONTHS[key], year: +m[2] } : null;
+  let year = +m[2]; if (year < 100) year += 2000; // "26" -> 2026
+  return key ? { month: MONTHS[key], year } : null;
 }
 const iso = (y, mo, d, endOfDay = false) => new Date(`${y}-${String(mo).padStart(2,"0")}-${String(d).padStart(2,"0")}T${endOfDay?"23:59:59.999":"00:00:00.000"}+05:30`).toISOString();
 const lastDayOfMonth = (y, mo) => new Date(y, mo, 0).getDate();
@@ -75,10 +77,11 @@ function parseWorkbook(absPath, siteName) {
       let dayRow = null;
       for (const r of [hdr + 1, hdr, hdr - 1]) { const v = num(cellV(ws.getRow(r).getCell(6))); if (v !== null && v >= 1 && v <= 3) { dayRow = r; break; } }
       if (dayRow === null) dayRow = hdr + 1;
-      // totals columns by label text on the header row
+      // totals columns by label text — scan both the header row and the
+      // day-number row (some sheets, e.g. Lot-02, carry the labels on row 4)
       const col = { site:null, outside:null, total:null, open:null, close:null, rate:null };
       for (let c = 6; c <= ws.columnCount; c++) {
-        const h = str(cellV(ws.getRow(hdr).getCell(c))).toLowerCase();
+        const h = (str(cellV(ws.getRow(hdr).getCell(c))) + " " + str(cellV(ws.getRow(dayRow).getCell(c)))).toLowerCase();
         if (/site tank/.test(h)) col.site = c;
         else if (/outside/.test(h)) col.outside = c;
         else if (/total fuel/.test(h)) col.total = c;
@@ -155,7 +158,7 @@ function matchAsset(code, reg) {
 const cats = new Map(db.prepare("SELECT name,id FROM Category").all().map((c) => [c.name, c.id]));
 const catId = (n) => cats.get(n) || cats.get("Other Asset");
 const isPlate = (reg) => /^[A-Za-z]{0,4}[-\s]?\d{2,4}[-\s]?\d{0,4}$/.test((reg || "").trim());
-const SITE_ABBR = { Ambanpola: "AMB", Inginimitiya: "INGI", "MUTHUR PLANT": "MUT", "Karativu Bridge": "KB", "Pallanoya Bridge": "PN" };
+const SITE_ABBR = { Ambanpola: "AMB", Inginimitiya: "INGI", "MUTHUR PLANT": "MUT", "Karativu Bridge": "KB", "Pallanoya Bridge": "PN", "ICDP Batti Lot-02": "LOT02" };
 const CAT_PREFIX = { "Generator":"GEN", "PE - Concrete Mixer":"MIX", "PE - Poker / Concrete Vibrator":"PKR", "PE - Power Tool — Other":"PT", "Workshop Plant / Equipment":"WSP", "Vibrating Roller":"RLR", "Static Roller":"RLR", "PE - Engine Water Pump":"PMP" };
 function classify(type, code, reg) {
   const t = `${type} ${code} ${reg}`.toLowerCase();
