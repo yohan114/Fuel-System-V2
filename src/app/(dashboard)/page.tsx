@@ -1,4 +1,6 @@
 import { isSiteUser } from "@/lib/roles";
+import { visibleAssetIdsForUser } from "@/lib/assignments";
+import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import React from "react";
 import { prisma } from "@/lib/db";
@@ -51,61 +53,84 @@ export default async function DashboardPage() {
     ? (colomboHour < 8 ? "Closed (Opens at 08:00 AM)" : "Closed (Locked at 17:00 PM)")
     : "Open (Locks at 17:00 PM)";
 
-  const isScoped = isSiteUser(user.role) && user.projectId;
+  // A site user (USER / SITE_PUMP) sees ONLY their own site; admin/allocator are
+  // unrestricted. A site user with no site assigned sees NOTHING — never a
+  // cross-site fallback.
+  const isSite = isSiteUser(user.role);
+  const siteId = user.projectId ?? null;
 
-  // 1. Fetch KPI metrics
-  const monthlyIssues = await prisma.fuelIssue.aggregate({
-    where: {
-      issueDate: {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      },
-      ...(isScoped ? {
-        asset: { projectId: user.projectId }
-      } : {}),
-    },
-    _sum: {
-      litres: true,
-      totalCost: true,
-    },
-    _count: {
-      id: true,
+  // Two scoping sets for a site user (both null = unrestricted admin/allocator):
+  //   • currentFleetIds — vehicles posted to the site *now* (live fleet + approvals).
+  //   • fuelAllowedIds  — vehicles *ever* posted to the site (∪ pinned): the
+  //     candidate pool whose fuel is then attributed per-issue to the site.
+  // An empty Set means "site user with no site → show nothing".
+  let currentFleetIds: Set<string> | null = null;
+  let fuelAllowedIds: Set<string> | null = null;
+  let attributionIdx: ReturnType<typeof indexAssignments> | null = null;
+
+  if (isSite) {
+    if (!siteId) {
+      currentFleetIds = new Set();
+      fuelAllowedIds = new Set();
+    } else {
+      currentFleetIds = (await visibleAssetIdsForUser(user, now)) ?? new Set();
+      const [spans, pinned] = await Promise.all([
+        prisma.assetAssignment.findMany({ where: { projectId: siteId }, select: { assetId: true }, distinct: ["assetId"] }),
+        prisma.asset.findMany({ where: { projectId: siteId }, select: { id: true } }),
+      ]);
+      fuelAllowedIds = new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)]);
+      const assignments = await prisma.assetAssignment.findMany({
+        where: { assetId: { in: [...fuelAllowedIds] } },
+        select: { assetId: true, projectId: true, startDate: true, endDate: true },
+      });
+      attributionIdx = indexAssignments(assignments);
     }
-  });
+  }
 
+  // A fuel issue counts for the site only when the vehicle was *assigned* there on
+  // the issue date (falling back to its current pin) — mirrors the Fuel Issues log.
+  const issueMatchesSite = (assetId: string, issueDate: Date, assetPin: string | null): boolean => {
+    if (!isSite) return true;
+    if (!siteId || !attributionIdx) return false;
+    const pid = assignedSiteOn(attributionIdx, assetId, issueDate) ?? assetPin;
+    return pid === siteId;
+  };
+
+  const assetIdIn = (ids: Set<string> | null) => (ids ? { assetId: { in: [...ids] } } : {});
+
+  // 1. KPI metrics — Active Fleet + Pending Approvals scoped to the site's live fleet.
   const activeAssetsCount = await prisma.asset.count({
     where: {
       status: "ACTIVE",
-      ...(isScoped ? {
-        projectId: user.projectId
-      } : {}),
+      ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
     },
   });
 
   const pendingRequestsCount = await prisma.fuelRequest.count({
-    where: {
-      status: "PENDING",
-      ...(isScoped ? {
-        asset: { projectId: user.projectId }
-      } : {}),
-    },
+    where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
   });
 
-  // 2. Fetch fuel splits
-  const issuesThisMonth = await prisma.fuelIssue.findMany({
+  // 2. This month's fuel, attributed to the site. Fetch the candidate issues, keep
+  // only those the attribution assigns here; the KPI sums (Spend/Volume), the
+  // daily trend and the product split all derive from this one filtered list.
+  const monthRaw = await prisma.fuelIssue.findMany({
     where: {
-      issueDate: {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      },
-      ...(isScoped ? {
-        asset: { projectId: user.projectId }
-      } : {}),
+      issueDate: { gte: startOfMonth, lte: endOfMonth },
+      ...assetIdIn(fuelAllowedIds),
     },
-    orderBy: {
-      issueDate: "asc",
-    },
+    orderBy: { issueDate: "asc" },
+    include: { asset: { select: { projectId: true } } },
   });
+  const issuesThisMonth = isSite
+    ? monthRaw.filter((i) => issueMatchesSite(i.assetId, i.issueDate, i.asset.projectId))
+    : monthRaw;
+
+  let monthLitres = 0;
+  let monthCost = 0;
+  for (const i of issuesThisMonth) {
+    monthLitres += i.litres;
+    monthCost += i.totalCost;
+  }
 
   // Litres/cost per fuel product this month (diesel, petrol, kerosene …)
   const kindTotals: Record<string, { litres: number; cost: number }> = {};
@@ -143,13 +168,13 @@ export default async function DashboardPage() {
     price: priceRows.find((p) => p.fuelKind === k.code) ?? null,
   })).filter((p) => p.price != null || p.kind.code === "AUTO_DIESEL" || p.kind.code === "SUPER_DIESEL");
 
-  // 4. Fetch assets for Condition Widget and Quick Actions
+  // 4. Fetch assets for Condition Widget and Quick Actions — the site's live fleet.
   const assets = await prisma.asset.findMany({
-    where: { 
+    where: {
       status: { in: ["ACTIVE", "INACTIVE"] },
-      ...(isScoped ? { projectId: user.projectId } : {}),
+      ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
     },
-    select: { 
+    select: {
       id: true, 
       code: true, 
       meterType: true, 
@@ -163,25 +188,24 @@ export default async function DashboardPage() {
     orderBy: { code: "asc" },
   });
 
-  // 5. Fetch recent issues
-  const recentIssues = await prisma.fuelIssue.findMany({
-    where: {
-      ...(isScoped ? { asset: { projectId: user.projectId } } : {}),
-    },
-    take: 5,
+  // 5. Recent dispatches — attributed to the site (over-fetch, then filter + trim).
+  const recentRaw = await prisma.fuelIssue.findMany({
+    where: { ...assetIdIn(fuelAllowedIds) },
+    take: fuelAllowedIds ? 40 : 5,
     orderBy: { issueDate: "desc" },
     include: {
       asset: true,
       issuedBy: true,
     },
   });
+  const recentIssues = (isSite
+    ? recentRaw.filter((i) => issueMatchesSite(i.assetId, i.issueDate, i.asset.projectId))
+    : recentRaw
+  ).slice(0, 5);
 
-  // 6. Fetch pending requests
+  // 6. Pending requests — the site's live fleet only.
   const pendingRequests = await prisma.fuelRequest.findMany({
-    where: { 
-      status: "PENDING",
-      ...(isScoped ? { asset: { projectId: user.projectId } } : {}),
-    },
+    where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
     take: 5,
     orderBy: { createdAt: "desc" },
     include: {
@@ -231,7 +255,7 @@ export default async function DashboardPage() {
           <div>
             <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider block">Spend This Month</span>
             <span className="text-lg font-bold text-white block mt-0.5">
-              Rs. {((monthlyIssues._sum.totalCost || 0) / 100).toLocaleString("en-LK", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              Rs. {(monthCost / 100).toLocaleString("en-LK", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </span>
           </div>
         </div>
@@ -244,7 +268,7 @@ export default async function DashboardPage() {
           <div>
             <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider block">Volume Dispensed</span>
             <span className="text-lg font-bold text-white block mt-0.5">
-              {(monthlyIssues._sum.litres || 0).toLocaleString("en-US", { maximumFractionDigits: 1 })} Litres
+              {monthLitres.toLocaleString("en-US", { maximumFractionDigits: 1 })} Litres
             </span>
             <span className="text-[10px] text-indigo-400 block mt-0.5">View by site →</span>
           </div>
