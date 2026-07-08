@@ -1,5 +1,6 @@
 "use server";
 
+import { isSiteUser } from "@/lib/roles";
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
@@ -46,7 +47,7 @@ export async function logDailyConditionAction(assetId: string, status: string, n
 
     // Project-scoped users may only log conditions for vehicles assigned to
     // their site today (legacy pin honored for never-assigned vehicles).
-    if (user.role === "USER" && user.projectId) {
+    if (isSiteUser(user.role) && user.projectId) {
       const ok = await canUserAccessAsset(user, asset.id, logDate);
       if (!ok) {
         return { error: "This vehicle is not assigned to your site today." };

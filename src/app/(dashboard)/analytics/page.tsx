@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
@@ -17,7 +18,7 @@ export default async function AnalyticsPage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
 
-  const projectId = session.role === "USER" ? session.projectId ?? undefined : undefined;
+  const projectId = isSiteUser(session.role) ? session.projectId ?? undefined : undefined;
 
   const sp = await props.searchParams;
   const now = new Date();

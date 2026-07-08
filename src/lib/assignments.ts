@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import { isSiteUser } from "./roles";
 
 // Asset → site assignment helpers.
 //
@@ -90,7 +91,7 @@ export async function visibleAssetIdsForUser(
   user: { role: string; projectId: string | null },
   date: Date = new Date()
 ): Promise<Set<string> | null> {
-  if (user.role !== "USER" || !user.projectId) return null;
+  if (!isSiteUser(user.role) || !user.projectId) return null;
 
   const assigned = await getAssignedAssetIds(user.projectId, date);
 

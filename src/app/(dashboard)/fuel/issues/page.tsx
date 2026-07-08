@@ -2,8 +2,8 @@ import React from "react";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { visibleAssetIdsForUser } from "@/lib/assignments";
 import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
+import { isSiteUser } from "@/lib/roles";
 import CorrectionButton from "./CorrectionButton";
 import Link from "next/link";
 import { Search, MapPin } from "lucide-react";
@@ -17,7 +17,10 @@ const ISSUE_LIMIT = 1000;
 export default async function FuelIssuesPage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
-  const isPrivileged = session.role === "ADMIN" || session.role === "ALLOCATOR";
+  // ADMIN / ALLOCATOR see everything; WORKSHOP issues across all sites so it also
+  // sees the full log with filters. Site users (USER / SITE_PUMP) are scoped to
+  // their allocated site by visibleAssetIdsForUser below.
+  const isPrivileged = session.role === "ADMIN" || session.role === "ALLOCATOR" || session.role === "WORKSHOP";
 
   const searchParams = await props.searchParams;
   const q = searchParams.q || "";
@@ -33,18 +36,19 @@ export default async function FuelIssuesPage(props: PageProps) {
   if (sourceFilter) where.source = sourceFilter;
   if (q) where.asset = { code: { contains: q.trim().toUpperCase() } };
 
-  // USER role only ever sees its own site's vehicles.
-  const visible = await visibleAssetIdsForUser(session);
-  let allowedIds: Set<string> | null = visible ? new Set(visible) : null;
+  // Visibility follows the vehicle's ALLOCATED site, not the pump it was drawn
+  // from. Site users (USER / SITE_PUMP) are locked to their own site; privileged
+  // roles (admin/allocator/workshop) may pick any site or see all. Restrict the
+  // query to assets ever posted to the site (or currently pinned to it); the
+  // exact per-issue attribution check runs below once each issue's site resolves.
+  const isSite = isSiteUser(session.role) && !!session.projectId;
+  const effectiveSite = isSite ? session.projectId! : siteFilter;
 
-  // Site filter attributes an issue to the vehicle's *assigned* site (not the
-  // pump it was drawn from). Restrict the query to assets ever posted to the
-  // site (or legacy-pinned to it); the exact per-issue check happens below.
-  if (siteFilter) {
-    const spans = await prisma.assetAssignment.findMany({ where: { projectId: siteFilter }, select: { assetId: true }, distinct: ["assetId"] });
-    const pinned = await prisma.asset.findMany({ where: { projectId: siteFilter }, select: { id: true } });
-    const siteAssets = new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)]);
-    allowedIds = allowedIds ? new Set([...allowedIds].filter((id) => siteAssets.has(id))) : siteAssets;
+  let allowedIds: Set<string> | null = null;
+  if (effectiveSite) {
+    const spans = await prisma.assetAssignment.findMany({ where: { projectId: effectiveSite }, select: { assetId: true }, distinct: ["assetId"] });
+    const pinned = await prisma.asset.findMany({ where: { projectId: effectiveSite }, select: { id: true } });
+    allowedIds = new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)]);
   }
   if (allowedIds) where.assetId = { in: [...allowedIds] };
 
@@ -72,8 +76,9 @@ export default async function FuelIssuesPage(props: PageProps) {
     return pid ? projById.get(pid) ?? (i.asset.project ? { id: pid, name: i.asset.project.name, code: i.asset.project.code } : null) : null;
   };
 
-  // Apply the exact assigned-site filter in memory.
-  if (siteFilter) issues = issues.filter((i) => siteOfIssue(i)?.id === siteFilter);
+  // Apply the exact allocated-site filter in memory (site users are pinned to
+  // their own site; privileged roles to the site they picked).
+  if (effectiveSite) issues = issues.filter((i) => siteOfIssue(i)?.id === effectiveSite);
 
   // Dropdown option sources.
   const [issuerRows, sourceRows] = await Promise.all([

@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
@@ -21,7 +22,7 @@ function fmt(d: Date) {
 export default async function ServiceLogPage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
-  if (session.role === "USER") redirect("/service");
+  if (isSiteUser(session.role)) redirect("/service");
 
   const sp = await props.searchParams;
   const vehicle = (sp.vehicle || "").trim();

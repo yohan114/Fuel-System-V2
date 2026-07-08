@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
   // A site PM (USER) only ever sees their own project; admins/allocators may
   // optionally scope with ?projectId=.
   const projectId =
-    session.role === "USER"
+    isSiteUser(session.role)
       ? session.projectId ?? undefined
       : searchParams.get("projectId") ?? undefined;
 

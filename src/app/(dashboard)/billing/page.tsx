@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
@@ -52,7 +53,7 @@ export default async function BillingPage(props: PageProps) {
 
   // Build the where clause. USER role is locked to its own project.
   const where: any = { periodKey };
-  if (session.role === "USER" && session.projectId) {
+  if (isSiteUser(session.role) && session.projectId) {
     where.projectId = session.projectId;
   } else if (siteFilter === "unassigned") {
     where.projectId = null;
@@ -106,7 +107,7 @@ export default async function BillingPage(props: PageProps) {
             className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
           />
         </div>
-        {session.role !== "USER" && (
+        {!isSiteUser(session.role) && (
           <div>
             <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Site</label>
             <select
@@ -184,7 +185,7 @@ export default async function BillingPage(props: PageProps) {
       </div>
 
       {/* Receivables aging (all unpaid invoices, across months) */}
-      <AgingReport projectId={session.role === "USER" ? session.projectId : null} />
+      <AgingReport projectId={isSiteUser(session.role) ? session.projectId : null} />
 
       {/* Admin generate panels */}
       {isAdmin && <ReadinessReport year={y || cur.year} month={m || cur.month} />}

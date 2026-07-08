@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
@@ -26,7 +27,7 @@ export default async function FleetPage(props: PageProps) {
     status: {
       in: ["ACTIVE", "INACTIVE"], // Excluding DISPOSED assets by default
     },
-    ...(session.role === "USER" && session.projectId ? {
+    ...(isSiteUser(session.role) && session.projectId ? {
       projectId: session.projectId
     } : {}),
   };

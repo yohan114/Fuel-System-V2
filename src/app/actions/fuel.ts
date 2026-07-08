@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
+import { isSiteUser } from "@/lib/roles";
 import { getPriceForDate } from "@/lib/pricing";
 import { checkDailyCap } from "@/lib/fuel-policy";
 import { extractFileField } from "@/lib/upload";
@@ -87,12 +88,13 @@ export async function submitRequestAction(formData: FormData) {
         }
       });
     } else {
-      // Project-scoped users may only request fuel for vehicles assigned to
-      // their site today (legacy pin honored for never-assigned vehicles).
-      if (user.role === "USER" && user.projectId) {
+      // Site-scoped users (USER / SITE_PUMP) may only request fuel for vehicles
+      // allocated to their site (legacy pin honored for never-assigned vehicles).
+      // WORKSHOP is exempt — it can issue for any site / any vehicle.
+      if (isSiteUser(user.role) && user.projectId) {
         const ok = await canUserAccessAsset(user, asset.id, new Date());
         if (!ok) {
-          return { error: "This vehicle is not assigned to your site today." };
+          return { error: "This vehicle is not assigned to your site." };
         }
       }
     }

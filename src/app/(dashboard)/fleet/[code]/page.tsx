@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
@@ -52,7 +53,7 @@ export default async function AssetDetailPage(props: PageProps) {
   }
 
   // Check project user scope
-  if (session.role === "USER" && session.projectId && asset.projectId !== session.projectId) {
+  if (isSiteUser(session.role) && session.projectId && asset.projectId !== session.projectId) {
     notFound();
   }
 

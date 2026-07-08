@@ -1,5 +1,6 @@
 "use server";
 
+import { isSiteUser } from "@/lib/roles";
 import { isFuelKind } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
@@ -68,7 +69,7 @@ export async function submitCorrectionAction(formData: FormData) {
 
     // Site users may only correct issues for vehicles assigned to their site
     // (checked on the issue date).
-    if (user.role === "USER" && user.projectId) {
+    if (isSiteUser(user.role) && user.projectId) {
       const ok = await canUserAccessAsset(user, issue.assetId, issue.issueDate);
       if (!ok) return { error: "This issue belongs to a vehicle outside your site" };
     }

@@ -1,5 +1,6 @@
 "use server";
 
+import { isSiteUser } from "@/lib/roles";
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
@@ -86,7 +87,7 @@ export async function addReadingAction(formData: FormData) {
       // Project-scoped users may only log against vehicles assigned to their
       // site for the working day (falls back to the legacy pin for vehicles that
       // have never been assigned).
-      if (user.role === "USER" && user.projectId) {
+      if (isSiteUser(user.role) && user.projectId) {
         const ok = await canUserAccessAsset(user, asset.id, readingDate);
         if (!ok) {
           return { error: "This vehicle is not assigned to your site for the selected day." };

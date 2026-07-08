@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
@@ -30,7 +31,7 @@ export default async function ServiceRecordPage(props: PageProps) {
     },
   });
   if (!rec) notFound();
-  if (session.role === "USER" && session.projectId && rec.asset.projectId !== session.projectId) notFound();
+  if (isSiteUser(session.role) && session.projectId && rec.asset.projectId !== session.projectId) notFound();
 
   const oils = rec.items.filter((i) => i.kind === "OIL");
   const filters = rec.items.filter((i) => i.kind === "FILTER");

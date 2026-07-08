@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -23,7 +24,7 @@ export default async function ServicePlanPage(props: PageProps) {
   if (!plan) redirect("/service");
 
   // Site users only see their own vehicles' plans.
-  if (session.role === "USER" && session.projectId && plan.asset.projectId && plan.asset.projectId !== session.projectId) {
+  if (isSiteUser(session.role) && session.projectId && plan.asset.projectId && plan.asset.projectId !== session.projectId) {
     redirect("/service");
   }
 

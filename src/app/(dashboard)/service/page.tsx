@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -29,7 +30,7 @@ export default async function ServicePage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
 
-  const projectId = session.role === "USER" ? session.projectId ?? undefined : undefined;
+  const projectId = isSiteUser(session.role) ? session.projectId ?? undefined : undefined;
   const isAdmin = session.role === "ADMIN";
   const sp = await props.searchParams;
   const statusFilter = (sp.status || "").toUpperCase();

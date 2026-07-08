@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import React from "react";
 import { prisma } from "@/lib/db";
@@ -50,7 +51,7 @@ export default async function DashboardPage() {
     ? (colomboHour < 8 ? "Closed (Opens at 08:00 AM)" : "Closed (Locked at 17:00 PM)")
     : "Open (Locks at 17:00 PM)";
 
-  const isScoped = user.role === "USER" && user.projectId;
+  const isScoped = isSiteUser(user.role) && user.projectId;
 
   // 1. Fetch KPI metrics
   const monthlyIssues = await prisma.fuelIssue.aggregate({

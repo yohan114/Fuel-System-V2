@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
@@ -63,7 +64,7 @@ export default async function BillDetailPage(props: PageProps) {
   const isFuelOnly = !bill.lineItems.some((l) => l.kind === "RENTAL");
 
   // USER scope: only their own project's bills.
-  if (session.role === "USER" && session.projectId && bill.projectId !== session.projectId) {
+  if (isSiteUser(session.role) && session.projectId && bill.projectId !== session.projectId) {
     notFound();
   }
 

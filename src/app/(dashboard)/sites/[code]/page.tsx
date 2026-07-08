@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -40,7 +41,7 @@ export default async function SiteDetailPage(props: PageProps) {
   if (!project) redirect("/sites");
 
   // Site users can only open their own site.
-  if (session.role === "USER" && session.projectId && session.projectId !== project.id) {
+  if (isSiteUser(session.role) && session.projectId && session.projectId !== project.id) {
     redirect("/sites");
   }
 
