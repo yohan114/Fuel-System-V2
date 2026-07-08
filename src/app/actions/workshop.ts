@@ -143,20 +143,7 @@ export async function submitBulkRequestAction(formData: FormData) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (colomboHour < 8 || colomboHour >= 17) {
-      return { error: "Fuel operations are only allowed between 08:00 AM and 17:00 PM." };
-    }
-  }
+  // Fuel operations are allowed 24/7 — the 08:00–17:00 time window was removed.
 
   const bulkTankId = formData.get("bulkTankId")?.toString();
   const requestedLitresStr = formData.get("requestedLitres")?.toString();
@@ -398,22 +385,9 @@ export async function workshopIssueFuelAction(formData: FormData) {
   const projectId = formData.get("projectId")?.toString() || null;
   const issueDateStr = formData.get("issueDate")?.toString() || null;
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (colomboHour < 8 || colomboHour >= 17) {
-      if (reason !== "Vehicle Breakdown" && reason !== "Active Night Work") {
-        return { error: "During locked hours (17:00 PM - 08:00 AM), fuel issues are only allowed for 'Vehicle Breakdown' or 'Active Night Work'. Please select a valid reason." };
-      }
-    }
-  }
+  // Fuel issuing is allowed 24/7 — the after-hours reason gate was removed; any
+  // reason may be used at any time. Date/time, user, site, vehicle and person
+  // are still recorded for audit.
 
   if (!assetId || !litresStr) {
     return { error: "Asset Code and Litres are required." };

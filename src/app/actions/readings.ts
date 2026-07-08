@@ -14,20 +14,7 @@ export async function addReadingAction(formData: FormData) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (colomboHour < 8 || colomboHour >= 17) {
-      return { error: "Fuel operations are only allowed between 08:00 AM and 17:00 PM." };
-    }
-  }
+  // Meter readings can be logged 24/7 — the 08:00–17:00 time window was removed.
 
   const assetId = formData.get("assetId")?.toString();
   const valueStr = formData.get("value")?.toString();

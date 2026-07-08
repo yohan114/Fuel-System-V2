@@ -214,11 +214,11 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Quick Actions Panel */}
-      <QuickActions 
-        assets={assets.filter((a) => a.status === "ACTIVE")} 
-        isAdmin={isAdmin} 
-        isLocked={isConditionLocked}
+      {/* Quick Actions Panel — fuel issuing is 24/7, never time-locked */}
+      <QuickActions
+        assets={assets.filter((a) => a.status === "ACTIVE")}
+        isAdmin={isAdmin}
+        isLocked={false}
       />
 
       {/* KPI Cards */}

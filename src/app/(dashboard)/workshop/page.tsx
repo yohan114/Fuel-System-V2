@@ -67,19 +67,9 @@ export default async function WorkshopPage() {
   const colomboTodayStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
   const [colomboYear, colomboMonth, colomboDay] = colomboTodayStr.split("-").map(Number);
   
-  const colomboHour = parseInt(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Colombo",
-      hour: "numeric",
-      hour12: false,
-    }).format(now),
-    10
-  );
-  
-  const isLocked = colomboHour < 8 || colomboHour >= 17;
-  const lockMessage = isLocked
-    ? (colomboHour < 8 ? "Closed (Opens at 08:00 AM)" : "Closed (Locked at 17:00 PM)")
-    : "Open (Locks at 17:00 PM)";
+  // Fuel issuing is allowed 24/7 — the 08:00–17:00 lock has been removed.
+  const isLocked = false;
+  const lockMessage = "Open (24/7)";
     
   const colomboMidnight = new Date(colomboYear, colomboMonth - 1, colomboDay);
   const minDate = new Date(colomboMidnight.getTime() - 14 * 24 * 60 * 60 * 1000);
