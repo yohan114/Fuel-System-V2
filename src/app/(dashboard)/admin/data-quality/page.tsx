@@ -5,7 +5,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { currentMonthPeriod } from "@/lib/billing/period";
 import { runInvariantChecks } from "@/lib/integrity/invariants";
-import { DatabaseZap, Gauge, Coins, ShieldCheck } from "lucide-react";
+import { DatabaseZap, Gauge, Coins, ShieldCheck, Tag } from "lucide-react";
 
 export default async function DataQualityPage() {
   const session = await getSession();
@@ -31,6 +31,14 @@ export default async function DataQualityPage() {
   // Active vehicles with no rate card (cannot be billed / no fuel-derived rate).
   const noRate = await prisma.asset.findMany({
     where: { status: "ACTIVE", rentalRate: { is: null } },
+    select: { id: true, code: true, category: { select: { name: true } }, project: { select: { name: true } } },
+    orderBy: { code: "asc" },
+  });
+
+  // Machines auto-created from an imported sheet, still on a temporary reg-plate
+  // code — they need a proper E&C number and category assigned.
+  const needsCode = await prisma.asset.findMany({
+    where: { status: "ACTIVE", typeLabel: { contains: "set type" } },
     select: { id: true, code: true, category: { select: { name: true } }, project: { select: { name: true } } },
     orderBy: { code: "asc" },
   });
@@ -86,6 +94,14 @@ export default async function DataQualityPage() {
           <Clear />
         ) : (
           <AssetGrid rows={noRate} />
+        )}
+      </Section>
+
+      <Section title={`Needs a proper E&C code (${needsCode.length})`} icon={<Tag className="w-4 h-4 text-indigo-400" />}>
+        {needsCode.length === 0 ? (
+          <Clear />
+        ) : (
+          <AssetGrid rows={needsCode} />
         )}
       </Section>
     </div>
