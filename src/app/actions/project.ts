@@ -3,6 +3,21 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { DEFAULT_TANK_CAPACITY } from "@/lib/fuel-kinds";
+
+// Picks a tank name that isn't already taken (tank names are unique). Prefers
+// "<project> Tank", then disambiguates with the project code.
+async function uniqueTankName(
+  tx: { bulkTank: { findUnique: (a: any) => Promise<any> } },
+  name: string,
+  code: string,
+): Promise<string> {
+  const candidates = [`${name} Tank`, `${name} Tank (${code})`, `${code} Tank`];
+  for (const c of candidates) {
+    if (!(await tx.bulkTank.findUnique({ where: { name: c } }))) return c;
+  }
+  return `${name} Tank ${Date.now()}`;
+}
 
 // 1. Create a Project (Admin only)
 export async function createProjectAction(formData: FormData) {
@@ -37,22 +52,32 @@ export async function createProjectAction(formData: FormData) {
       return { error: `Project Name "${name}" is already in use` };
     }
 
-    const project = await prisma.project.create({
-      data: { name, code, contactName, contactEmail },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        actorId: admin.id,
-        action: "CREATE",
-        entity: "Project",
-        entityId: project.id,
-        summary: `Created new project "${name}" (${code})`,
-      },
+    // Create the project together with its own default diesel tank, so every
+    // site has somewhere to receive and issue fuel from day one. The tank's
+    // capacity defaults to DEFAULT_TANK_CAPACITY and stays fully editable /
+    // deletable afterwards.
+    const project = await prisma.$transaction(async (tx) => {
+      const p = await tx.project.create({
+        data: { name, code, contactName, contactEmail },
+      });
+      const tankName = await uniqueTankName(tx, name, code);
+      const tank = await tx.bulkTank.create({
+        data: { name: tankName, fuelKind: "AUTO_DIESEL", capacity: DEFAULT_TANK_CAPACITY, balance: 0, projectId: p.id },
+      });
+      await tx.auditLog.create({
+        data: {
+          actorId: admin.id,
+          action: "CREATE",
+          entity: "Project",
+          entityId: p.id,
+          summary: `Created new project "${name}" (${code}) with default tank "${tankName}" (${DEFAULT_TANK_CAPACITY} L)`,
+        },
+      });
+      return p;
     });
 
     revalidatePath("/admin/projects");
-    return { success: true };
+    return { success: true, tankCreated: true, projectId: project.id };
   } catch (err: any) {
     console.error("Create project error:", err);
     return { error: err.message || "Failed to create project" };

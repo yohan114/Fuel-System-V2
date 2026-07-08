@@ -20,6 +20,11 @@ export const FUEL_KINDS: FuelKindDef[] = [
 
 export const FUEL_KIND_CODES = FUEL_KINDS.map((k) => k.code);
 
+// Default capacity (litres) for a site's diesel tank. Used when a tank is
+// auto-created alongside a new project, and as the default in the manual tank
+// form. Always editable afterwards.
+export const DEFAULT_TANK_CAPACITY = 15000;
+
 export function isFuelKind(code: string | null | undefined): boolean {
   return !!code && FUEL_KIND_CODES.includes(code);
 }

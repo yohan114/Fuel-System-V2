@@ -1,5 +1,5 @@
 import React from "react";
-import { FUEL_KINDS } from "@/lib/fuel-kinds";
+import { FUEL_KINDS, DEFAULT_TANK_CAPACITY } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { createProjectAction } from "@/app/actions/project";
@@ -270,6 +270,7 @@ export default async function AdminProjectsPage() {
                   name="capacity"
                   step="any"
                   required
+                  defaultValue={DEFAULT_TANK_CAPACITY}
                   placeholder="e.g. 15000"
                   className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
                 />
