@@ -32,6 +32,12 @@ const APPLY = process.argv.includes("--apply");
 const ADMIN_ID = "023cee32-d4e2-4b39-b868-11fd1ce98181";
 const db = new Database(path.join(process.cwd(), "data", "app.db"));
 
+// NOTE: the Consolidated Fuel Register (scripts/import_consolidated_register.cjs)
+// is now the master source for the sites below — do NOT reload them here or you
+// will overwrite the register's normalized data. To load a single NEW grid-format
+// site (one not in the register, e.g. Badalgama), run with a filter, e.g.:
+//   node scripts/import_diesel_sheets.cjs --apply only:Badalgama
+// A source may list one `file` or several `files` (merged into one site).
 const SOURCES = [
   { file: "data/source-sheets/Ambanpola_Diesel_Details.xlsx",    siteName: "Ambanpola" },
   { file: "data/source-sheets/Inginimitiya_Diesel_Details.xlsx", siteName: "Inginimitiya" },
@@ -41,7 +47,10 @@ const SOURCES = [
   { file: "data/source-sheets/Lot02_Batti_Diesel_Details.xlsx",  siteName: "ICDP Batti Lot-02" },
   { file: "data/source-sheets/Avissawella_Diesel_Details.xlsx",  siteName: "Avissawella Site", defaultYear: 2026 },
   { file: "data/source-sheets/Ruwanwella_Diesel_Details.xlsx",   siteName: "Ruwanwella Water Project" },
+  // Badalgama is loaded from the archived app.db extract (Mar-Jun, more complete
+  // than the Mar-May sheets) via scripts/import_badalgama_db.cjs, not here.
 ];
+const ONLY = (process.argv.find((a) => a.startsWith("only:")) || "").slice(5).toLowerCase();
 
 // ---------- xlsx helpers ----------
 const cellV = (c) => { let v = c.value; if (v && typeof v === "object" && v.result !== undefined) v = v.result; if (v && typeof v === "object" && v.text !== undefined) v = v.text; return v; };
@@ -175,7 +184,7 @@ function matchAsset(code, reg) {
 const cats = new Map(db.prepare("SELECT name,id FROM Category").all().map((c) => [c.name, c.id]));
 const catId = (n) => cats.get(n) || cats.get("Other Asset");
 const isPlate = (reg) => /^[A-Za-z]{0,4}[-\s]?\d{2,4}[-\s]?\d{0,4}$/.test((reg || "").trim());
-const SITE_ABBR = { Ambanpola: "AMB", Inginimitiya: "INGI", "MUTHUR PLANT": "MUT", "Karativu Bridge": "KB", "Pallanoya Bridge": "PN", "ICDP Batti Lot-02": "LOT02", "Avissawella Site": "AVIS", "Ruwanwella Water Project": "RWP" };
+const SITE_ABBR = { Ambanpola: "AMB", Inginimitiya: "INGI", "MUTHUR PLANT": "MUT", "Karativu Bridge": "KB", "Pallanoya Bridge": "PN", "ICDP Batti Lot-02": "LOT02", "Avissawella Site": "AVIS", "Ruwanwella Water Project": "RWP", "Badalgama Plant/Workshop": "BADAL" };
 const CAT_PREFIX = { "Generator":"GEN", "PE - Concrete Mixer":"MIX", "PE - Poker / Concrete Vibrator":"PKR", "PE - Power Tool — Other":"PT", "Workshop Plant / Equipment":"WSP", "Vibrating Roller":"RLR", "Static Roller":"RLR", "PE - Engine Water Pump":"PMP" };
 function classify(type, code, reg) {
   const t = `${type} ${code} ${reg}`.toLowerCase();
@@ -211,7 +220,13 @@ const priceFor = (dayIso) => dieselPrices.find((p) => p.d <= dayIso) ?? dieselPr
 // ================= run =================
 (async () => {
   const parsed = [];
-  for (const s of SOURCES) parsed.push({ ...s, data: await parseWorkbook(path.join(process.cwd(), s.file), s.siteName, s.defaultYear) });
+  for (const s of SOURCES) {
+    if (ONLY && !s.siteName.toLowerCase().includes(ONLY)) continue; // load only the matching site
+    const files = s.files || [s.file];
+    const months = [];
+    for (const f of files) { const d = await parseWorkbook(path.join(process.cwd(), f), s.siteName, s.defaultYear); months.push(...d.months); }
+    parsed.push({ ...s, data: { siteName: s.siteName, months } });
+  }
 
   const stats = { assetsCreated: 0, assetsMatched: 0, issues: 0, litres: 0, meterReadings: 0, assignments: 0, receipts: 0, receiptLitres: 0 };
   const created = []; const matchedList = [];
