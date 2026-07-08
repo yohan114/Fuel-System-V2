@@ -1,7 +1,8 @@
 // CEP-03F Galagedara diesel stock book — transcribed verbatim from the
 // client's Diesel_stock_book.xlsx (Sheet 'Diesel stock book', 11 May – 6 Jul
 // 2026). The sheet's own balance column reconciles: received 4,586 − issued
-// 4,249 = 337 L closing. Codes are normalised from the sheet's free-text
+// 4,079 = 507 L closing (DT-56 and HEX-26 removed — they are billed off-site).
+// Codes are normalised from the sheet's free-text
 // descriptions (e.g. "D 4 D -03" → D4D-03, "excavetor HEX-45" → HEX-45).
 // "ZB-1980" (the machine's registration plate) is the same asset as the E&C
 // fleet number "LB-21" (Backhoe Loader), so those issues are logged under LB-21.
@@ -96,7 +97,6 @@ export const GALAGEDARA_ISSUES: [string, string, number][] = [
   ["2026-07-02", "HEX-45", 50],
   ["2026-07-02", "HEX-01", 50],
   ["2026-07-02", "MG-07", 30],
-  ["2026-07-02", "DT-56", 10],
   ["2026-07-02", "D4D-03", 30],
   ["2026-07-02", "D4D-02", 30],
   ["2026-07-02", "DC-08", 10],
@@ -107,7 +107,6 @@ export const GALAGEDARA_ISSUES: [string, string, number][] = [
   ["2026-07-03", "D4D-02", 40],
   ["2026-07-03", "D4D-03", 40],
   ["2026-07-03", "SR-13", 20],
-  ["2026-07-03", "DT-56", 20],
   ["2026-07-03", "DC-08", 10],
   ["2026-07-03", "LB-21", 23],
   ["2026-07-05", "LB-25", 30],
@@ -115,7 +114,6 @@ export const GALAGEDARA_ISSUES: [string, string, number][] = [
   ["2026-07-05", "HEX-01", 80],
   ["2026-07-05", "MG-07", 20],
   ["2026-07-05", "D4D-03", 30],
-  ["2026-07-05", "HEX-26", 60],
   ["2026-07-05", "SR-13", 20],
   ["2026-07-05", "HCC-09", 20],
   ["2026-07-06", "DC-32", 70],
@@ -127,7 +125,6 @@ export const GALAGEDARA_ISSUES: [string, string, number][] = [
   ["2026-07-06", "MG-07", 20],
   ["2026-07-06", "SR-13", 20],
   ["2026-07-06", "SC-14", 38],
-  ["2026-07-06", "HEX-26", 80],
   ["2026-07-06", "LP-1709", 30]
 ];
 

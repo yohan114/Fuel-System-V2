@@ -5,7 +5,7 @@ import { GALAGEDARA_ISSUES, GALAGEDARA_RECEIPTS } from "./data/galagedara_stock"
 
 // Load the CEP-03F Galagedara diesel tank from the authoritative digital stock
 // book (scripts/data/galagedara_stock.ts, from the client's Diesel_stock_book
-// .xlsx, 11 May – 6 Jul 2026). Reconciled: received 4,586 − issued 4,249 = 337 L.
+// .xlsx, 11 May – 6 Jul 2026). Reconciled: received 4,586 − issued 4,079 = 507 L.
 //
 // This is a REPLACE load — it clears any existing issues / receipts / postings
 // for the tank first, so re-running always lands the sheet exactly (and it
