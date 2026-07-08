@@ -10,7 +10,7 @@ interface Props {
   defaultMonth: number;
 }
 
-type AssetStatus = "created" | "regenerated" | "skipped-existing" | "skipped-finalized" | "no-rate" | "error";
+type AssetStatus = "created" | "regenerated" | "skipped-existing" | "skipped-finalized" | "skipped-not-here" | "no-rate" | "error";
 
 interface AssetOutcome {
   assetId: string;
@@ -26,6 +26,7 @@ const STATUS_META: Record<AssetStatus, { icon: React.ReactNode; label: string; c
   regenerated:       { icon: <CheckCircle2 className="w-3.5 h-3.5" />, label: "Regenerated", cls: "text-indigo-400" },
   "skipped-existing":   { icon: <SkipForward className="w-3.5 h-3.5" />,   label: "Existing",   cls: "text-gray-400" },
   "skipped-finalized":  { icon: <Lock className="w-3.5 h-3.5" />,          label: "Locked",     cls: "text-amber-400" },
+  "skipped-not-here":   { icon: <SkipForward className="w-3.5 h-3.5" />,   label: "Not on site", cls: "text-gray-400" },
   "no-rate":         { icon: <AlertTriangle className="w-3.5 h-3.5" />, label: "No rate",  cls: "text-orange-400" },
   error:             { icon: <XCircle className="w-3.5 h-3.5" />,       label: "Error",    cls: "text-red-400" },
 };

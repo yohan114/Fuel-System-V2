@@ -13,13 +13,14 @@ import { pickRateCents, defaultModeForAsset, resolveRateBasis } from "./rate";
 import { computeTotals, unitLabel, basisLabel, type BillingMode, type RateBasis } from "./calc";
 import { computeSegmentedTotals, type SegmentInput } from "./segmented";
 import { buildBillSnapshot } from "./revisions";
-import { getMonthSegments, type MonthSegment } from "../assignments";
+import { getMonthSegments, assetHasAssignments, type MonthSegment } from "../assignments";
 
 export type GenerateStatus =
   | "created"
   | "regenerated"
   | "skipped-finalized"
   | "skipped-existing"
+  | "skipped-not-here"
   | "no-rate";
 
 export interface GenerateOptions {
@@ -46,6 +47,7 @@ export interface GenerateResult {
   regenerated: number;
   skippedFinalized: number;
   skippedExisting: number;
+  skippedNotHere: number;
   noRate: number;
   errors: { assetId: string; assetCode?: string; message: string }[];
   assets: AssetOutcome[];
@@ -227,6 +229,20 @@ export async function generateBillForAsset(
   }
 
   const fuel = await sumFuelForMonth(asset.id, period.start, period.end, projectCode);
+
+  // Phantom-bill guard. We are on the legacy single-site path, which means the
+  // vehicle had NO assignment overlapping this month, so the project was taken
+  // from its (possibly stale) current pin. If the vehicle has moved between
+  // sites at all (it owns assignments, just none this month) and shows no
+  // measurable activity at the pinned project — no fuel issued there, no meter
+  // movement / working days — there is no evidence it was on this site, so it
+  // must not be billed a guaranteed minimum here. This stops a vehicle that has
+  // since left (e.g. arrives at a new site next month) from appearing on its
+  // old site's consolidated invoice. Truly never-assigned vehicles are exempt,
+  // preserving back-compat.
+  if (fuel.litres === 0 && actualUnits === 0 && (await assetHasAssignments(asset.id))) {
+    return { status: "skipped-not-here", billId: existing?.id };
+  }
 
   const actualMeterUnits = actualUnits;
   let derivedStandardUnits: number | null = null;
@@ -609,6 +625,7 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
     regenerated: 0,
     skippedFinalized: 0,
     skippedExisting: 0,
+    skippedNotHere: 0,
     noRate: 0,
     errors: [],
     assets: [],
@@ -678,6 +695,7 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
       else if (r.status === "regenerated") result.regenerated++;
       else if (r.status === "skipped-finalized") result.skippedFinalized++;
       else if (r.status === "skipped-existing") result.skippedExisting++;
+      else if (r.status === "skipped-not-here") result.skippedNotHere++;
       else if (r.status === "no-rate") result.noRate++;
       result.assets.push({ assetId: a.id, assetCode: a.code, assetLabel, status: r.status, billId: r.billId });
     } catch (err: any) {
