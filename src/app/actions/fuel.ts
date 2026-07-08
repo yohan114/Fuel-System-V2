@@ -206,6 +206,7 @@ export async function approveRequestAction(requestId: string, reviewNote: string
           source: "STATION",
           issueDate,
           issuedById: admin.id,
+          issuePerson: admin.name,
           linkedRequestId: request.id,
           fuelPriceId: resolvedPrice.id,
           ...(request.photoData
@@ -452,6 +453,7 @@ export async function recordDirectIssueAction(formData: FormData) {
           source,
           issueDate,
           issuedById: admin.id,
+          issuePerson: admin.name,
           fuelPriceId: resolvedPrice.id,
           ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
         },

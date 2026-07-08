@@ -552,6 +552,7 @@ export async function workshopIssueFuelAction(formData: FormData) {
           source: tank.name,
           issueDate,
           issuedById: user.id,
+          issuePerson: user.name,
           fuelPriceId: resolvedPrice.id,
           bulkTankId: tank.id,
           ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),

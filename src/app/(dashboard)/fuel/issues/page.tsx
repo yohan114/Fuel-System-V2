@@ -232,7 +232,7 @@ export default async function FuelIssuesPage(props: PageProps) {
                 <th className="px-6 py-4 font-semibold">Volume</th>
                 <th className="px-6 py-4 font-semibold">Pump Price</th>
                 <th className="px-6 py-4 font-semibold">Total Cost</th>
-                <th className="px-6 py-4 font-semibold">Issued By</th>
+                <th className="px-6 py-4 font-semibold">Issue Person</th>
                 <th className="px-6 py-4 font-semibold">Source</th>
                 <th className="px-6 py-4 font-semibold text-right">Action</th>
               </tr>
@@ -279,8 +279,8 @@ export default async function FuelIssuesPage(props: PageProps) {
                   <td className="px-6 py-4 text-white font-bold whitespace-nowrap">
                     Rs. {(issue.totalCost / 100).toLocaleString("en-LK", { minimumFractionDigits: 2 })}
                   </td>
-                  <td className="px-6 py-4 text-gray-400">
-                    {issue.issuedBy.name}
+                  <td className="px-6 py-4 text-gray-300">
+                    {issue.issuePerson || issue.issuedBy.name}
                   </td>
                   <td className="px-6 py-4">
                     <span className="bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400 border border-white/5">

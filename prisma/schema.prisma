@@ -271,6 +271,11 @@ model FuelIssue {
   photoName       String?
   photoMime       String?
 
+  // Accountability: the responsible person who issued / oversaw this fuel — the
+  // site's pump operator, or the site name for historical/imported rows. The
+  // site itself is derived from the vehicle's allocation (see site-attribution).
+  issuePerson     String?
+
   corrections     FuelIssueCorrection[]
 }
 
