@@ -23,7 +23,7 @@ const SITES: [string, string, number][] = [
   ["BADAL", "Badalgama Plant/Workshop", 15000],
   ["BATTI", "ICDP Batti Lot-03", 15000],
   ["BATTI-02", "ICDP Batti Lot-02", 15000],
-  ["BGP", "Badalgama Plant", 15000],
+  // BGP "Badalgama Plant" removed — merged into BADAL "Badalgama Plant/Workshop"
   ["CEP-03 E", "CEP-03 Epackage", 15000],
   ["CEP-03-ABC", "CEP-03 A,B & C Package", 15000],
   ["CEP-03F", "CEP-03F Galagedara", 2500],
