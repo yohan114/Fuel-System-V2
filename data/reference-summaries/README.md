@@ -13,6 +13,7 @@ total amount Rs. — i.e. historical rental billing, not daily fuel issues.
 |------|------|--------|----------|
 | `Batti_ICDP_LOT02_Running_Summary.xlsx` | ICDP Batti Lot-02 | Apr 2025 – Jan 2026 | 61 |
 | `Inginimitiya_Vehicle_Machinery_Summary.xlsx` | Inginimitiya | May 2025 – Apr 2026 | 12 |
+| `Ruwanwella_Vehicle_Machinery_Summary.xlsx` | Ruwanwella Water Project | Oct 2025 – Mar 2026 | ~20 |
 
 Why not imported:
 - They are monthly aggregates, so turning them into fuel issues would fabricate

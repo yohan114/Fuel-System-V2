@@ -39,6 +39,8 @@ const SOURCES = [
   { file: "data/source-sheets/Karativu_Diesel_Details.xlsx",     siteName: "Karativu Bridge" },
   { file: "data/source-sheets/Pallanoya_Diesel_Details.xlsx",    siteName: "Pallanoya Bridge" },
   { file: "data/source-sheets/Lot02_Batti_Diesel_Details.xlsx",  siteName: "ICDP Batti Lot-02" },
+  { file: "data/source-sheets/Avissawella_Diesel_Details.xlsx",  siteName: "Avissawella Site", defaultYear: 2026 },
+  { file: "data/source-sheets/Ruwanwella_Diesel_Details.xlsx",   siteName: "Ruwanwella Water Project" },
 ];
 
 // ---------- xlsx helpers ----------
@@ -46,21 +48,29 @@ const cellV = (c) => { let v = c.value; if (v && typeof v === "object" && v.resu
 const str = (v) => (v === null || v === undefined) ? "" : String(v).trim();
 const num = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(String(v).replace(/[, ]/g, "")); return Number.isFinite(n) ? n : null; };
 const MONTHS = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12 };
-// tolerant "Month YYYY" finder: "January 2026", "March-2026", "June- 2026", "Feb 26"
+// tolerant month/year finder. Handles "January 2026", "March-2026", "June- 2026",
+// "Feb 26" (2-digit), "Mrch - 2026" (typo) and month-only "March" (year=null,
+// filled by the caller). Returns { month, year|null } or null when no month.
+const MONTH_ALIASES = [[/\bjan/,1],[/\bfeb/,2],[/\bmar|\bmrch/,3],[/\bapr/,4],[/\bmay/,5],[/\bjun/,6],[/\bjul/,7],[/\baug/,8],[/\bsep/,9],[/\boct/,10],[/\bnov/,11],[/\bdec/,12]];
 function parseMonthText(text) {
-  const m = String(text || "").toLowerCase().match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-\s.']*(\d{2,4})\b/);
-  if (!m) return null;
-  const key = Object.keys(MONTHS).find((k) => k.startsWith(m[1]));
-  let year = +m[2]; if (year < 100) year += 2000; // "26" -> 2026
-  return key ? { month: MONTHS[key], year } : null;
+  const t = String(text || "").toLowerCase();
+  let month = null;
+  for (const [re, m] of MONTH_ALIASES) if (re.test(t)) { month = m; break; }
+  if (!month) return null;
+  let year = null;
+  const y4 = t.match(/\b(20\d{2})\b/);
+  if (y4) year = +y4[1];
+  else { const y2 = t.match(/[a-z][-\s.']*(\d{2})\b/); if (y2) year = 2000 + +y2[1]; } // "Feb 26"
+  return { month, year };
 }
 const iso = (y, mo, d, endOfDay = false) => new Date(`${y}-${String(mo).padStart(2,"0")}-${String(d).padStart(2,"0")}T${endOfDay?"23:59:59.999":"00:00:00.000"}+05:30`).toISOString();
 const lastDayOfMonth = (y, mo) => new Date(y, mo, 0).getDate();
 
 // rows that are headers / footers / section subtotals — never a vehicle
-const JUNK = /daily|balance at site tank|fuel purchase|^total\b|total issue|vehicle reg|company code|type of vehicle|fuel type|s\.?\s*no\.?$/i;
+// (covers "Daily/Monthly Opening/Closing Balance", purchase & subtotal rows)
+const JUNK = /daily|monthly|\bbalance\b|opening balance|fuel purchase|^total\b|total issue|vehicle reg|company code|type of vehicle|fuel type|s\.?\s*no\.?$/i;
 
-function parseWorkbook(absPath, siteName) {
+function parseWorkbook(absPath, siteName, defaultYear) {
   const wb = new ExcelJS.Workbook();
   return wb.xlsx.readFile(absPath).then(() => {
     const months = [];
@@ -70,12 +80,19 @@ function parseWorkbook(absPath, siteName) {
       let ym = parseMonthText(ws.name);
       for (let r = 1; r <= 3 && !ym; r++) for (let c = 1; c <= ws.columnCount && !ym; c++) ym = parseMonthText(cellV(ws.getRow(r).getCell(c)));
       if (!ym) return;
-      // header row (col1 == "S. No.") and day-number row (col6 numeric 1..3)
+      // year-less tab (Avissawella "March"): take a 20xx from the header band, else the source default
+      if (ym.year == null) {
+        let y = null;
+        for (let r = 1; r <= 3 && !y; r++) for (let c = 1; c <= ws.columnCount && !y; c++) { const mm = String(cellV(ws.getRow(r).getCell(c)) ?? "").match(/\b(20\d{2})\b/); if (mm) y = +mm[1]; }
+        ym.year = y ?? defaultYear ?? 2026;
+      }
+      // header row (col1 == "S. No.") and day-number row (find day "1" in cols 6-8,
+      // since some sheets, e.g. Ruwanwella, put an Owner column at 6 and days at 7+)
       let hdr = null;
       for (let r = 1; r <= 6; r++) if (/S\.?\s*No/i.test(str(cellV(ws.getRow(r).getCell(1))))) { hdr = r; break; }
       if (hdr === null) hdr = 3;
       let dayRow = null;
-      for (const r of [hdr + 1, hdr, hdr - 1]) { const v = num(cellV(ws.getRow(r).getCell(6))); if (v !== null && v >= 1 && v <= 3) { dayRow = r; break; } }
+      for (const r of [hdr + 1, hdr, hdr - 1]) { if ([6,7,8].some((cc) => num(cellV(ws.getRow(r).getCell(cc))) === 1)) { dayRow = r; break; } }
       if (dayRow === null) dayRow = hdr + 1;
       // totals columns by label text — scan both the header row and the
       // day-number row (some sheets, e.g. Lot-02, carry the labels on row 4)
@@ -100,11 +117,11 @@ function parseWorkbook(absPath, siteName) {
         const row = ws.getRow(r);
         const reg = str(cellV(row.getCell(2)));
         const code = str(cellV(row.getCell(3)));
-        const label = `${reg} ${code}`;
-        // footer capture
+        const label = `${reg} ${code} ${str(cellV(row.getCell(4)))}`; // include the type column
+        // footer capture (daily OR monthly wording)
         if (/fuel purchase/i.test(label)) { for (const { col:c, day } of dayCols) { const l = num(cellV(row.getCell(c))); if (l && l > 0) purchases.push({ day, litres: l }); } continue; }
-        if (/closing balance at site tank/i.test(label)) { for (const { col:c, day } of dayCols) { const l = num(cellV(row.getCell(c))); if (l !== null) closingBalance = l; } continue; }
-        if (JUNK.test(reg) || JUNK.test(code)) continue;
+        if (/closing balance/i.test(label)) { for (const { col:c, day } of dayCols) { const l = num(cellV(row.getCell(c))); if (l !== null) closingBalance = l; } continue; }
+        if (JUNK.test(label)) continue;
         if (!reg && !code) continue;
         const issues = [];
         for (const { col:c, day } of dayCols) { const l = num(cellV(row.getCell(c))); if (l !== null && l > 0) issues.push({ day, litres: l }); }
@@ -158,7 +175,7 @@ function matchAsset(code, reg) {
 const cats = new Map(db.prepare("SELECT name,id FROM Category").all().map((c) => [c.name, c.id]));
 const catId = (n) => cats.get(n) || cats.get("Other Asset");
 const isPlate = (reg) => /^[A-Za-z]{0,4}[-\s]?\d{2,4}[-\s]?\d{0,4}$/.test((reg || "").trim());
-const SITE_ABBR = { Ambanpola: "AMB", Inginimitiya: "INGI", "MUTHUR PLANT": "MUT", "Karativu Bridge": "KB", "Pallanoya Bridge": "PN", "ICDP Batti Lot-02": "LOT02" };
+const SITE_ABBR = { Ambanpola: "AMB", Inginimitiya: "INGI", "MUTHUR PLANT": "MUT", "Karativu Bridge": "KB", "Pallanoya Bridge": "PN", "ICDP Batti Lot-02": "LOT02", "Avissawella Site": "AVIS", "Ruwanwella Water Project": "RWP" };
 const CAT_PREFIX = { "Generator":"GEN", "PE - Concrete Mixer":"MIX", "PE - Poker / Concrete Vibrator":"PKR", "PE - Power Tool — Other":"PT", "Workshop Plant / Equipment":"WSP", "Vibrating Roller":"RLR", "Static Roller":"RLR", "PE - Engine Water Pump":"PMP" };
 function classify(type, code, reg) {
   const t = `${type} ${code} ${reg}`.toLowerCase();
@@ -172,6 +189,9 @@ function classify(type, code, reg) {
   if (/board|form\s*work/.test(t))           return { cat: "Workshop Plant / Equipment", meter: "HOURS" };
   if (/roller/.test(t))                      return { cat: "Vibrating Roller", meter: "HOURS" };
   if (/pump/.test(t))                        return { cat: "PE - Engine Water Pump", meter: "HOURS" };
+  if (/compres|compos|compes|air comp|\bac-?\d/.test(t)) return { cat: "PE - Air Compressor", meter: "HOURS" };
+  if (/bowser/.test(t))                      return { cat: "Water Bowser", meter: "KM" };
+  if (/prime\s*mover|low\s*bed|\bbed\b/.test(t)) return { cat: "Prime Mover / Bed", meter: "KM" };
   if (/crew\s*cab/.test(t))                  return { cat: "Crew Cab", meter: "KM" };
   if (/double\s*cab/.test(t))                return { cat: "Double Cab (Pickup)", meter: "KM" };
   if (/single\s*cab/.test(t))                return { cat: "Single Cab", meter: "KM" };
@@ -191,7 +211,7 @@ const priceFor = (dayIso) => dieselPrices.find((p) => p.d <= dayIso) ?? dieselPr
 // ================= run =================
 (async () => {
   const parsed = [];
-  for (const s of SOURCES) parsed.push({ ...s, data: await parseWorkbook(path.join(process.cwd(), s.file), s.siteName) });
+  for (const s of SOURCES) parsed.push({ ...s, data: await parseWorkbook(path.join(process.cwd(), s.file), s.siteName, s.defaultYear) });
 
   const stats = { assetsCreated: 0, assetsMatched: 0, issues: 0, litres: 0, meterReadings: 0, assignments: 0, receipts: 0, receiptLitres: 0 };
   const created = []; const matchedList = [];
