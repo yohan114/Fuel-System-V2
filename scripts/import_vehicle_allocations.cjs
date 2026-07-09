@@ -57,6 +57,18 @@ const SITE_ALIAS = {
   RUWANWELLA: "RWP",
 };
 
+// A few source rows bury a real vehicle number inside a free-text note (e.g.
+// "PE-3723 (MR Chinthaka surveyor officer)"). The junk filter below would drop
+// them on the note keyword, so map the exact annotated label back to its clean
+// vehicle key first. Keyed on the normalised (upper, spaces removed) label.
+const VEHICLE_ALIAS = {
+  "PE-3723(MRCHINTHAKASURVEYOROFFICER)": "PE-3723",
+  "DAA-7422(DELAYENTRY)": "DAA-7422",
+  "LB-21REPAIR": "LB-21",
+  "DELAYENTER-2025/10/16-SK2007": "SK2007",
+};
+const cleanVeh = (raw) => VEHICLE_ALIAS[norm(raw)] || S(raw);
+
 // A raw vehicle key that is clearly not a vehicle (data-entry note / activity).
 const JUNK_RE = /(WORKSHOP|CLEAN|MOTOR|SURVEYOR|REPAIR|DELAY|FROMOIL|PAVER|OFFICER|WATER MOTOR)/i;
 function looksLikeVehicle(raw) {
@@ -104,7 +116,7 @@ function looksLikeVehicle(raw) {
   const ownerBy = new Map();
   const rs = sheet("Running Summary");
   for (let r = 2; r <= rs.rowCount; r++) {
-    const veh = S(val(rs.getRow(r), 4)); if (!veh) continue;
+    const veh = cleanVeh(val(rs.getRow(r), 4)); if (!veh) continue;
     const month = S(val(rs.getRow(r), 2));
     const owner = S(val(rs.getRow(r), 14));
     if (owner) ownerBy.set(`${norm(veh)}|${month}`, owner);
@@ -115,7 +127,7 @@ function looksLikeVehicle(raw) {
   const dfl = sheet("Daily Fuel Log");
   for (let r = 2; r <= dfl.rowCount; r++) {
     if (S(val(dfl.getRow(r), 2)) !== "Daily Issue") continue;
-    const veh = S(val(dfl.getRow(r), 6)); if (!veh) continue;
+    const veh = cleanVeh(val(dfl.getRow(r), 6)); if (!veh) continue;
     const p = resolveSite(val(dfl.getRow(r), 1));
     const key = `${p ? p.code : norm(val(dfl.getRow(r), 1))}|${S(val(dfl.getRow(r), 4))}|${norm(veh)}`;
     dailyKeys.add(key);
@@ -127,7 +139,7 @@ function looksLikeVehicle(raw) {
   const vbill = sheet("Vehicle Bill");
   for (let r = 5; r <= vbill.rowCount; r++) {
     const rawSite = S(val(vbill.getRow(r), 1)); if (!rawSite) continue;
-    const veh = S(val(vbill.getRow(r), 3)); if (!veh) continue;
+    const veh = cleanVeh(val(vbill.getRow(r), 3)); if (!veh) continue;
     const month = S(val(vbill.getRow(r), 2));
     const p = resolveSite(rawSite);
     const key = `${p ? p.code : norm(rawSite)}|${month}|${norm(veh)}`;
@@ -158,7 +170,7 @@ function looksLikeVehicle(raw) {
   let vmRows = 0;
   for (let r = 2; r <= vm.rowCount; r++) {
     const rawSite = S(val(vm.getRow(r), 1)); if (!rawSite) continue;
-    const veh = S(val(vm.getRow(r), 3)); if (!veh) continue;
+    const veh = cleanVeh(val(vm.getRow(r), 3)); if (!veh) continue;
     const month = S(val(vm.getRow(r), 2));
     vmRows++;
     const key = upsertAlloc(rawSite, month, veh, {
