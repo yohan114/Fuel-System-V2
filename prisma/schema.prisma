@@ -147,6 +147,7 @@ model Asset {
   serviceRecords ServiceRecord[]
   serviceIntervalOverride ServiceInterval?
   filters       AssetFilter[]
+  allocations   VehicleAllocation[]
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -186,6 +187,50 @@ model AssetAssignment {
 
   @@index([assetId, startDate])
   @@index([projectId, startDate])
+}
+
+// Site-vehicle allocation master layer: one clean record per vehicle per site
+// per month, built from the register's Vehicle Monthly / Vehicle Bill sheets —
+// which pre-list the FULL fleet stationed at a site, not just the vehicles that
+// drew fuel. This is the authoritative "what was stationed where" table that
+// fuel transactions, billing and reconciliation hang off, so a vehicle with no
+// fuel that month is still recorded as allocated. Distinct from AssetAssignment
+// (the app's date-range posting used for live billing/visibility): this is the
+// month-granular, source-audited import of record.
+model VehicleAllocation {
+  id          String   @id @default(uuid())
+
+  // Idempotency key: normalised "siteName|month|vehicleNo". A re-run upserts on
+  // this so the same source row never duplicates.
+  dedupeKey   String   @unique
+
+  // Resolved site (null only when a raw site name can't be mapped to a project).
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  siteName    String   // raw site/project label exactly as in the source
+
+  month       String   // allocation month, "YYYY-MM"
+
+  // Resolved vehicle (null when the raw vehicle key can't be matched to an asset,
+  // e.g. a not-yet-registered machine); the raw key is always kept for audit.
+  assetId     String?
+  asset       Asset?   @relation(fields: [assetId], references: [id])
+  vehicleNo   String   // raw vehicle key exactly as in the source
+
+  machineType String?  // Vehicle / Machine classification from the source
+  ownerCode   String?  // Company Code / Owner (E&C, Hire, Internal, …)
+  basis       String?  // Fuel Report | Fuel Stock Issue | Hire Summary (Internal/External)
+  active      Boolean  @default(true) // Y/N — vehicle is in its most-recent (current) allocation
+
+  sourceFile  String?  // audit trail
+  sourceSheet String?  // audit trail
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId, month])
+  @@index([assetId, month])
+  @@index([month])
 }
 
 model FuelPrice {
@@ -397,6 +442,7 @@ model Project {
   bulkTanks   BulkTank[]
   assignments AssetAssignment[]
   budgets     Budget[]
+  allocations VehicleAllocation[]
 }
 
 model DailyCondition {
