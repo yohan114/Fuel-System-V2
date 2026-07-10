@@ -57,3 +57,5 @@ next-env.d.ts
 # SQLite WAL side-files (transient)
 *.db-shm
 *.db-wal
+scratch/
+backups/
