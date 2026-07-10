@@ -12,6 +12,7 @@ import {
 import { pickRateCents, defaultModeForAsset, resolveRateBasis, basisFromBillingType } from "./rate";
 import { computeTotals, unitLabel, basisLabel, type BillingMode, type RateBasis } from "./calc";
 import { computeSegmentedTotals, type SegmentInput } from "./segmented";
+import { attributeSegmentFuel } from "./fuel-attribution";
 import { buildBillSnapshot } from "./revisions";
 import { getMonthSegments, assetHasAssignments, type MonthSegment } from "../assignments";
 
@@ -478,6 +479,8 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
   const segInputs: SegmentInput[] = [];
   let openingMeter: number | null = null;
   let closingMeter: number | null = null;
+  let potLitres = 0;
+  let potCents = 0;
   for (const seg of segments) {
     let rawUnits = 0;
     if (isMeter) {
@@ -489,6 +492,8 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
       rawUnits = await countWorkingDays(asset.id, seg.start, seg.end);
     }
     const fuelSeg = await sumFuelForWindow(asset.id, seg.start, seg.end);
+    potLitres += fuelSeg.litres;
+    potCents += fuelSeg.costCents;
     segInputs.push({
       projectId: seg.projectId,
       projectName: seg.projectName,
@@ -497,7 +502,34 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
       rawUnits,
       fuelLitres: fuelSeg.litres,
       fuelCostCents: fuelSeg.costCents,
+      // Physical-work estimate stays pinned to the fuel burnt on-site during this
+      // segment's days, so re-attributing billed fuel by source (below) never
+      // moves rental between sites.
+      derivLitres: fuelSeg.litres,
     });
+  }
+
+  // Re-attribute each segment's fuel by SOURCE (the site register / pump the
+  // litres came from), folding shared-pump fuel by day-share. This redistributes
+  // exactly the same pot (potLitres/potCents) the date-window sums above produced,
+  // so the bill's fuel total — hence its subtotal, SSCL, VAT and grand total — is
+  // unchanged; only which site each FUEL line is attributed to moves. Single-site
+  // bills never reach here (one segment → the whole pot).
+  if (segInputs.length > 1 && potLitres > 0) {
+    const monthIssues = await prisma.fuelIssue.findMany({
+      where: { assetId: asset.id, issueDate: { gte: period.start, lte: period.end }, voided: false },
+      select: { litres: true, totalCost: true, source: true },
+    });
+    const attributed = attributeSegmentFuel(
+      monthIssues.map((i) => ({ litres: i.litres, costCents: i.totalCost, source: i.source })),
+      segInputs.map((s) => ({ projectCode: s.projectCode, days: s.days })),
+      potLitres,
+      potCents,
+    );
+    for (let i = 0; i < segInputs.length; i++) {
+      segInputs[i].fuelLitres = attributed[i].litres;
+      segInputs[i].fuelCostCents = attributed[i].costCents;
+    }
   }
 
   // Working days across the whole period feed the breakdown-deduction estimate.

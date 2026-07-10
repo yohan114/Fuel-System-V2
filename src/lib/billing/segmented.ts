@@ -15,8 +15,14 @@ export interface SegmentInput {
   projectCode: string;
   days: number; // assigned days in this segment
   rawUnits: number; // recorded meter delta (metered modes) or working days (perday)
-  fuelLitres: number;
-  fuelCostCents: number;
+  fuelLitres: number; // fuel BILLED to this segment (may be source-reattributed)
+  fuelCostCents: number; // cost of the billed fuel
+  // Litres used to estimate physical work when the meter is missing (fuel-derived
+  // units). This is the fuel actually burnt on-site during the segment's days
+  // (date-window), which can differ from the billed fuel above when the latter is
+  // re-attributed by source. Defaults to fuelLitres when omitted so single-site
+  // and legacy callers are unaffected.
+  derivLitres?: number;
 }
 
 export interface SegmentedConfig {
@@ -104,13 +110,17 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
     let actualSeg = seg.rawUnits;
 
     // Fuel-derived units: when metered movement is missing/low but fuel was
-    // burnt, back the units out of the typical consumption rate.
+    // burnt, back the units out of the typical consumption rate. This estimates
+    // physical work, so it uses the fuel actually burnt on-site during the
+    // segment's days (derivLitres), NOT the billed fuel — which may be
+    // source-reattributed and would otherwise shift rental between sites.
+    const derivLitres = seg.derivLitres ?? seg.fuelLitres;
     let dStd: number | null = null;
     let dEcon: number | null = null;
     let segDerived = false;
-    if (isMeter && seg.fuelLitres > 0 && cfg.fuelConsTyp != null && cfg.fuelConsTyp > 0) {
-      dStd = seg.fuelLitres / cfg.fuelConsTyp;
-      if (cfg.fuelConsEcon && cfg.fuelConsEcon > 0) dEcon = seg.fuelLitres / cfg.fuelConsEcon;
+    if (isMeter && derivLitres > 0 && cfg.fuelConsTyp != null && cfg.fuelConsTyp > 0) {
+      dStd = derivLitres / cfg.fuelConsTyp;
+      if (cfg.fuelConsEcon && cfg.fuelConsEcon > 0) dEcon = derivLitres / cfg.fuelConsEcon;
 
       const tolerance = cfg.billingMode === "hourly" ? 10 : 50;
       if (Math.abs(actualSeg - dStd) <= tolerance) {
