@@ -35,7 +35,7 @@ if (fs.existsSync(envPath)) {
 const adapter = new PrismaBetterSqlite3({ url: process.env.DATABASE_URL || "file:./data/app.db" });
 const prisma = new PrismaClient({ adapter });
 
-const FILE = process.env.RATE_SHEET || path.join(process.cwd(), "Fleet_Machinery_Rental_Price_Sheet_2026.xlsx");
+const FILE = process.env.RATE_SHEET || path.join(process.cwd(), "data/source-sheets", "Fleet_Machinery_Rental_Price_Sheet_2026.xlsx");
 
 const FUEL_PRICES = [
   { fuelKind: "AUTO_DIESEL", pricePerLitre: 382_00, effectiveFrom: new Date("2026-06-29T00:00:00"), note: "CPC effective 29-Jun-2026 (cut of Rs.25) — 2026 rate sheet" },

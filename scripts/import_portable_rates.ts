@@ -45,7 +45,7 @@ function generateAssetCode(catCode: string, spec: string): string {
 }
 
 async function main() {
-  const excelPath = path.join(process.cwd(), "EnC_Fleet_Rate_Card_2026.xlsx");
+  const excelPath = path.join(process.cwd(), "data/source-sheets", "EnC_Fleet_Rate_Card_2026.xlsx");
   if (!fs.existsSync(excelPath)) {
     console.error(`Error: File not found at ${excelPath}`);
     process.exit(1);

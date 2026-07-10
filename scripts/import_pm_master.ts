@@ -27,7 +27,7 @@ if (fs.existsSync(envPath)) {
 const adapter = new PrismaBetterSqlite3({ url: process.env.DATABASE_URL || "file:./data/app.db" });
 const prisma = new PrismaClient({ adapter });
 
-const FILE = process.env.PM_MASTER || path.join(process.cwd(), "Fleet_PM_Master.xlsx");
+const FILE = process.env.PM_MASTER || path.join(process.cwd(), "data/source-sheets", "Fleet_PM_Master.xlsx");
 // "General Workshop" is reference guidance (greases, torque tables) without
 // scheduling intervals — not a vehicle PM plan, so it is skipped.
 const SKIP_SHEETS = new Set(["README", "Fleet Register", "PM Matrix Summary", "General Workshop"]);

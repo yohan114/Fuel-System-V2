@@ -210,7 +210,7 @@ async function main() {
   });
 
   for (const site of SITES) {
-    const excelPath = path.join(process.cwd(), site.filename);
+    const excelPath = path.join(process.cwd(), "data/source-sheets", site.filename);
     if (!fs.existsSync(excelPath)) {
       console.warn(`  ⚠ missing ${site.filename}`);
       continue;

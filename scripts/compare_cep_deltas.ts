@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 
 const DAILY_FILE = path.join(process.cwd(), "temp-uploads", "56342016-01_January_2026.xlsb");
-const SUMMARY_FILE = path.join(process.cwd(), "CEP-03 A,B and C - January 2026.xlsx");
+const SUMMARY_FILE = path.join(process.cwd(), "data/source-sheets", "CEP-03 A,B and C - January 2026.xlsx");
 
 const toFloat = (v: unknown) => { const n = parseFloat(String(v)); return isNaN(n) ? 0 : n; };
 
