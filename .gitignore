@@ -59,3 +59,4 @@ next-env.d.ts
 *.db-wal
 scratch/
 backups/
+billing_exports
