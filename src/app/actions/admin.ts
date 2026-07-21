@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
+import { isSiteUser } from "@/lib/roles";
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import fs from "fs";
@@ -84,7 +85,7 @@ export async function createUserAction(formData: FormData) {
     return { error: "All fields are required" };
   }
 
-  if (role !== "ADMIN" && role !== "USER" && role !== "ALLOCATOR" && role !== "WORKSHOP") {
+  if (role !== "ADMIN" && role !== "USER" && role !== "ALLOCATOR" && role !== "WORKSHOP" && role !== "SITE_PUMP") {
     return { error: "Invalid user role specified" };
   }
 
@@ -105,7 +106,7 @@ export async function createUserAction(formData: FormData) {
         email,
         passwordHash,
         role,
-        projectId: role === "USER" && projectId ? projectId : null,
+        projectId: isSiteUser(role) && projectId ? projectId : null,
         bulkTankId: role === "WORKSHOP" && bulkTankId ? bulkTankId : null,
         active: true,
         createdById: admin.id,
@@ -339,7 +340,7 @@ export async function updateUserAssignmentAction(targetUserId: string, formData:
     return { error: "Name and Role are required fields" };
   }
 
-  if (role !== "ADMIN" && role !== "USER" && role !== "ALLOCATOR" && role !== "WORKSHOP") {
+  if (role !== "ADMIN" && role !== "USER" && role !== "ALLOCATOR" && role !== "WORKSHOP" && role !== "SITE_PUMP") {
     return { error: "Invalid user role specified" };
   }
 
@@ -357,7 +358,7 @@ export async function updateUserAssignmentAction(targetUserId: string, formData:
       data: {
         name,
         role,
-        projectId: role === "USER" && projectId ? projectId : null,
+        projectId: isSiteUser(role) && projectId ? projectId : null,
         bulkTankId: role === "WORKSHOP" && bulkTankId ? bulkTankId : null,
       },
     });

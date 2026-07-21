@@ -8,6 +8,7 @@ import {
   deleteUserAction,
 } from "@/app/actions/admin";
 import { Users2, Edit, Power, X, AlertTriangle, CheckCircle, RefreshCw, KeyRound, Trash2 } from "lucide-react";
+import { isSiteUser } from "@/lib/roles";
 
 interface ProjectProp {
   id: string;
@@ -175,9 +176,9 @@ export default function ManageUsersClient({
                   ...u,
                   name,
                   role,
-                  projectId: role === "USER" ? projectId : null,
+                  projectId: isSiteUser(role) ? projectId : null,
                   bulkTankId: role === "WORKSHOP" ? bulkTankId : null,
-                  project: role === "USER" ? matchedProject : null,
+                  project: isSiteUser(role) ? matchedProject : null,
                   bulkTank: role === "WORKSHOP" ? matchedTank : null,
                 }
               : u
@@ -239,7 +240,7 @@ export default function ManageUsersClient({
                     {u.email || "—"}
                   </td>
                   <td className="px-6 py-3.5 text-indigo-300 font-semibold">
-                    {u.role === "USER" && u.project
+                    {isSiteUser(u.role) && u.project
                       ? `Site: ${u.project.name}`
                       : u.role === "WORKSHOP" && u.bulkTank
                       ? `Tank: ${u.bulkTank.name}`
@@ -368,12 +369,13 @@ export default function ManageUsersClient({
                   <option value="ADMIN">Admin (Full System Controls)</option>
                   <option value="ALLOCATOR">Allocator (Project Vehicle Manager)</option>
                   <option value="WORKSHOP">Workshop Pump Operator</option>
+                  <option value="SITE_PUMP">Site Pump Operator (Site-Scoped)</option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                  Project Assignment (For User Role Only)
+                  Project Assignment (Site-scoped roles: User / Site Pump)
                 </label>
                 <select
                   name="projectId"
