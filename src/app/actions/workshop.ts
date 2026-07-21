@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
+import { isPumpOperator } from "@/lib/roles";
 import { revalidatePath } from "next/cache";
 import { getPriceForDate } from "@/lib/pricing";
 import { extractFileField } from "@/lib/upload";
@@ -374,8 +375,8 @@ export async function workshopIssueFuelAction(formData: FormData) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  if (user.role !== "WORKSHOP" || !user.bulkTankId) {
-    return { error: "Only accounts with a linked workshop pump can issue fuel from bulk." };
+  if (!isPumpOperator(user.role) || !user.bulkTankId) {
+    return { error: "Only accounts with a linked pump (workshop or site) can issue fuel from bulk." };
   }
 
   const assetId = formData.get("assetId")?.toString();

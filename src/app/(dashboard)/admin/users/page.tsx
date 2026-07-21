@@ -137,7 +137,7 @@ export default async function AdminUsersPage() {
             {/* Bulk Tank select */}
             <div>
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                Bulk Tank Assignment (For Workshop Role Only)
+                Bulk Tank Assignment (Workshop / Site Pump roles)
               </label>
               <select
                 name="bulkTankId"

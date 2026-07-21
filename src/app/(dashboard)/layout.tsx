@@ -56,6 +56,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
   const isAdmin = session.role === "ADMIN";
   const isAllocator = session.role === "ALLOCATOR";
   const isWorkshop = session.role === "WORKSHOP";
+  const isSitePump = session.role === "SITE_PUMP";
  
   let navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -111,6 +112,23 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Filter Database", href: "/filters", icon: FilterIcon }
+    );
+  } else if (isSitePump) {
+    // SITE_PUMP: a site pump operator — issues fuel + requests from the site's
+    // pump (Site Console), and sees only their own site's data.
+    navItems.push(
+      { label: "Site Console", href: "/site", icon: Database },
+      { label: "Fleet Directory", href: "/fleet", icon: Car },
+      { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
+      { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
+      { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
+      { label: "Meter Readings", href: "/readings", icon: Gauge },
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else {
     // USER role

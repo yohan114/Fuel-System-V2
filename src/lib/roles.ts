@@ -16,9 +16,19 @@ export type Role = "ADMIN" | "ALLOCATOR" | "USER" | "SITE_PUMP" | "WORKSHOP";
 
 const SITE_ROLES = new Set(["USER", "SITE_PUMP"]);
 
+// Roles that operate a physical fuel pump/tank: they issue fuel from a linked
+// BulkTank and request replenishment. WORKSHOP runs a central workshop pump;
+// SITE_PUMP runs a pump at their own site. Both need a bulkTankId.
+const PUMP_ROLES = new Set(["WORKSHOP", "SITE_PUMP"]);
+
 /** True when the role is scoped to its own allocated site. */
 export function isSiteUser(role: string | null | undefined): boolean {
   return !!role && SITE_ROLES.has(role);
+}
+
+/** True when the role issues fuel from a linked bulk tank (workshop or site pump). */
+export function isPumpOperator(role: string | null | undefined): boolean {
+  return !!role && PUMP_ROLES.has(role);
 }
 
 /** A site user who also carries a concrete site scope. */

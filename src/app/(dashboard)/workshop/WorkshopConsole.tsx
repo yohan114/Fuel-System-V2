@@ -77,6 +77,7 @@ interface WorkshopConsoleProps {
   lockMessage: string;
   todayStr: string;
   minDateStr: string;
+  title?: string;
 }
 
 export default function WorkshopConsole({
@@ -90,7 +91,8 @@ export default function WorkshopConsole({
   isLocked,
   lockMessage,
   todayStr,
-  minDateStr
+  minDateStr,
+  title = "Workshop Pump Console"
 }: WorkshopConsoleProps) {
   const [activeTank, setActiveTank] = useState<TankProp | null>(initialTank);
   const [issues, setIssues] = useState<IssueProp[]>(initialIssues);
@@ -288,7 +290,7 @@ export default function WorkshopConsole({
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white tracking-wide">Workshop Pump Console</h1>
+          <h1 className="text-xl font-bold text-white tracking-wide">{title}</h1>
           <p className="text-xs text-gray-400 mt-1 capitalize">
             Manage dispatch inventories and vehicle fillings for **{activeTank.name}**.
           </p>

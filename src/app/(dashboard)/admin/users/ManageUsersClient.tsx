@@ -8,7 +8,7 @@ import {
   deleteUserAction,
 } from "@/app/actions/admin";
 import { Users2, Edit, Power, X, AlertTriangle, CheckCircle, RefreshCw, KeyRound, Trash2 } from "lucide-react";
-import { isSiteUser } from "@/lib/roles";
+import { isSiteUser, isPumpOperator } from "@/lib/roles";
 
 interface ProjectProp {
   id: string;
@@ -177,9 +177,9 @@ export default function ManageUsersClient({
                   name,
                   role,
                   projectId: isSiteUser(role) ? projectId : null,
-                  bulkTankId: role === "WORKSHOP" ? bulkTankId : null,
+                  bulkTankId: isPumpOperator(role) ? bulkTankId : null,
                   project: isSiteUser(role) ? matchedProject : null,
-                  bulkTank: role === "WORKSHOP" ? matchedTank : null,
+                  bulkTank: isPumpOperator(role) ? matchedTank : null,
                 }
               : u
           )
@@ -240,11 +240,10 @@ export default function ManageUsersClient({
                     {u.email || "—"}
                   </td>
                   <td className="px-6 py-3.5 text-indigo-300 font-semibold">
-                    {isSiteUser(u.role) && u.project
-                      ? `Site: ${u.project.name}`
-                      : u.role === "WORKSHOP" && u.bulkTank
-                      ? `Tank: ${u.bulkTank.name}`
-                      : "—"}
+                    {[
+                      isSiteUser(u.role) && u.project ? `Site: ${u.project.name}` : null,
+                      isPumpOperator(u.role) && u.bulkTank ? `Tank: ${u.bulkTank.name}` : null,
+                    ].filter(Boolean).join(" · ") || "—"}
                   </td>
                   <td className="px-6 py-3.5">
                     <span
@@ -393,7 +392,7 @@ export default function ManageUsersClient({
 
               <div>
                 <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                  Bulk Tank Assignment (For Workshop Role Only)
+                  Bulk Tank Assignment (Workshop / Site Pump roles)
                 </label>
                 <select
                   name="bulkTankId"

@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
-import { isSiteUser } from "@/lib/roles";
+import { isSiteUser, isPumpOperator } from "@/lib/roles";
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import fs from "fs";
@@ -107,7 +107,7 @@ export async function createUserAction(formData: FormData) {
         passwordHash,
         role,
         projectId: isSiteUser(role) && projectId ? projectId : null,
-        bulkTankId: role === "WORKSHOP" && bulkTankId ? bulkTankId : null,
+        bulkTankId: isPumpOperator(role) && bulkTankId ? bulkTankId : null,
         active: true,
         createdById: admin.id,
       },
@@ -359,7 +359,7 @@ export async function updateUserAssignmentAction(targetUserId: string, formData:
         name,
         role,
         projectId: isSiteUser(role) && projectId ? projectId : null,
-        bulkTankId: role === "WORKSHOP" && bulkTankId ? bulkTankId : null,
+        bulkTankId: isPumpOperator(role) && bulkTankId ? bulkTankId : null,
       },
     });
 
