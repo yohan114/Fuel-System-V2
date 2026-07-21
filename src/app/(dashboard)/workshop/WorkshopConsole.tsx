@@ -111,6 +111,11 @@ export default function WorkshopConsole({
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
+  // Replenishment source: an outside supplier purchase, or a transfer from
+  // another site that has fuel available.
+  const [reqSource, setReqSource] = useState<"OUTSIDE" | "SITE">("OUTSIDE");
+  const [reqSourceTankId, setReqSourceTankId] = useState<string>("");
+
 
 
   const openModal = (type: "replenish" | "issue" | "site-issue") => {
@@ -515,6 +520,50 @@ export default function WorkshopConsole({
                   className="w-full bg-[#1b1e30]/50 border border-white/5 rounded-xl px-3 py-2.5 text-gray-400 text-xs font-semibold uppercase"
                 />
               </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  Fuel Source
+                </label>
+                <select
+                  name="sourceType"
+                  value={reqSource}
+                  onChange={(e) => { setReqSource(e.target.value as "OUTSIDE" | "SITE"); setReqSourceTankId(""); }}
+                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none"
+                >
+                  <option value="OUTSIDE">Outside Purchase (supplier delivery)</option>
+                  <option value="SITE">From Another Site (transfer available fuel)</option>
+                </select>
+              </div>
+
+              {reqSource === "SITE" && (
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                    Draw Fuel From Site
+                  </label>
+                  <select
+                    name="sourceTankId"
+                    required
+                    value={reqSourceTankId}
+                    onChange={(e) => setReqSourceTankId(e.target.value)}
+                    className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none"
+                  >
+                    <option value="">Select a site with available fuel…</option>
+                    {allTanks
+                      .filter((t) => t.id !== activeTank.id && t.fuelKind === activeTank.fuelKind && t.balance > 0)
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} — {t.balance.toLocaleString()} L available
+                        </option>
+                      ))}
+                  </select>
+                  {allTanks.filter((t) => t.id !== activeTank.id && t.fuelKind === activeTank.fuelKind && t.balance > 0).length === 0 && (
+                    <p className="text-[10px] text-amber-400 mt-1.5">
+                      No other site currently has {activeTank.fuelKind.replace("_", " ")} fuel available.
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">

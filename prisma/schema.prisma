@@ -482,7 +482,8 @@ model BulkTank {
   project   Project?      @relation(fields: [projectId], references: [id])
 
   users     User[]
-  requests  BulkRequest[]
+  requests  BulkRequest[] @relation("BulkRequestTarget")
+  sourceForRequests BulkRequest[] @relation("BulkRequestSource")
   issues    FuelIssue[]   @relation("TankIssues")
   dips      TankDip[]
 }
@@ -518,7 +519,14 @@ model BulkRequest {
   updatedAt       DateTime  @updatedAt
 
   bulkTankId      String
-  bulkTank        BulkTank  @relation(fields: [bulkTankId], references: [id])
+  bulkTank        BulkTank  @relation("BulkRequestTarget", fields: [bulkTankId], references: [id])
+
+  // Where the requested fuel comes from: an outside supplier purchase (a
+  // delivery into the target tank) or a transfer from another site's tank that
+  // has fuel available. Legacy rows default to OUTSIDE (a plain delivery).
+  sourceType      String    @default("OUTSIDE") // "OUTSIDE" | "SITE"
+  sourceTankId    String?
+  sourceTank      BulkTank? @relation("BulkRequestSource", fields: [sourceTankId], references: [id])
 
   requestedById   String
   requestedBy     User      @relation("BulkRequestedBy", fields: [requestedById], references: [id])
