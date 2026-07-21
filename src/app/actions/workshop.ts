@@ -255,51 +255,56 @@ export async function approveBulkRequestAction(requestId: string, reviewNote: st
           },
         });
       } else {
-        // Site tank refuel: draw from the Badalgama Main pump for the same fuel kind
+        // Site tank refuel. If a central "Badalgama Main" source pump exists for
+        // this fuel kind, draw from it (two-tier distribution). Otherwise the
+        // approval is a direct supplier delivery into the site tank — the common
+        // case, since every site keeps its own independent tank.
         const allTanks = await tx.bulkTank.findMany();
-        const mainPump = allTanks.find(t => 
-          t.name.toLowerCase().includes("badalgama") && 
-          t.name.toLowerCase().includes("main") && 
+        const mainPump = allTanks.find(t =>
+          t.id !== req.bulkTankId &&
+          t.name.toLowerCase().includes("badalgama") &&
+          t.name.toLowerCase().includes("main") &&
           t.fuelKind === req.fuelKind
         );
 
-        if (!mainPump) {
-          throw new Error(`Main source pump in Badalgama for ${req.fuelKind.replace("_", " ")} was not found.`);
-        }
-
-        if (mainPump.balance < req.requestedLitres) {
-          throw new Error(`Insufficient fuel in Badalgama Main Pump (${mainPump.name}). Available: ${mainPump.balance.toFixed(1)}L, requested: ${req.requestedLitres}L.`);
-        }
-
-        // Deduct from Main Pump
-        await tx.bulkTank.update({
-          where: { id: mainPump.id },
-          data: {
-            balance: {
-              decrement: req.requestedLitres,
+        if (mainPump) {
+          if (mainPump.balance < req.requestedLitres) {
+            throw new Error(`Insufficient fuel in Badalgama Main Pump (${mainPump.name}). Available: ${mainPump.balance.toFixed(1)}L, requested: ${req.requestedLitres}L.`);
+          }
+          // Transfer: draw from the main pump, add to the site tank.
+          await tx.bulkTank.update({
+            where: { id: mainPump.id },
+            data: { balance: { decrement: req.requestedLitres } },
+          });
+          await tx.bulkTank.update({
+            where: { id: req.bulkTankId },
+            data: { balance: { increment: req.requestedLitres } },
+          });
+          await tx.auditLog.create({
+            data: {
+              actorId: admin.id,
+              action: "APPROVE",
+              entity: "BulkRequest",
+              entityId: requestId,
+              summary: `Approved bulk fuel transfer of ${req.requestedLitres}L from "${mainPump.name}" to "${req.bulkTank.name}"`,
             },
-          },
-        });
-
-        // Increment target tank balance
-        await tx.bulkTank.update({
-          where: { id: req.bulkTankId },
-          data: {
-            balance: {
-              increment: req.requestedLitres,
+          });
+        } else {
+          // No central source pump — direct delivery into the site tank.
+          await tx.bulkTank.update({
+            where: { id: req.bulkTankId },
+            data: { balance: { increment: req.requestedLitres } },
+          });
+          await tx.auditLog.create({
+            data: {
+              actorId: admin.id,
+              action: "APPROVE",
+              entity: "BulkRequest",
+              entityId: requestId,
+              summary: `Approved bulk delivery of ${req.requestedLitres}L to "${req.bulkTank.name}"`,
             },
-          },
-        });
-
-        await tx.auditLog.create({
-          data: {
-            actorId: admin.id,
-            action: "APPROVE",
-            entity: "BulkRequest",
-            entityId: requestId,
-            summary: `Approved bulk fuel transfer of ${req.requestedLitres}L from "${mainPump.name}" to "${req.bulkTank.name}"`,
-          },
-        });
+          });
+        }
       }
     });
 
