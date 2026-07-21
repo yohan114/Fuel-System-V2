@@ -2,7 +2,8 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
-import { isPumpOperator } from "@/lib/roles";
+import { isPumpOperator, isSiteUser } from "@/lib/roles";
+import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
 import { getPriceForDate } from "@/lib/pricing";
 import { extractFileField } from "@/lib/upload";
@@ -485,6 +486,15 @@ export async function workshopIssueFuelAction(formData: FormData) {
         where: { id: asset.id },
         data: { projectId }
       });
+    }
+
+    // A site pump operator may only fuel vehicles allocated to their own site
+    // (the workshop pump is intentionally unscoped and may fuel any vehicle).
+    if (isSiteUser(user.role)) {
+      const allowed = await canUserAccessAsset(user, asset.id, issueDate);
+      if (!allowed) {
+        return { error: "This vehicle is not allocated to your site." };
+      }
     }
 
     if (meterReading !== null) {

@@ -2,6 +2,7 @@ import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { visibleAssetIdsForUser } from "@/lib/assignments";
 import WorkshopConsole from "../workshop/WorkshopConsole";
 
 // Site Pump Console — the site-scoped analog of the Workshop Console. A
@@ -26,8 +27,14 @@ export default async function SitePumpPage() {
 
   const allTanks = await prisma.bulkTank.findMany({ orderBy: { name: "asc" } });
 
+  // Scope the asset picker to vehicles allocated to this operator's site (active
+  // assignment that day + legacy-pinned). null = admin, no restriction.
+  const visibleIds = await visibleAssetIdsForUser(session, new Date());
   const assets = await prisma.asset.findMany({
-    where: { status: { not: "DISPOSED" } },
+    where: {
+      status: { not: "DISPOSED" },
+      ...(visibleIds ? { id: { in: [...visibleIds] } } : {}),
+    },
     select: { id: true, code: true, regNo: true, meterType: true },
     orderBy: { code: "asc" },
   });
