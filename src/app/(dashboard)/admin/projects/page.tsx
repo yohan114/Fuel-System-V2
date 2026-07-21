@@ -3,11 +3,8 @@ import { FUEL_KINDS, DEFAULT_TANK_CAPACITY } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { createProjectAction } from "@/app/actions/project";
-import { 
-  createBulkTankAction, 
-  approveBulkRequestAction, 
-  rejectBulkRequestAction 
-} from "@/app/actions/workshop";
+import { createBulkTankAction } from "@/app/actions/workshop";
+import ReplenishmentApprovals from "./ReplenishmentApprovals";
 import { 
   FolderGit2, 
   Plus, 
@@ -159,63 +156,16 @@ export default async function AdminProjectsPage() {
         </div>
 
         {/* Pending Replenishment Approvals Panel */}
-        {pendingRequests.length > 0 && (
-          <div className="bg-amber-500/5 border border-amber-500/10 rounded-2xl p-6 shadow-md space-y-4">
-            <h3 className="text-sm font-bold text-amber-300 uppercase tracking-wider flex items-center gap-2">
-              <Layers className="w-4 h-4 text-amber-400" />
-              Pending Replenishment Approvals ({pendingRequests.length})
-            </h3>
-            
-            <div className="divide-y divide-white/5">
-              {pendingRequests.map((req) => (
-                <div key={req.id} className="flex flex-col sm:flex-row sm:items-center justify-between py-4 gap-4 text-xs">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-sm">{req.bulkTank.name}</span>
-                      <span className="text-[10px] bg-amber-500/10 text-amber-400 font-bold px-2 py-0.5 rounded uppercase">
-                        {req.fuelKind.replace("_", " ")}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-gray-500 mt-1">
-                      Requested by {req.requestedBy.name} • {new Date(req.createdAt).toLocaleString()}
-                    </p>
-                    <p className="text-white font-bold mt-2 text-md">
-                      Request Quantity: {req.requestedLitres.toLocaleString()} L
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <form action={async () => {
-                      "use server";
-                      await approveBulkRequestAction(req.id, "Approved by Admin");
-                    }}>
-                      <button
-                        type="submit"
-                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-2 rounded-xl text-xs active:scale-95 transition-all shadow-md"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        Approve Refuel
-                      </button>
-                    </form>
-                    
-                    <form action={async () => {
-                      "use server";
-                      await rejectBulkRequestAction(req.id, "Rejected by Admin");
-                    }}>
-                      <button
-                        type="submit"
-                        className="flex items-center gap-1 bg-white/5 hover:bg-red-500/10 hover:text-red-400 text-gray-400 border border-white/5 font-semibold px-3 py-2 rounded-xl text-xs active:scale-95 transition-all"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        Reject
-                      </button>
-                    </form>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <ReplenishmentApprovals
+          requests={pendingRequests.map((r) => ({
+            id: r.id,
+            tankName: r.bulkTank.name,
+            fuelKind: r.fuelKind,
+            requestedByName: r.requestedBy.name,
+            createdAt: r.createdAt.toISOString(),
+            requestedLitres: r.requestedLitres,
+          }))}
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
