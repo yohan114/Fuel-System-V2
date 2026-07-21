@@ -330,6 +330,13 @@ model FuelIssue {
   issuePerson     String?
 
   corrections     FuelIssueCorrection[]
+
+  // Performance: FuelIssue is the largest, fastest-growing table and is read by
+  // date-range on the whole fleet (reports) and per-vehicle (billing/service),
+  // always excluding voided rows. Without these, every such query full-scans.
+  @@index([assetId, issueDate])
+  @@index([issueDate])
+  @@index([bulkTankId])
 }
 
 // An admin-approved error-correction request against a fuel issue. A site user
