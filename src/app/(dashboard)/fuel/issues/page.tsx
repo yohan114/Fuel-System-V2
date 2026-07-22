@@ -250,6 +250,9 @@ export default async function FuelIssuesPage(props: PageProps) {
                     >
                       {issue.asset.code}
                     </Link>
+                    {issue.asset.regNo && (
+                      <span className="block text-[10px] text-gray-400 font-medium mt-0.5">{issue.asset.regNo}</span>
+                    )}
                     {issue.voided && (
                       <span className="ml-2 bg-red-500/10 text-red-300 border border-red-500/10 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">Voided</span>
                     )}

@@ -44,6 +44,7 @@ interface IssueProp {
   issueDate: Date;
   asset: {
     code: string;
+    regNo: string | null;
   };
   issuedBy: {
     name: string;
@@ -172,7 +173,7 @@ export default function WorkshopConsole({
               readingType: "KM",
               totalCost: 0,
               issueDate: optimisticDate,
-              asset: { code: assetCode },
+              asset: { code: assetCode, regNo: selectedAsset?.regNo ?? null },
               issuedBy: { name: "Current Operator" },
             },
             ...prev,
@@ -260,7 +261,7 @@ export default function WorkshopConsole({
               readingType: selectedAsset?.meterType || "KM",
               totalCost: 0,
               issueDate: optimisticDate,
-              asset: { code: assetCode },
+              asset: { code: assetCode, regNo: selectedAsset?.regNo ?? null },
               issuedBy: { name: "Current Operator" },
             },
             ...prev,
@@ -417,10 +418,13 @@ export default function WorkshopConsole({
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-white">{issue.asset.code}</span>
+                      {issue.asset.regNo && (
+                        <span className="text-[10px] text-indigo-300 font-semibold">{issue.asset.regNo}</span>
+                      )}
                       <span className="text-[10px] text-gray-400 font-semibold">({issue.litres}L)</span>
                     </div>
                     <p className="text-[9px] text-gray-500 mt-1">
-                      Issued to {issue.asset.code} • {new Date(issue.issueDate).toLocaleDateString()}
+                      Issued to {issue.asset.code}{issue.asset.regNo ? ` (${issue.asset.regNo})` : ""} • {new Date(issue.issueDate).toLocaleDateString()}
                     </p>
                   </div>
                   <div className="text-right">
@@ -656,9 +660,16 @@ export default function WorkshopConsole({
                   />
                   <datalist id="workshop-asset-suggestions">
                     {assets.map((a) => (
-                      <option key={a.id} value={a.code}>
-                        {a.code} {a.regNo ? `• ${a.regNo}` : ""} ({a.meterType})
-                      </option>
+                      <React.Fragment key={a.id}>
+                        <option value={a.code}>
+                          {a.code}{a.regNo ? ` • ${a.regNo}` : ""} ({a.meterType})
+                        </option>
+                        {a.regNo && (
+                          <option value={a.regNo}>
+                            {a.regNo} • {a.code} ({a.meterType})
+                          </option>
+                        )}
+                      </React.Fragment>
                     ))}
                   </datalist>
                 </div>
@@ -679,7 +690,6 @@ export default function WorkshopConsole({
                   name="issueDate"
                   required
                   defaultValue={todayStr}
-                  min={minDateStr}
                   max={todayStr}
                   className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50 font-semibold"
                 />
@@ -835,7 +845,6 @@ export default function WorkshopConsole({
                   name="issueDate"
                   required
                   defaultValue={todayStr}
-                  min={minDateStr}
                   max={todayStr}
                   className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50 font-semibold"
                 />

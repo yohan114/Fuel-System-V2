@@ -409,9 +409,7 @@ export async function workshopIssueFuelAction(formData: FormData) {
     if (diffDays < 0) {
       return { error: "Selected date cannot be in the future." };
     }
-    if (diffDays > 14) {
-      return { error: "Backdated dispatches are only allowed up to 14 days in the past." };
-    }
+    // Fuel may be issued for any past date (the 14-day backdate cap was removed).
 
     // Preserve hour/minute/second of submission
     issueDate = new Date(
