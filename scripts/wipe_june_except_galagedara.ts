@@ -1,4 +1,4 @@
-import { prisma } from "./src/lib/db";
+import { prisma } from "../src/lib/db";
 const rs=(c:number)=>"Rs "+(c/100).toLocaleString(undefined,{maximumFractionDigits:2});
 const APPLY=process.argv.includes("--apply");
 const KEEP="CEP-03F";
