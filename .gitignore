@@ -60,3 +60,4 @@ next-env.d.ts
 scratch/
 backups/
 billing_exports
+data/app.db.backup-*
