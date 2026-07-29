@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { isPumpOperator, isSiteUser } from "@/lib/roles";
 import { canUserAccessAsset } from "@/lib/assignments";
+import { resolveAsset, ambiguousAssetError } from "@/lib/fleet/resolve-asset";
 import { revalidatePath } from "next/cache";
 import { getPriceForDate } from "@/lib/pricing";
 import { extractFileField } from "@/lib/upload";
@@ -136,13 +137,29 @@ export async function updateBulkTankAction(bulkTankId: string, formData: FormDat
   }
 }
 
-// 2. Submit Bulk Replenishment Request (Workshop user/Admin)
+// 2. Record a Bulk Replenishment (pump operator / admin)
+//
+// Replenishment is applied immediately — there is no admin approval step. The
+// authorisation that used to happen at approval time therefore has to happen
+// here instead: only a pump operator or an admin may top a tank up, and an
+// operator may only top up the tank they are linked to. Without these guards
+// any account holding "create" (which includes plain USER) could silently add
+// litres to any tank in the company.
+//
+// The compensating control for the removed approval is the audit trail plus the
+// physical dip at /admin/tanks: book stock that has been inflated without fuel
+// arriving shows up there as a shortfall.
 export async function submitBulkRequestAction(formData: FormData) {
   let user;
   try {
     user = await assertCan("create");
   } catch (err) {
     return { error: "You are not authorized to perform this action" };
+  }
+
+  const isAdmin = user.role === "ADMIN";
+  if (!isAdmin && !isPumpOperator(user.role)) {
+    return { error: "Only pump operators can record a fuel replenishment." };
   }
 
   // Fuel operations are allowed 24/7 — the 08:00–17:00 time window was removed.
@@ -169,8 +186,13 @@ export async function submitBulkRequestAction(formData: FormData) {
       return { error: "Storage tank not found" };
     }
 
-    // When fuel is drawn from another site, validate the source tank now (the
-    // balance is re-checked at approval time, since it can change meanwhile).
+    if (!isAdmin && tank.id !== user.bulkTankId) {
+      return { error: "You can only record a replenishment for your own pump." };
+    }
+
+    // When fuel is drawn from another site, validate the source tank up front so
+    // the operator gets a clear message; it is re-checked inside the
+    // transaction below, since the balance can move in between.
     let sourceTank = null;
     if (sourceType === "SITE") {
       if (!sourceTankId) return { error: "Choose the site to draw fuel from." };
@@ -179,38 +201,80 @@ export async function submitBulkRequestAction(formData: FormData) {
       if (!sourceTank) return { error: "Source site tank not found." };
       if (sourceTank.fuelKind !== tank.fuelKind) return { error: "That site holds a different fuel type." };
       if (sourceTank.balance < requestedLitres) {
-        return { error: `${sourceTank.name} only has ${sourceTank.balance.toFixed(1)}L available.` };
+        // Never quote the remaining litres to a non-admin: repeated trial
+        // requests would let an operator binary-search another site's level.
+        return {
+          error: isAdmin
+            ? `${sourceTank.name} only has ${sourceTank.balance.toFixed(1)}L available.`
+            : `${sourceTank.name} does not have ${requestedLitres}L available. Try a smaller quantity or another site.`,
+        };
       }
     }
 
-    const req = await prisma.bulkRequest.create({
-      data: {
-        bulkTankId: tank.id,
-        fuelKind: tank.fuelKind,
-        requestedLitres,
-        requestedById: user.id,
-        status: "PENDING",
-        sourceType,
-        sourceTankId: sourceType === "SITE" ? sourceTankId : null,
-      },
-    });
-
     const sourceLabel = sourceType === "SITE" ? `from site "${sourceTank!.name}"` : "by outside purchase";
-    await prisma.auditLog.create({
-      data: {
-        actorId: user.id,
-        action: "CREATE",
-        entity: "BulkRequest",
-        entityId: req.id,
-        summary: `Requested replenishment of ${requestedLitres}L of ${tank.fuelKind} for ${tank.name} ${sourceLabel}`,
-      },
+    const now = new Date();
+
+    // Applied in one transaction: the stock movement and the log entry either
+    // both land or neither does.
+    await prisma.$transaction(async (tx) => {
+      if (sourceType === "SITE" && sourceTankId) {
+        const source = await tx.bulkTank.findUnique({ where: { id: sourceTankId } });
+        if (!source) throw new Error("The source site tank no longer exists.");
+        if (source.balance < requestedLitres) {
+          throw new Error(`${source.name} no longer has ${requestedLitres}L available.`);
+        }
+        await tx.bulkTank.update({
+          where: { id: source.id },
+          data: { balance: { decrement: requestedLitres } },
+        });
+      }
+
+      const updated = await tx.bulkTank.update({
+        where: { id: tank.id },
+        data: { balance: { increment: requestedLitres } },
+      });
+
+      const req = await tx.bulkRequest.create({
+        data: {
+          bulkTankId: tank.id,
+          fuelKind: tank.fuelKind,
+          requestedLitres,
+          requestedById: user.id,
+          status: "APPROVED",
+          reviewedById: user.id,
+          reviewedAt: now,
+          reviewNote: "Auto-applied — replenishment approval is not required.",
+          sourceType,
+          sourceTankId: sourceType === "SITE" ? sourceTankId : null,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "REPLENISH",
+          entity: "BulkRequest",
+          entityId: req.id,
+          summary: `${user.name} added ${requestedLitres}L of ${tank.fuelKind} to "${tank.name}" ${sourceLabel} (applied immediately)`,
+          metaJson: JSON.stringify({
+            tank: tank.name,
+            litres: requestedLitres,
+            sourceType,
+            sourceTank: sourceTank?.name ?? null,
+            balanceAfter: updated.balance,
+          }),
+        },
+      });
     });
 
     revalidatePath("/workshop");
+    revalidatePath("/site");
+    revalidatePath("/admin/tanks");
+    revalidatePath("/admin/projects");
     return { success: true };
   } catch (err: any) {
-    console.error("Submit bulk request error:", err);
-    return { error: err.message || "Failed to submit request" };
+    console.error("Record replenishment error:", err);
+    return { error: err.message || "Failed to record replenishment" };
   }
 }
 
@@ -433,21 +497,22 @@ export async function workshopIssueFuelAction(formData: FormData) {
     }
 
     if (tank.balance < litres) {
+      // Never quote the remaining litres back: repeated trial issues would let
+      // an operator binary-search the exact tank level in a dozen attempts,
+      // defeating the point of hiding it in the console.
       return {
-        error: `Insufficient fuel in ${tank.name}. Available: ${tank.balance.toFixed(1)}L, attempting to issue: ${litres}L.`,
+        error: `${tank.name} does not have enough fuel to issue ${litres}L. Record a bulk replenishment, or contact an administrator.`,
       };
     }
 
-    // 2. Fetch or create asset (supporting typing on-the-fly)
-    let asset = await prisma.asset.findFirst({
-      where: {
-        OR: [
-          { id: assetId },
-          { code: assetId.trim().toUpperCase() },
-          { regNo: assetId.trim().toUpperCase() }
-        ]
-      }
-    });
+    // 2. Fetch or create asset (supporting typing on-the-fly). Matching is
+    // punctuation-insensitive so "ZA0050" finds the vehicle registered
+    // "ZA-0050" instead of creating a duplicate for it.
+    const match = await resolveAsset(assetId);
+    if (match.kind === "ambiguous") {
+      return { error: ambiguousAssetError(assetId, match.codes) };
+    }
+    let asset = match.kind === "found" ? match.asset : null;
 
     if (!asset) {
       const otherCategory = await prisma.category.findFirst({
@@ -478,8 +543,20 @@ export async function workshopIssueFuelAction(formData: FormData) {
     }
 
     // A site pump operator may only fuel vehicles allocated to their own site
-    // (the workshop pump is intentionally unscoped and may fuel any vehicle).
+    // (the Badalgama workshop pump is intentionally unscoped and may fuel any
+    // vehicle on any site).
+    //
+    // Fails closed on an unconfigured account: visibleAssetIdsForUser treats a
+    // site user with no projectId as "unrestricted", so without this check a
+    // site pump operator who has not been assigned a site could fuel any
+    // vehicle in the company — the exact opposite of the intended rule.
     if (isSiteUser(user.role)) {
+      if (!user.projectId) {
+        return {
+          error:
+            "Your account is not linked to a site, so fuel cannot be issued from it. Ask an administrator to set your site in User Accounts.",
+        };
+      }
       const allowed = await canUserAccessAsset(user, asset.id, issueDate);
       if (!allowed) {
         return { error: "This vehicle is not allocated to your site." };
@@ -565,22 +642,33 @@ export async function workshopIssueFuelAction(formData: FormData) {
         });
       }
 
-      // D. Log audit
+      // D. Log audit. Filed under a dedicated ISSUE action (rather than the
+      // generic CREATE) so an admin can pull every dispatch — and, with
+      // REPLENISH, every stock movement — straight out of /admin/audit.
       await tx.auditLog.create({
         data: {
           actorId: user.id,
-          action: "CREATE",
+          action: "ISSUE",
           entity: "FuelIssue",
           entityId: issue.id,
-          summary: `Workshop Pump issued ${litres}L of ${tank.fuelKind} to ${asset.code} (Deducted from ${tank.name})`,
+          summary: `${user.name} issued ${litres}L of ${tank.fuelKind} to ${asset.code} from "${tank.name}"${meterReading !== null ? ` at ${meterReading} ${asset.meterType}` : " (no meter reading)"}`,
+          metaJson: JSON.stringify({
+            tank: tank.name,
+            asset: asset.code,
+            litres,
+            meterReading,
+            issueDate: issueDate.toISOString(),
+          }),
         },
       });
     });
 
     revalidatePath("/workshop");
+    revalidatePath("/site");
     revalidatePath("/fleet");
     revalidatePath(`/fleet/${asset.code}`);
     revalidatePath("/fuel/issues");
+    revalidatePath("/admin/tanks");
     return { success: true };
   } catch (err: any) {
     console.error("Workshop issue fuel error:", err);

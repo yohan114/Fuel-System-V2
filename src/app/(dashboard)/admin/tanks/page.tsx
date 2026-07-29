@@ -1,8 +1,9 @@
 import React from "react";
 import { redirect } from "next/navigation";
+import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { getTankReconciliation } from "@/lib/integrity/tank";
-import { Droplets, AlertTriangle } from "lucide-react";
+import { Droplets, AlertTriangle, PlusCircle } from "lucide-react";
 import TankDipForm from "./TankDipForm";
 
 function L(n: number) {
@@ -14,7 +15,20 @@ export default async function TanksPage() {
   if (!session) return null;
   if (session.role !== "ADMIN") redirect("/");
 
-  const tanks = await getTankReconciliation();
+  const [tanks, replenishments] = await Promise.all([
+    getTankReconciliation(),
+    // Replenishments no longer pass through an approval queue, so this log is
+    // the admin's visibility into who put fuel into which tank and when.
+    prisma.bulkRequest.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: {
+        bulkTank: { select: { name: true } },
+        sourceTank: { select: { name: true } },
+        requestedBy: { select: { name: true } },
+      },
+    }),
+  ]);
 
   return (
     <div className="space-y-8">
@@ -85,6 +99,64 @@ export default async function TanksPage() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Replenishment log — replaces the old approval queue */}
+      <div className="bg-[#121420] border border-white/5 rounded-2xl p-5 md:p-6 shadow-xl overflow-x-auto">
+        <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
+          <PlusCircle className="w-4 h-4 text-indigo-400" /> Recent Replenishments
+        </h3>
+        <p className="text-[11px] text-gray-500 mb-4 border-b border-white/5 pb-3">
+          Replenishments apply immediately without approval. Every one is logged here
+          and in the <a href="/admin/audit?action=REPLENISH" className="text-indigo-400 hover:underline">audit log</a>.
+          Check these against the dip variance above.
+        </p>
+        {replenishments.length === 0 ? (
+          <div className="text-center py-10 text-xs text-gray-500">No replenishments recorded yet.</div>
+        ) : (
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="text-gray-400 font-semibold border-b border-white/5">
+                <th className="py-2.5">When</th>
+                <th className="py-2.5">Tank</th>
+                <th className="py-2.5 text-right">Litres</th>
+                <th className="py-2.5">Source</th>
+                <th className="py-2.5">Recorded by</th>
+                <th className="py-2.5">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {replenishments.map((r) => (
+                <tr key={r.id} className="hover:bg-white/[0.01]">
+                  <td className="py-3 text-gray-400 whitespace-nowrap">
+                    {new Date(r.createdAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  </td>
+                  <td className="py-3 font-bold text-white">{r.bulkTank.name}</td>
+                  <td className="py-3 text-right text-white font-semibold">{L(r.requestedLitres)}</td>
+                  <td className="py-3 text-gray-400">
+                    {r.sourceType === "SITE"
+                      ? `Transfer from ${r.sourceTank?.name ?? "another site"}`
+                      : "Outside purchase"}
+                  </td>
+                  <td className="py-3 text-gray-300">{r.requestedBy.name}</td>
+                  <td className="py-3">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                        r.status === "APPROVED"
+                          ? "bg-emerald-500/10 text-emerald-400"
+                          : r.status === "REJECTED"
+                          ? "bg-red-500/10 text-red-400"
+                          : "bg-amber-500/10 text-amber-400"
+                      }`}
+                    >
+                      {r.status === "APPROVED" ? "APPLIED" : r.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}

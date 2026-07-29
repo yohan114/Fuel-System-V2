@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
+import { resolveAsset, ambiguousAssetError } from "@/lib/fleet/resolve-asset";
 import { isSiteUser } from "@/lib/roles";
 import { getPriceForDate } from "@/lib/pricing";
 import { checkDailyCap } from "@/lib/fuel-policy";
@@ -46,15 +47,13 @@ export async function submitRequestAction(formData: FormData) {
   }
 
   try {
-    let asset = await prisma.asset.findFirst({
-      where: {
-        OR: [
-          { id: assetId },
-          { code: assetId.trim().toUpperCase() },
-          { regNo: assetId.trim().toUpperCase() }
-        ]
-      }
-    });
+    // Punctuation-insensitive so a typed registration variant finds the
+    // existing vehicle rather than creating a duplicate record for it.
+    const match = await resolveAsset(assetId);
+    if (match.kind === "ambiguous") {
+      return { error: ambiguousAssetError(assetId, match.codes) };
+    }
+    let asset = match.kind === "found" ? match.asset : null;
 
     if (!asset) {
       // Auto-create under fallback category
@@ -354,15 +353,13 @@ export async function recordDirectIssueAction(formData: FormData) {
   }
 
   try {
-    let asset = await prisma.asset.findFirst({
-      where: {
-        OR: [
-          { id: assetId },
-          { code: assetId.trim().toUpperCase() },
-          { regNo: assetId.trim().toUpperCase() }
-        ]
-      }
-    });
+    // Punctuation-insensitive so a typed registration variant finds the
+    // existing vehicle rather than creating a duplicate record for it.
+    const match = await resolveAsset(assetId);
+    if (match.kind === "ambiguous") {
+      return { error: ambiguousAssetError(assetId, match.codes) };
+    }
+    let asset = match.kind === "found" ? match.asset : null;
 
     if (!asset) {
       // Auto-create under fallback category

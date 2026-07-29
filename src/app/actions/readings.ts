@@ -4,6 +4,7 @@ import { isSiteUser } from "@/lib/roles";
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
+import { resolveAsset, ambiguousAssetError } from "@/lib/fleet/resolve-asset";
 import { revalidatePath } from "next/cache";
 
 export async function addReadingAction(formData: FormData) {
@@ -41,15 +42,13 @@ export async function addReadingAction(formData: FormData) {
   }
 
   try {
-    let asset = await prisma.asset.findFirst({
-      where: {
-        OR: [
-          { id: assetId },
-          { code: assetId.trim().toUpperCase() },
-          { regNo: assetId.trim().toUpperCase() }
-        ]
-      }
-    });
+    // Punctuation-insensitive so a typed registration variant finds the
+    // existing vehicle rather than creating a duplicate record for it.
+    const match = await resolveAsset(assetId);
+    if (match.kind === "ambiguous") {
+      return { error: ambiguousAssetError(assetId, match.codes) };
+    }
+    let asset = match.kind === "found" ? match.asset : null;
 
     if (!asset) {
       // Auto-create under fallback category

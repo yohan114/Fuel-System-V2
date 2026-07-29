@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { visibleAssetIdsForUser } from "@/lib/assignments";
+import { toTankView } from "@/lib/tank-visibility";
 import WorkshopConsole from "../workshop/WorkshopConsole";
 
 // Site Pump Console — the site-scoped analog of the Workshop Console. A
@@ -71,8 +72,8 @@ export default async function SitePumpPage() {
 
   return (
     <WorkshopConsole
-      currentTank={tank}
-      allTanks={allTanks}
+      currentTank={tank ? toTankView(tank, session.role) : null}
+      allTanks={allTanks.map((t) => toTankView(t, session.role))}
       assets={assets}
       recentIssues={recentIssues}
       bulkRequests={bulkRequests}

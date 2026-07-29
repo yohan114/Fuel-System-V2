@@ -175,14 +175,25 @@ export default async function DashboardPage() {
       ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
     },
     select: {
-      id: true, 
-      code: true, 
-      meterType: true, 
-      regNo: true, 
+      id: true,
+      code: true,
+      meterType: true,
+      regNo: true,
       status: true,
+      typeLabel: true,
+      // Which site the machine belongs to, plus who reported the condition and
+      // when — a breakdown is only actionable if you know where it is and who
+      // to call about it.
+      project: { select: { code: true, name: true } },
       dailyConditions: {
         where: { logDate },
         take: 1,
+        select: {
+          status: true,
+          note: true,
+          createdAt: true,
+          recordedBy: { select: { name: true } },
+        },
       }
     },
     orderBy: { code: "asc" },

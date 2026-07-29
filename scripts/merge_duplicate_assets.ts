@@ -152,7 +152,79 @@ async function mergeOne(tx: Prisma.TransactionClient, survivorId: string, dupId:
   return { outcome, blockers: blockers.length, movedBills: movable.length, droppedDrafts: clashingDrafts.length, conditionClashes, droppedDupAssignments: dupAsgIds.length };
 }
 
+// Explicit merges: --pairs "SURVIVOR<=DUP,SURVIVOR<=DUP".
+//
+// Groups where two independent E&C codes share a registration are reported as
+// ambiguous and never auto-merged, because the tool cannot tell "one vehicle
+// entered twice" from "two vehicles, one with a mistyped plate" — five
+// excavators all carry the placeholder "14160". When a human has checked a
+// group and knows it is one vehicle, this runs the identical merge transaction
+// against the pair they name, so there is only ever one merge implementation.
+function parsePairs(): Array<{ survivor: string; dup: string }> {
+  const i = process.argv.indexOf("--pairs");
+  if (i === -1) return [];
+  const raw = process.argv[i + 1];
+  if (!raw) throw new Error('--pairs needs a value, e.g. --pairs "TM-21<=ZB-0050,BS-03<=DB-02"');
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const [survivor, dup] = s.split("<=").map((x) => x.trim().toUpperCase());
+      if (!survivor || !dup) throw new Error(`Bad pair "${s}" — expected SURVIVOR<=DUPLICATE`);
+      if (survivor === dup) throw new Error(`Pair "${s}" merges a vehicle into itself`);
+      return { survivor, dup };
+    });
+}
+
+async function runExplicitPairs() {
+  const pairs = parsePairs();
+  const admin = await prisma.user.findFirst({ where: { role: "ADMIN" } });
+  console.log(`Mode: ${APPLY ? "APPLY" : "DRY RUN (pass --apply to execute)"} — explicit pairs\n`);
+
+  const before = await prisma.fuelIssue.aggregate({ where: { voided: false }, _count: true, _sum: { litres: true } });
+
+  for (const { survivor, dup } of pairs) {
+    const s = await prisma.asset.findUnique({ where: { code: survivor } });
+    const d = await prisma.asset.findUnique({ where: { code: dup } });
+    if (!s) { console.log(`!! survivor ${survivor} not found — skipped`); process.exitCode = 1; continue; }
+    if (!d) { console.log(`!! duplicate ${dup} not found — skipped`); process.exitCode = 1; continue; }
+
+    const cs = await rowCounts(s.id);
+    const cd = await rowCounts(d.id);
+    console.log(`── ${s.code} (survivor, reg=${s.regNo ?? "—"}) fuel=${cs.fi}(${cs.litres}L) bills=${cs.bills}`);
+    console.log(`   ⇐ ${d.code.padEnd(11)} fuel=${cd.fi}(${cd.litres}L) reads=${cd.mr} cond=${cd.dc} asg=${cd.asg} bills=${cd.bills}(finalized ${cd.finBills})`);
+
+    if (APPLY) {
+      const res = await prisma.$transaction((tx) => mergeOne(tx, s.id, d.id));
+      console.log(`     → ${res.outcome}${res.blockers ? ` (${res.blockers} finalized invoice(s) stay on the tombstone)` : ""}; bills moved=${res.movedBills}, clashing drafts dropped=${res.droppedDrafts}, condition-day clashes dropped=${res.conditionClashes}, duplicate assignments dropped=${res.droppedDupAssignments}`);
+      await prisma.auditLog.create({
+        data: {
+          actorId: admin?.id ?? null,
+          action: "UPDATE",
+          entity: "Asset",
+          entityId: s.id,
+          summary: `Merged duplicate vehicle ${d.code} into ${s.code} (${res.outcome}${res.blockers ? `, ${res.blockers} finalized invoices retained on tombstone` : ""}) — operator-confirmed pair`,
+          metaJson: JSON.stringify({ duplicateId: d.id, duplicateCode: d.code, explicit: true, ...res }),
+        },
+      });
+    }
+  }
+
+  if (APPLY) {
+    const after = await prisma.fuelIssue.aggregate({ where: { voided: false }, _count: true, _sum: { litres: true } });
+    const same = after._count === before._count && Math.round(after._sum.litres ?? 0) === Math.round(before._sum.litres ?? 0);
+    console.log(`\nFuel-issue conservation: ${before._count} → ${after._count} issues, ${Math.round(before._sum.litres ?? 0)} → ${Math.round(after._sum.litres ?? 0)} L ${same ? "✓" : "✗ MISMATCH"}`);
+    if (!same) process.exitCode = 1;
+  }
+}
+
 async function main() {
+  if (process.argv.includes("--pairs")) {
+    await runExplicitPairs();
+    return;
+  }
+
   const { plan, assetById } = await loadPlan();
   const admin = await prisma.user.findFirst({ where: { role: "ADMIN" } });
 

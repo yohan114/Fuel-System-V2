@@ -61,3 +61,16 @@ scratch/
 backups/
 billing_exports
 data/app.db.backup-*
+
+# The live database is deliberately NOT tracked.
+#
+# It used to be committed, which meant a `git pull` on a deployed server
+# replaced that server's production database with whatever snapshot happened to
+# be in the branch — silently destroying real fuel issues, meter readings and
+# invoices. It also pushed customer data and password hashes to GitHub.
+#
+# Move databases between machines with the Admin > Database Backups page (or by
+# copying the file directly), never with git.
+data/app.db
+data/app.db.bak
+data/source/
