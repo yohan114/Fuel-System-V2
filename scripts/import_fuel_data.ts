@@ -1,9 +1,10 @@
 import { prisma } from "../src/lib/db";
 import * as fs from "fs";
 
-// Replay exported fuel issues into THIS database. Safe to run on the live VPS.
+// Replay an exported fuel dataset into THIS database. Safe to run on a live server.
 //
-// Companion to export_fuel_issues.ts. deploy-to-vps.sh keeps the server's own
+// Companion to export_fuel_data.ts. Carries issues, replenishment requests,
+// meter readings and tank stock levels. deploy-to-vps.sh keeps the server's own
 // database, so fuel imported on a workstation has to be carried across as data
 // rather than as a file. This adds what is missing and nothing else:
 //
@@ -16,17 +17,21 @@ import * as fs from "fs";
 //   * Foreign keys are re-resolved against this database's own ids: assets by
 //     code then plate, tanks by project code, users by username.
 //
-// Tank balances are deliberately not adjusted — this is historical backfill,
-// and rewriting today's stock level from old months would misstate it.
+// Tank stock is the one thing that cannot be merged: a balance is a single
+// current number, not a history, so adopting the export's figure overwrites
+// this instance's. That never happens automatically — differences are reported
+// and only applied with --adopt-balances.
 //
-//   npx tsx scripts/import_fuel_issues.ts              # dry run
-//   npx tsx scripts/import_fuel_issues.ts --apply
-//   npx tsx scripts/import_fuel_issues.ts --apply --create-missing-assets
+//   npx tsx scripts/import_fuel_data.ts               # dry run
+//   npx tsx scripts/import_fuel_data.ts --apply
+//   npx tsx scripts/import_fuel_data.ts --apply --create-missing-assets
+//   npx tsx scripts/import_fuel_data.ts --apply --adopt-balances
 
 const APPLY = process.argv.includes("--apply");
 const CREATE_ASSETS = process.argv.includes("--create-missing-assets");
+const ADOPT_BALANCES = process.argv.includes("--adopt-balances");
 const FILE = process.argv.find((a) => a.startsWith("--file="))?.slice(7)
-  || "data/fuel-issues-export.json";
+  || "data/fuel-data-export.json";
 
 const alnum = (s: string) => s.replace(/[^a-z0-9]/gi, "").toUpperCase();
 const rs = (c: number) => "Rs " + (c / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -37,16 +42,18 @@ const keyOf = (assetCode: string, iso: string, litres: number, source: string, p
   `${assetCode}|${iso}|${litres}|${source}|${price}|${cost}`;
 
 async function main() {
-  console.log(`\n=== Import fuel issues (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
+  console.log(`\n=== Import fuel data (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
   if (!fs.existsSync(FILE)) throw new Error(`export file not found: ${FILE}`);
   const payload = JSON.parse(fs.readFileSync(FILE, "utf8"));
-  if (payload.kind !== "fuel-issues-export") throw new Error(`not a fuel export: ${FILE}`);
+  if (payload.kind !== "fuel-data-export" && payload.kind !== "fuel-issues-export")
+    throw new Error(`not a fuel export: ${FILE}`);
   console.log(`  file ${FILE} · exported ${payload.exportedAt} · ${payload.issues.length} issues\n`);
 
   // ---------------------------------------------------------------- referents
   const projByCode = new Map((await prisma.project.findMany()).map((p) => [p.code, p]));
   const tankByProj = new Map<string, { id: string }>();
   for (const t of payload.tanks || []) {
+    if (!t.projectCode) continue;          // unattached tank: nothing to resolve against
     let proj = projByCode.get(t.projectCode);
     if (!proj) {
       console.log(`  project ${t.projectCode} (${t.projectName}) missing${APPLY ? " — creating" : " — would create"}`);
@@ -164,6 +171,63 @@ async function main() {
     created++; litres += i.litres; cost += i.totalCost;
   }
 
+  // ------------------------------------------------- replenishment requests
+  // A pump's stock level is meaningless without the deliveries that filled it,
+  // so these travel with the issues. Matched on tank + litres + submission
+  // time, which is unique in practice for a delivery.
+  let reqAdded = 0, reqPresent = 0, reqNoTank = 0;
+  for (const b of payload.bulkRequests || []) {
+    const tank = await prisma.bulkTank.findFirst({ where: { name: b.tank }, select: { id: true } });
+    if (!tank) { reqNoTank++; continue; }
+    const when = new Date(b.createdAt);
+    const dup = await prisma.bulkRequest.findFirst({
+      where: { bulkTankId: tank.id, requestedLitres: b.litres, createdAt: when }, select: { id: true } });
+    if (dup) { reqPresent++; continue; }
+    if (APPLY) {
+      const src = b.sourceTank ? await prisma.bulkTank.findFirst({ where: { name: b.sourceTank }, select: { id: true } }) : null;
+      await prisma.bulkRequest.create({ data: {
+        fuelKind: b.fuelKind, requestedLitres: b.litres, status: b.status,
+        createdAt: when, sourceType: b.sourceType || "OUTSIDE", sourceTankId: src?.id ?? null,
+        bulkTankId: tank.id,
+        requestedById: (b.requestedBy && users.get(b.requestedBy)?.id) || fallbackAdmin.id,
+        reviewedById: (b.reviewedBy && users.get(b.reviewedBy)?.id) || null,
+        reviewedAt: b.reviewedAt ? new Date(b.reviewedAt) : null,
+        reviewNote: b.reviewNote ?? null,
+      }});
+    }
+    reqAdded++;
+  }
+
+  // ------------------------------------------------------------ meter readings
+  let mrAdded = 0, mrPresent = 0, mrNoAsset = 0;
+  for (const m of payload.meterReadings || []) {
+    const asset = byCode.get(alnum(m.asset));
+    if (!asset) { mrNoAsset++; continue; }
+    const when = new Date(m.readingDate);
+    const dup = await prisma.meterReading.findFirst({
+      where: { assetId: asset.id, readingDate: when, value: m.value }, select: { id: true } });
+    if (dup) { mrPresent++; continue; }
+    if (APPLY) await prisma.meterReading.create({ data: {
+      value: m.value, readingType: m.readingType, readingDate: when, source: m.source || "MANUAL",
+      assetId: asset.id,
+      recordedById: (m.recordedBy && users.get(m.recordedBy)?.id) || fallbackAdmin.id,
+    }});
+    mrAdded++;
+  }
+
+  // -------------------------------------------------------------- tank stock
+  // A balance is a single current number, not a history — merging two of them is
+  // meaningless, so adopting the export's figure overwrites this instance's and
+  // is never automatic. Only tanks whose balance actually differs are touched.
+  const balanceChanges: string[] = [];
+  for (const t of payload.tanks || []) {
+    if (typeof t.balance !== "number") continue;
+    const tank = await prisma.bulkTank.findFirst({ where: { name: t.tankName }, select: { id: true, balance: true } });
+    if (!tank || tank.balance === t.balance) continue;
+    balanceChanges.push(`${t.tankName}: ${tank.balance} L → ${t.balance} L`);
+    if (APPLY && ADOPT_BALANCES) await prisma.bulkTank.update({ where: { id: tank.id }, data: { balance: t.balance } });
+  }
+
   // ------------------------------------------------------------------ report
   console.log(`=== RESULT ===`);
   console.log(`  ${APPLY ? "added" : "would add"}: ${created} issues · ${litres.toFixed(0)} L · ${rs(cost)}`);
@@ -177,10 +241,22 @@ async function main() {
   if (missingTank) console.log(`  SKIPPED — ${missingTank} issues whose tank could not be resolved`);
   if (missingCategory) console.log(`  SKIPPED — ${missingCategory} issues whose vehicle category does not exist here (import the fleet first)`);
 
+  console.log(`\n  replenishments: ${APPLY ? "added" : "would add"} ${reqAdded}, already present ${reqPresent}` +
+    (reqNoTank ? `, skipped ${reqNoTank} with no matching tank` : ""));
+  console.log(`  meter readings: ${APPLY ? "added" : "would add"} ${mrAdded}, already present ${mrPresent}` +
+    (mrNoAsset ? `, skipped ${mrNoAsset} with no matching vehicle` : ""));
+  if (balanceChanges.length) {
+    if (ADOPT_BALANCES) console.log(`\n  tank stock ${APPLY ? "set" : "would be set"} from the export (${balanceChanges.length} tanks):`);
+    else console.log(`\n  tank stock DIFFERS on ${balanceChanges.length} tanks — not changed (pass --adopt-balances to take the export's figures):`);
+    for (const c of balanceChanges.slice(0, 15)) console.log(`      ${c}`);
+    if (balanceChanges.length > 15) console.log(`      … and ${balanceChanges.length - 15} more`);
+  } else console.log(`\n  tank stock: identical on every tank`);
+
   const after = await prisma.fuelIssue.count();
   console.log(`\n  fuel issues in this database now: ${after}`);
   if (!APPLY) console.log(`\nDRY-RUN — nothing written. Re-run with --apply\n`);
-  else console.log(`\nDone. No existing row was modified or deleted; tank balances untouched.\n`);
+  else console.log(`\nDone. No existing row was modified or deleted.` +
+    (ADOPT_BALANCES ? ` Tank stock adopted from the export.\n` : ` Tank stock untouched.\n`));
 
   await prisma.$disconnect();
 }
