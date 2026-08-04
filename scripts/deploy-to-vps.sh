@@ -2,112 +2,150 @@
 # ==============================================================================
 #  E&C Fuel System V2 — safe update for a LIVE server
 #
-#  Protects the running database. data/app.db is tracked in git, so a plain
-#  pull would overwrite live operator data; this backs it up, takes only the
-#  new code, then puts the live database back before migrating.
+#  data/app.db is tracked in git, so a plain pull would overwrite live operator
+#  data. This stops the app, backs the database up cleanly (SQLite WAL is only
+#  consistent once the last connection closes), takes the new code, restores the
+#  live database, migrates, rebuilds June, then starts the app again.
 #
-#  Usage:   cd /path/to/Fuel-System-V2
-#           bash deploy-to-vps.sh
+#  Only the PM2 process named below is touched — other apps on the box are left
+#  running.
+#
+#  Usage:   cd /var/www/fuelsystem
+#           bash scripts/deploy-to-vps.sh
 # ==============================================================================
 set -euo pipefail
 
-BRANCH="claude/wonderful-hypatia-yi703x"
+BRANCH="${BRANCH:-claude/wonderful-hypatia-yi703x}"
+PM2_APP="${PM2_APP:-fuelsystem}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="${HOME}/fuel-db-backups"
 BACKUP="${BACKUP_DIR}/app.db.live.${STAMP}"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-ok()   { printf '\033[1;32m    ✓ %s\033[0m\n' "$*"; }
-warn() { printf '\033[1;33m    ! %s\033[0m\n' "$*"; }
-die()  { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
-
+ok()   { printf '\033[1;32m    OK  %s\033[0m\n' "$*"; }
+warn() { printf '\033[1;33m    !   %s\033[0m\n' "$*"; }
+die()  { printf '\n\033[1;31mFAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 confirm() {
   read -r -p "$(printf '\033[1;33m%s [y/N] \033[0m' "$1")" reply
-  [[ "$reply" =~ ^[Yy]$ ]] || die "Cancelled by user."
+  [[ "$reply" =~ ^[Yy]$ ]] || die "Cancelled by user — nothing was changed."
 }
 
-# ---------------------------------------------------------------- sanity check
-say "Checking this is the app folder"
-[[ -f package.json && -f prisma/schema.prisma ]] || die "Run this from the Fuel-System-V2 folder (package.json + prisma/schema.prisma not found here)."
-[[ -d .git ]] || die "This folder is not a git repository."
-ok "Folder looks right: $(pwd)"
+APP_STOPPED=0
+start_app() {
+  if [[ "$APP_STOPPED" == "1" ]]; then
+    pm2 start "$PM2_APP" >/dev/null 2>&1 || pm2 restart "$PM2_APP" >/dev/null 2>&1 || true
+    APP_STOPPED=0
+  fi
+}
+# If anything fails after the app was stopped, bring it back up rather than
+# leaving the site down.
+trap 'rc=$?; if [[ $rc -ne 0 ]]; then printf "\n\033[1;31mError — restarting %s, database left as-is.\033[0m\n" "$PM2_APP"; start_app; printf "Backup (if taken): %s\n" "$BACKUP"; fi' EXIT
 
+# ---------------------------------------------------------------- sanity checks
+say "Checking environment"
+[[ -f package.json && -f prisma/schema.prisma ]] || die "Run this from the app folder (package.json + prisma/schema.prisma not found)."
+[[ -d .git ]] || die "Not a git repository."
 command -v node >/dev/null || die "node is not installed"
-command -v npm  >/dev/null || die "npm is not installed"
-ok "node $(node -v), npm $(npm -v)"
+command -v pm2  >/dev/null || warn "pm2 not found — will skip stop/start"
+ok "$(pwd) · node $(node -v) · npm $(npm -v)"
 
-# ------------------------------------------------------------------ back it up
-say "Backing up the LIVE database (most important step)"
-[[ -f data/app.db ]] || die "data/app.db not found — is this really the running app?"
+if command -v pm2 >/dev/null; then
+  pm2 describe "$PM2_APP" >/dev/null 2>&1 || die "PM2 app '$PM2_APP' not found. Set PM2_APP=<name> and re-run."
+  ok "PM2 target: $PM2_APP (other PM2 apps will NOT be touched)"
+fi
+
+# ------------------------------------------------------ stop app, then back up
+# SQLite in WAL mode keeps recent writes in data/app.db-wal. Copying app.db
+# while the app holds it open can miss those writes, so stop first.
+say "Stopping $PM2_APP so the database can be copied consistently"
+warn "The fuel system will be OFFLINE for a few minutes (other apps keep running)."
+confirm "Stop $PM2_APP and begin the update?"
+if command -v pm2 >/dev/null; then
+  pm2 stop "$PM2_APP" >/dev/null
+  APP_STOPPED=1
+  sleep 2
+  ok "$PM2_APP stopped"
+fi
+
+say "Backing up the LIVE database"
+[[ -f data/app.db ]] || die "data/app.db not found."
 mkdir -p "$BACKUP_DIR"
-cp data/app.db "$BACKUP"
-[[ -s "$BACKUP" ]] || die "Backup is empty — aborting before any changes."
-LIVE_SUM="$(sha256sum data/app.db | cut -c1-16)"
-ok "Backed up to $BACKUP  ($(du -h "$BACKUP" | cut -f1), sha ${LIVE_SUM})"
+if command -v sqlite3 >/dev/null; then
+  # Online-backup API folds any remaining WAL content into one clean file.
+  sqlite3 data/app.db ".backup '${BACKUP}'" || die "sqlite3 backup failed"
+  ok "backed up with sqlite3 .backup (WAL included)"
+else
+  cp data/app.db "$BACKUP"
+  [[ -f data/app.db-wal ]] && cp data/app.db-wal "${BACKUP}-wal" && warn "copied -wal sidecar too"
+  [[ -f data/app.db-shm ]] && cp data/app.db-shm "${BACKUP}-shm"
+  ok "backed up by file copy"
+fi
+[[ -s "$BACKUP" ]] || die "Backup is empty — aborting before any change."
+ok "$BACKUP ($(du -h "$BACKUP" | cut -f1))"
 
-echo
-echo "    Live data currently in the database:"
-DATABASE_URL="file:./data/app.db" npx tsx -e '
+echo "    Live data in that backup:"
+npx tsx -e '
 import { prisma } from "./src/lib/db";
 (async () => {
-  const [f, u, b] = await Promise.all([
-    prisma.fuelIssue.count(), prisma.user.count(), prisma.bill.count(),
+  const [f,u,b,a] = await Promise.all([
+    prisma.fuelIssue.count(), prisma.user.count(), prisma.bill.count(), prisma.asset.count(),
   ]);
-  console.log(`      fuel issues: ${f}   users: ${u}   bills: ${b}`);
+  console.log(`      fuel issues ${f} · users ${u} · bills ${b} · assets ${a}`);
   await prisma.$disconnect();
 })();' 2>/dev/null | grep -v "^prisma:query" || warn "(could not read counts — continuing)"
 
 # --------------------------------------------------------------- take new code
-say "Fetching the updated code"
-confirm "Replace the CODE with branch ${BRANCH}? (your database will be restored right after)"
+say "Updating code to ${BRANCH}"
 git fetch origin "$BRANCH"
+echo "    incoming commits:"; git log --oneline "HEAD..origin/$BRANCH" | sed 's/^/      /' || true
+confirm "Replace the code with origin/${BRANCH}? (your database is restored right after)"
 git checkout -f -B "$BRANCH" "origin/$BRANCH"
-ok "Now at $(git log --oneline -1)"
+ok "now at $(git log --oneline -1)"
 
 # ------------------------------------------------------------ restore live data
 say "Restoring YOUR live database over the repo's copy"
 cp "$BACKUP" data/app.db
-NOW_SUM="$(sha256sum data/app.db | cut -c1-16)"
-[[ "$NOW_SUM" == "$LIVE_SUM" ]] || die "Restore mismatch (${NOW_SUM} != ${LIVE_SUM}) — restore manually from $BACKUP"
-ok "Live database restored and verified (sha ${NOW_SUM})"
+# Any WAL/SHM left from before belongs to the OLD file; a stale WAL replayed
+# over a restored database corrupts it.
+rm -f data/app.db-wal data/app.db-shm
+ok "live database restored, stale WAL/SHM cleared"
 
 # -------------------------------------------------------- dependencies + schema
 say "Installing dependencies"
 npm ci
 npx prisma generate
-ok "Dependencies ready"
+ok "dependencies ready"
 
-say "Applying database migrations (additive — no data is dropped)"
+say "Applying migrations (additive — nothing is dropped)"
 DATABASE_URL="file:./data/app.db" npx prisma migrate deploy
-ok "Schema up to date"
+ok "schema up to date"
 
 # ------------------------------------------------------------- billing rebuild
-say "June 2026 rebuild — DRY RUN first (nothing is written)"
+say "June 2026 rebuild — DRY RUN (nothing written)"
 npx tsx scripts/deploy_june_rebuild.ts 2>&1 | grep -v "^prisma:query"
-
 echo
-confirm "Apply the June rebuild shown above to the live database?"
-say "Applying June rebuild"
+confirm "Apply the June rebuild shown above?"
 npx tsx scripts/deploy_june_rebuild.ts --apply 2>&1 | grep -v "^prisma:query"
 
-# --------------------------------------------------------------- build + restart
-say "Building the app"
+# ------------------------------------------------------------- build + restart
+say "Building"
 npm run build
-ok "Build complete"
+ok "build complete"
 
-say "Restarting the service"
-if command -v pm2 >/dev/null && pm2 list 2>/dev/null | grep -qiE "fuel|next|app"; then
-  pm2 restart all --update-env && pm2 save
-  ok "Restarted via pm2"
-elif systemctl list-units --type=service 2>/dev/null | grep -qiE "fuel|next"; then
-  SVC="$(systemctl list-units --type=service --no-legend | grep -iE 'fuel|next' | awk '{print $1}' | head -1)"
-  sudo systemctl restart "$SVC"
-  ok "Restarted $SVC"
+say "Starting $PM2_APP"
+if command -v pm2 >/dev/null; then
+  pm2 start "$PM2_APP" >/dev/null 2>&1 || pm2 restart "$PM2_APP" >/dev/null
+  APP_STOPPED=0
+  pm2 save >/dev/null 2>&1 || true
+  sleep 3
+  pm2 describe "$PM2_APP" | grep -E "status|uptime" | head -2 || true
+  ok "$PM2_APP running"
 else
-  warn "No pm2/systemd service detected — restart the app yourself."
+  warn "pm2 not available — start the app yourself"
 fi
 
+trap - EXIT
 say "DONE"
-echo "    Database backup kept at: $BACKUP"
-echo "    To roll back:  cp \"$BACKUP\" data/app.db  && restart the app"
+echo "    Backup:   $BACKUP"
+echo "    Rollback: pm2 stop $PM2_APP && cp \"$BACKUP\" data/app.db && rm -f data/app.db-wal data/app.db-shm && pm2 start $PM2_APP"
 echo
