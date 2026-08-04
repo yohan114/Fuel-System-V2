@@ -60,4 +60,9 @@ next-env.d.ts
 scratch/
 backups/
 billing_exports
+# local database snapshots (backups, pre-deploy copies) — never commit these
 data/app.db.backup-*
+data/app.db.*-test
+data/app.db.live.*
+data/app.db-shm
+data/app.db-wal
