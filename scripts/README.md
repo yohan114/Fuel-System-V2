@@ -34,6 +34,33 @@ run directly: `npx tsx scripts/<name>.ts`.
 | `import_service_record_db` | `service-record-data.db` (repo) | Merges the E&C Service Record System: filter database + cross-references + prices, machine↔filter links, and the full service-job history (idempotent via sourceRef; manual records untouched). |
 | `merge_duplicate_assets` | — | Duplicate-vehicle merge; dry-run by default, `--apply` to execute. |
 
+## Getting fuel onto the live server
+
+`deploy-to-vps.sh` restores the server's own database over the repo's copy on
+purpose, so operators never lose what they typed. The consequence is that fuel
+imported on a workstation **does not travel with the code** — it has to be
+carried as data:
+
+```bash
+# workstation, after any fuel import
+npx tsx scripts/export_fuel_issues.ts          # → data/fuel-issues-export.json
+git add data/fuel-issues-export.json && git commit && git push
+
+# server — deploy-to-vps.sh runs this for you, with a dry run and a prompt
+npx tsx scripts/import_fuel_issues.ts          # dry run: what would be added
+npx tsx scripts/import_fuel_issues.ts --apply
+```
+
+| Script | Notes |
+|---|---|
+| `export_fuel_issues` | Dumps every fuel issue by natural key (UUIDs do not survive across databases). Foreign keys travel as names: project code, username, price date. Also carries the referenced vehicles and tanks so the importer can rebuild a missing referent. |
+| `import_fuel_issues` | Replays that file into the current database. Purely additive — never edits or deletes an existing row, so operator-entered fuel and rows absent from the export are untouched. Idempotent: rows are reconciled by natural-key **count**, so genuine twice-in-a-day refuels survive while a re-run adds nothing. Tank balances are not adjusted (historical backfill must not restate today's stock). |
+
+Vehicles missing on the target are skipped and listed rather than guessed at;
+re-run with `--create-missing-assets` (or `FUEL_CREATE_ASSETS=1` for the deploy
+script) to create them from the export. A category is never invented — it drives
+PM schedules, so an unknown one is reported instead.
+
 ## Where files are looked up
 
 - **Repo-root importers** read from `process.cwd()` — keep the workbooks next to

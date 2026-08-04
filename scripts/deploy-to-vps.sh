@@ -5,7 +5,11 @@
 #  data/app.db is tracked in git, so a plain pull would overwrite live operator
 #  data. This stops the app, backs the database up cleanly (SQLite WAL is only
 #  consistent once the last connection closes), takes the new code, restores the
-#  live database, migrates, rebuilds June, then starts the app again.
+#  live database, migrates, syncs fuel, rebuilds June, then starts the app again.
+#
+#  Because the live database is deliberately kept, fuel imported on a workstation
+#  does not arrive with the code — it is carried in
+#  data/fuel-issues-export.json and replayed additively by the fuel sync step.
 #
 #  Only the PM2 process named below is touched — other apps on the box are left
 #  running.
@@ -119,6 +123,33 @@ ok "dependencies ready"
 say "Applying migrations (additive — nothing is dropped)"
 DATABASE_URL="file:./data/app.db" npx prisma migrate deploy
 ok "schema up to date"
+
+# ----------------------------------------------------------------- fuel sync
+# Because the live database was just restored over the repo's copy, fuel
+# imported on a workstation is NOT on this server yet. It travels as data
+# (data/fuel-issues-export.json) and is replayed here. Purely additive: rows the
+# operators entered are never touched, and re-running adds nothing.
+#
+# Runs BEFORE the billing rebuild — bills are generated from fuel issues, so the
+# fuel has to be in place first.
+#
+# Vehicles missing from this server are skipped and listed. Re-run with
+# FUEL_CREATE_ASSETS=1 to have them created from the export instead.
+FUEL_EXPORT="data/fuel-issues-export.json"
+if [[ -f "$FUEL_EXPORT" ]]; then
+  CREATE_ASSETS=""
+  [[ "${FUEL_CREATE_ASSETS:-0}" == "1" ]] && CREATE_ASSETS="--create-missing-assets" \
+    && warn "FUEL_CREATE_ASSETS=1 — vehicles missing here will be created"
+
+  say "Fuel sync — DRY RUN (nothing written)"
+  npx tsx scripts/import_fuel_issues.ts $CREATE_ASSETS 2>&1 | grep -v "^prisma:query"
+  echo
+  confirm "Add the fuel issues listed above to the live database?"
+  npx tsx scripts/import_fuel_issues.ts --apply $CREATE_ASSETS 2>&1 | grep -v "^prisma:query"
+  ok "fuel sync complete"
+else
+  warn "$FUEL_EXPORT not found — skipping fuel sync"
+fi
 
 # ------------------------------------------------------------- billing rebuild
 say "June 2026 rebuild — DRY RUN (nothing written)"
