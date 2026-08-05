@@ -1,6 +1,7 @@
 import { prisma } from "../src/lib/db";
 import * as fs from "fs";
 import * as path from "path";
+import { execFileSync } from "child_process";
 
 // Work out why `prisma migrate deploy` fails on a database whose tables already
 // exist, and print the exact commands to fix it. READ-ONLY — changes nothing.
@@ -17,7 +18,16 @@ import * as path from "path";
 // parses the SQL for the tables, columns and indexes it would create and asks the
 // database whether they exist already.
 //
-//   npx tsx scripts/diagnose_migrations.ts
+// With --apply it also performs the fix: backs the database up, marks the
+// already-satisfied migrations as applied, then runs the remaining ones. It
+// refuses outright if any migration is partially applied, because marking one of
+// those applied would skip real schema work and the damage would surface later
+// as a missing column rather than an error now.
+//
+//   npx tsx scripts/diagnose_migrations.ts            # read-only
+//   npx tsx scripts/diagnose_migrations.ts --apply
+
+const APPLY = process.argv.includes("--apply");
 
 function announceDatabase(): string {
   const url = process.env.FUEL_DATABASE_URL || process.env.DATABASE_URL || "file:./data/app.db";
@@ -42,8 +52,9 @@ function parse(sql: string): Want {
 }
 
 async function main() {
-  console.log(`\n=== Migration diagnosis (read-only) ===`);
-  announceDatabase();
+  console.log(`\n=== Migration diagnosis (${APPLY ? "APPLY" : "read-only"}) ===`);
+  const dbPath = announceDatabase();
+  if (!fs.existsSync(dbPath)) throw new Error(`database not found at ${dbPath}`);
 
   const n = (v: unknown) => (typeof v === "bigint" ? Number(v) : v);
 
@@ -119,10 +130,61 @@ async function main() {
     console.log(`\n  ⚠ ${partial.length} migration(s) are PARTIALLY applied — some objects exist, some do not.`);
     console.log(`     Do not resolve these blindly; they need a look first: ${partial.join(", ")}`);
   }
-  console.log(`\n  Prefix each command with the live database, e.g.`);
-  console.log(`     DATABASE_URL="file:///var/lib/fuel-system/app.db" npx prisma migrate resolve --applied <name>\n`);
+  if (!APPLY) {
+    console.log(`\n  Prefix each command with the live database, e.g.`);
+    console.log(`     DATABASE_URL="file:${dbPath}" npx prisma migrate resolve --applied <name>`);
+    console.log(`\n  Or let this script do all of it:  npx tsx scripts/diagnose_migrations.ts --apply\n`);
+    await prisma.$disconnect(); return;
+  }
 
-  await prisma.$disconnect();
+  // ------------------------------------------------------------------- apply
+  if (partial.length) {
+    console.log(`\n  REFUSING to apply: ${partial.length} migration(s) are only partly present.`);
+    console.log(`  Marking those applied would silently skip the schema changes they still owe,`);
+    console.log(`  which surfaces much later as a missing column. Resolve them by hand first.\n`);
+    await prisma.$disconnect(); process.exit(1);
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backup = `${dbPath}.pre-migrate-${stamp}`;
+  fs.copyFileSync(dbPath, backup);
+  for (const side of ["-wal", "-shm"]) {
+    if (fs.existsSync(dbPath + side)) fs.copyFileSync(dbPath + side, backup + side);
+  }
+  console.log(`\n  backed up to ${backup}`);
+
+  // The Prisma CLI reads DATABASE_URL, not our FUEL_ variable.
+  const env = { ...process.env, DATABASE_URL: `file:${dbPath}` };
+  const run = (args: string[]) =>
+    execFileSync("npx", ["prisma", ...args], { env, stdio: "pipe" }).toString();
+
+  await prisma.$disconnect();   // release the file before the CLI writes to it
+
+  let done = 0;
+  for (const m of resolveAsApplied) {
+    try { run(["migrate", "resolve", "--applied", m]); done++; console.log(`  resolved  ${m}`); }
+    catch (e: any) {
+      console.log(`  FAILED    ${m}`);
+      console.log(String(e.stdout || "") + String(e.stderr || ""));
+      console.log(`\n  Stopped after ${done}. Database restored from backup is available at ${backup}\n`);
+      process.exit(1);
+    }
+  }
+  console.log(`  ${done} migration(s) marked applied`);
+
+  if (mustRun.length) {
+    console.log(`\n  applying the ${mustRun.length} genuinely-new migration(s)...`);
+    try { console.log(run(["migrate", "deploy"])); }
+    catch (e: any) {
+      console.log(String(e.stdout || "") + String(e.stderr || ""));
+      console.log(`\n  deploy failed. Restore with:  cp "${backup}" "${dbPath}"\n`);
+      process.exit(1);
+    }
+  } else {
+    console.log(`\n  verifying...`);
+    console.log(run(["migrate", "status"]));
+  }
+  console.log(`\n  Done. Backup kept at ${backup}\n`);
 }
 
 main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1); });
