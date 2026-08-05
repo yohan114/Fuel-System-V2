@@ -78,28 +78,36 @@ for (const i of A.issues || []) vmA.set(`${i.asset}|${ym(i.date)}`, (vmA.get(`${
 for (const i of B.issues || []) vmB.set(`${i.asset}|${ym(i.date)}`, (vmB.get(`${i.asset}|${ym(i.date)}`) || 0) + i.litres);
 
 const both = [...vmA.keys()].filter((k) => vmB.has(k));
-const suspicious = both.filter((k) => {
-  // both sides hold fuel for this vehicle-month; if the rows were identical the
-  // exact match above already covered them, so a mismatch here is the risk
-  return Math.abs((vmA.get(k) || 0) - (vmB.get(k) || 0)) > 0.5 || onlyB > 0;
-});
+// A vehicle-month whose litres AGREE across two files that share no exact row is
+// the double-count signal: the same refuels, written down twice under different
+// labels. Differing totals are the ordinary case — a vehicle can legitimately
+// draw at its site and again at the workshop in the same month.
+const identical = both.filter((k) => Math.abs((vmA.get(k) || 0) - (vmB.get(k) || 0)) < 0.5);
+const differing = both.filter((k) => !identical.includes(k));
 console.log(`\n--- overlap risk: vehicle-months present on BOTH sides ---`);
 console.log(`  vehicle-months in A: ${vmA.size} · in B: ${vmB.size} · in both: ${both.length}`);
 if (!both.length) {
   console.log(`  none — the two sets never describe the same vehicle in the same month,`);
   console.log(`  so an additive merge cannot double-count.`);
 } else {
-  console.log(`\n  ${"vehicle-month".padEnd(24)}${"A litres".padStart(9)}${"B litres".padStart(10)}   verdict`);
-  let same = 0;
-  for (const k of both.sort()) {
-    const a = vmA.get(k) || 0, b = vmB.get(k) || 0;
-    const identical = Math.abs(a - b) < 0.5;
-    if (identical) same++;
-    if (suspicious.length <= 60 || !identical)
-      console.log(`  ${k.padEnd(24)}${L(a)}${L(b)}   ${identical ? "same total — likely the SAME fuel" : "DIFFERENT totals"}`);
+  console.log(`  matching litres: ${identical.length}   ·   differing: ${differing.length}`);
+
+  if (identical.length) {
+    console.log(`\n  SAME LITRES ON BOTH SIDES — the same refuels recorded twice. Merging`);
+    console.log(`  these would double them. Every one is listed:\n`);
+    console.log(`  ${"vehicle-month".padEnd(24)}${"A litres".padStart(9)}${"B litres".padStart(10)}`);
+    for (const k of identical.sort()) console.log(`  ${k.padEnd(24)}${L(vmA.get(k) || 0)}${L(vmB.get(k) || 0)}`);
+  } else {
+    console.log(`\n  No vehicle-month carries the same litres on both sides. Nothing here looks`);
+    console.log(`  like the same fuel written down twice, so a merge should be additive.`);
   }
-  console.log(`\n  ${same} of ${both.length} vehicle-months carry the same litres on both sides.`);
-  console.log(`  Those are the same refuels recorded twice; merging them would double the site's fuel.`);
+
+  if (differing.length) {
+    console.log(`\n  Differing totals (${differing.length}) — ordinarily fine: one vehicle can fuel at its`);
+    console.log(`  site and again at the workshop in the same month. First 15:\n`);
+    for (const k of differing.sort().slice(0, 15))
+      console.log(`  ${k.padEnd(24)}${L(vmA.get(k) || 0)}${L(vmB.get(k) || 0)}`);
+  }
 }
 
 // ------------------------------------------------------------- other datasets
