@@ -145,6 +145,25 @@ async function main() {
     await prisma.$disconnect(); process.exit(1);
   }
 
+  // The migration engine needs an exclusive write lock. A running app holds the
+  // file open, and the failure surfaces mid-sequence as a bare "database is
+  // locked" — so probe for it now, before anything has been touched.
+  try {
+    await prisma.$executeRawUnsafe(`PRAGMA busy_timeout = 3000`);
+    await prisma.$executeRawUnsafe(`BEGIN IMMEDIATE`);
+    await prisma.$executeRawUnsafe(`ROLLBACK`);
+  } catch (e: any) {
+    if (/locked|busy/i.test(String(e?.message))) {
+      console.log(`\n  CANNOT PROCEED — the database is locked by another process.`);
+      console.log(`  The running app holds it open. Stop it, fix, then start it again:\n`);
+      console.log(`     pm2 stop fuelsystem`);
+      console.log(`     npx tsx scripts/diagnose_migrations.ts --apply`);
+      console.log(`     pm2 start fuelsystem\n`);
+      await prisma.$disconnect(); process.exit(1);
+    }
+    throw e;
+  }
+
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backup = `${dbPath}.pre-migrate-${stamp}`;
   fs.copyFileSync(dbPath, backup);
@@ -164,9 +183,16 @@ async function main() {
   for (const m of resolveAsApplied) {
     try { run(["migrate", "resolve", "--applied", m]); done++; console.log(`  resolved  ${m}`); }
     catch (e: any) {
+      const out = String(e.stdout || "") + String(e.stderr || "");
       console.log(`  FAILED    ${m}`);
-      console.log(String(e.stdout || "") + String(e.stderr || ""));
-      console.log(`\n  Stopped after ${done}. Database restored from backup is available at ${backup}\n`);
+      console.log(out);
+      if (/database is locked|busy/i.test(out)) {
+        console.log(`\n  The database is held open by another process — almost certainly the running app.`);
+        console.log(`     pm2 stop fuelsystem && npx tsx scripts/diagnose_migrations.ts --apply && pm2 start fuelsystem`);
+      }
+      console.log(`\n  Stopped after ${done} of ${resolveAsApplied.length}.` +
+        (done === 0 ? ` Nothing was changed.` : ` Restore with:  cp "${backup}" "${dbPath}"`));
+      console.log(`  Backup: ${backup}\n`);
       process.exit(1);
     }
   }
