@@ -63,11 +63,20 @@ adds nothing.
 
 | Script | Notes |
 |---|---|
-| `export_fuel_data` | Dumps fuel issues, replenishment requests, meter readings and tank stock by natural key (UUIDs do not survive across databases). Foreign keys travel as names: project code, username, price date. Also carries the referenced vehicles and tanks so the importer can rebuild a missing referent. |
+| `export_fuel_data` | Dumps fuel issues, replenishment requests, meter readings, site allocations and tank stock by natural key (UUIDs do not survive across databases). Foreign keys travel as names: project code, username, price date. Also carries the referenced vehicles and tanks so the importer can rebuild a missing referent. |
 | `import_fuel_data` | Replays that file into the current database. Purely additive — never edits or deletes an existing row, so operator-entered records and rows absent from the export are untouched. Idempotent: issues are reconciled by natural-key **count**, so genuine twice-in-a-day refuels survive while a re-run adds nothing. |
 
 A pump's stock level is meaningless without the deliveries that filled it, which
-is why replenishments travel with the issues rather than separately.
+is why replenishments travel with the issues rather than separately. Site
+allocations travel for the same reason: they decide which site a vehicle's cost
+lands on and from what date, so without them a vehicle's arrival date does not
+survive the trip.
+
+Duplicate checks compare dates **in memory**, never through a `where` filter on a
+date column. This database does not store DateTime text in one single
+representation, so an equality filter can miss rows that are identical — a row
+can fail to find itself — and a sync relying on one would re-insert everything it
+had already sent.
 
 **Tank stock is the exception to "additive".** A balance is a single current
 number, not a history, so it cannot be merged — adopting the export's figure

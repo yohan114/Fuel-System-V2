@@ -4,9 +4,9 @@ import * as fs from "fs";
 // Replay an exported fuel dataset into THIS database. Safe to run on a live server.
 //
 // Companion to export_fuel_data.ts. Carries issues, replenishment requests,
-// meter readings and tank stock levels. deploy-to-vps.sh keeps the server's own
-// database, so fuel imported on a workstation has to be carried across as data
-// rather than as a file. This adds what is missing and nothing else:
+// meter readings, site allocations and tank stock levels. deploy-to-vps.sh keeps
+// the server's own database, so fuel imported on a workstation has to be carried
+// across as data rather than as a file. This adds what is missing and nothing else:
 //
 //   * Never deletes or edits an existing fuel issue. Rows the operators entered
 //     on the server, and rows not present in the export, are left untouched.
@@ -16,6 +16,10 @@ import * as fs from "fs";
 //     must survive while a re-run still adds nothing.
 //   * Foreign keys are re-resolved against this database's own ids: assets by
 //     code then plate, tanks by project code, users by username.
+//   * Every duplicate check compares dates in memory rather than filtering on
+//     them. DateTime text is not stored in one single representation here, so a
+//     `where: { <dateField>: <Date> }` filter can miss rows that are identical —
+//     a row can fail to match itself — which would silently re-insert everything.
 //
 // Tank stock is the one thing that cannot be merged: a balance is a single
 // current number, not a history, so adopting the export's figure overwrites
@@ -175,16 +179,26 @@ async function main() {
   // A pump's stock level is meaningless without the deliveries that filled it,
   // so these travel with the issues. Matched on tank + litres + submission
   // time, which is unique in practice for a delivery.
+  // Matching happens in memory, never through a date-equality filter: this
+  // database holds DateTime text in more than one representation, so `where:
+  // { createdAt: <Date> }` misses rows that are in fact identical — a row can
+  // fail to find itself. Reading the dates back and comparing them as ISO
+  // strings is exact, and one query beats one per row.
+  const tanksByName = new Map((await prisma.bulkTank.findMany({ select: { id: true, name: true } }))
+    .map((t) => [t.name, t]));
+  const liveReq = new Set((await prisma.bulkRequest.findMany({
+    select: { requestedLitres: true, createdAt: true, bulkTank: { select: { name: true } } } }))
+    .map((r) => `${r.bulkTank.name}|${r.requestedLitres}|${r.createdAt.toISOString()}`));
   let reqAdded = 0, reqPresent = 0, reqNoTank = 0;
   for (const b of payload.bulkRequests || []) {
-    const tank = await prisma.bulkTank.findFirst({ where: { name: b.tank }, select: { id: true } });
+    const tank = tanksByName.get(b.tank);
     if (!tank) { reqNoTank++; continue; }
     const when = new Date(b.createdAt);
-    const dup = await prisma.bulkRequest.findFirst({
-      where: { bulkTankId: tank.id, requestedLitres: b.litres, createdAt: when }, select: { id: true } });
-    if (dup) { reqPresent++; continue; }
+    const rk = `${b.tank}|${b.litres}|${when.toISOString()}`;
+    if (liveReq.has(rk)) { reqPresent++; continue; }
+    liveReq.add(rk);
     if (APPLY) {
-      const src = b.sourceTank ? await prisma.bulkTank.findFirst({ where: { name: b.sourceTank }, select: { id: true } }) : null;
+      const src = b.sourceTank ? tanksByName.get(b.sourceTank) : null;
       await prisma.bulkRequest.create({ data: {
         fuelKind: b.fuelKind, requestedLitres: b.litres, status: b.status,
         createdAt: when, sourceType: b.sourceType || "OUTSIDE", sourceTankId: src?.id ?? null,
@@ -198,15 +212,44 @@ async function main() {
     reqAdded++;
   }
 
+  // ---------------------------------------------------------- site allocations
+  // Where a vehicle's cost lands, and from when. Matched on vehicle + site +
+  // start date, so a re-run adds nothing and an allocation the server already
+  // has is never disturbed.
+  const liveAsg = new Set((await prisma.assetAssignment.findMany({
+    select: { startDate: true, asset: { select: { code: true } }, project: { select: { code: true } } } }))
+    .map((a) => `${a.asset.code}|${a.project.code}|${a.startDate.toISOString()}`));
+  let asgAdded = 0, asgPresent = 0, asgNoAsset = 0, asgNoProject = 0;
+  for (const a of payload.assignments || []) {
+    const asset = byCode.get(alnum(a.asset));
+    if (!asset) { asgNoAsset++; continue; }
+    const proj = projByCode.get(a.project);
+    if (!proj) { asgNoProject++; continue; }
+    const start = new Date(a.startDate);
+    const ak = `${asset.code}|${a.project}|${start.toISOString()}`;
+    if (liveAsg.has(ak)) { asgPresent++; continue; }
+    liveAsg.add(ak);
+    if (APPLY) await prisma.assetAssignment.create({ data: {
+      assetId: asset.id, projectId: proj.id,
+      startDate: start, endDate: a.endDate ? new Date(a.endDate) : null,
+      note: a.note ?? null, driverName: a.driverName ?? null, billingType: a.billingType ?? null,
+      createdById: (a.createdBy && users.get(a.createdBy)?.id) || fallbackAdmin.id,
+    }});
+    asgAdded++;
+  }
+
   // ------------------------------------------------------------ meter readings
+  const liveMr = new Set((await prisma.meterReading.findMany({
+    select: { value: true, readingDate: true, asset: { select: { code: true } } } }))
+    .map((m) => `${m.asset.code}|${m.readingDate.toISOString()}|${m.value}`));
   let mrAdded = 0, mrPresent = 0, mrNoAsset = 0;
   for (const m of payload.meterReadings || []) {
     const asset = byCode.get(alnum(m.asset));
     if (!asset) { mrNoAsset++; continue; }
     const when = new Date(m.readingDate);
-    const dup = await prisma.meterReading.findFirst({
-      where: { assetId: asset.id, readingDate: when, value: m.value }, select: { id: true } });
-    if (dup) { mrPresent++; continue; }
+    const mk = `${asset.code}|${when.toISOString()}|${m.value}`;
+    if (liveMr.has(mk)) { mrPresent++; continue; }
+    liveMr.add(mk);
     if (APPLY) await prisma.meterReading.create({ data: {
       value: m.value, readingType: m.readingType, readingDate: when, source: m.source || "MANUAL",
       assetId: asset.id,
@@ -223,7 +266,7 @@ async function main() {
   for (const t of payload.tanks || []) {
     if (typeof t.balance !== "number") continue;
     const tank = await prisma.bulkTank.findFirst({ where: { name: t.tankName }, select: { id: true, balance: true } });
-    if (!tank || tank.balance === t.balance) continue;
+    if (!tank || tank.balance === t.balance) continue;   // name is unique; balance is a plain number, safe to compare
     balanceChanges.push(`${t.tankName}: ${tank.balance} L → ${t.balance} L`);
     if (APPLY && ADOPT_BALANCES) await prisma.bulkTank.update({ where: { id: tank.id }, data: { balance: t.balance } });
   }
@@ -245,6 +288,9 @@ async function main() {
     (reqNoTank ? `, skipped ${reqNoTank} with no matching tank` : ""));
   console.log(`  meter readings: ${APPLY ? "added" : "would add"} ${mrAdded}, already present ${mrPresent}` +
     (mrNoAsset ? `, skipped ${mrNoAsset} with no matching vehicle` : ""));
+  console.log(`  site allocations: ${APPLY ? "added" : "would add"} ${asgAdded}, already present ${asgPresent}` +
+    (asgNoAsset ? `, skipped ${asgNoAsset} with no matching vehicle` : "") +
+    (asgNoProject ? `, skipped ${asgNoProject} with no matching site` : ""));
   if (balanceChanges.length) {
     if (ADOPT_BALANCES) console.log(`\n  tank stock ${APPLY ? "set" : "would be set"} from the export (${balanceChanges.length} tanks):`);
     else console.log(`\n  tank stock DIFFERS on ${balanceChanges.length} tanks — not changed (pass --adopt-balances to take the export's figures):`);

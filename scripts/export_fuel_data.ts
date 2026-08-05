@@ -61,6 +61,20 @@ async function main() {
     },
   });
 
+  // Site allocations decide which vehicle is billed to which site and from what
+  // date, so they belong with the fuel rather than being left behind: without
+  // them a vehicle's arrival date, and therefore where its cost lands, does not
+  // survive the trip.
+  const assignments = await prisma.assetAssignment.findMany({
+    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+    select: {
+      startDate: true, endDate: true, note: true, driverName: true, billingType: true,
+      asset: { select: { code: true } },
+      project: { select: { code: true } },
+      createdBy: { select: { username: true } },
+    },
+  });
+
   const meterReadings = await prisma.meterReading.findMany({
     orderBy: { readingDate: "asc" },
     select: {
@@ -70,7 +84,8 @@ async function main() {
     },
   });
 
-  const assetCodes = new Set([...issues.map((i) => i.asset.code), ...meterReadings.map((m) => m.asset.code)]);
+  const assetCodes = new Set([...issues.map((i) => i.asset.code), ...meterReadings.map((m) => m.asset.code),
+    ...assignments.map((a) => a.asset.code)]);
   const assets = await prisma.asset.findMany({
     where: { code: { in: [...assetCodes] } },
     select: {
@@ -87,7 +102,7 @@ async function main() {
     counts: {
       issues: issues.length, tanks: tanks.length,
       bulkRequests: bulkRequests.length, meterReadings: meterReadings.length,
-      assets: assets.length,
+      assignments: assignments.length, assets: assets.length,
     },
     tanks: tanks.map((t) => ({
       tankName: t.name, fuelKind: t.fuelKind, capacity: t.capacity, balance: t.balance,
@@ -107,6 +122,14 @@ async function main() {
       reviewedBy: b.reviewedBy?.username || null,
       reviewedAt: b.reviewedAt?.toISOString() || null,
       reviewNote: b.reviewNote || null,
+    })),
+    assignments: assignments.map((a) => ({
+      asset: a.asset.code, project: a.project.code,
+      startDate: a.startDate.toISOString(),
+      endDate: a.endDate?.toISOString() || null,
+      note: a.note || null, driverName: a.driverName || null,
+      billingType: a.billingType || null,
+      createdBy: a.createdBy?.username || null,
     })),
     meterReadings: meterReadings.map((m) => ({
       asset: m.asset.code, value: m.value, readingType: m.readingType,
@@ -146,6 +169,7 @@ async function main() {
   console.log(`  tanks            ${tanks.length}  (${stocked.length} holding stock, ${stocked.reduce((s, t) => s + t.balance, 0).toFixed(1)} L total)`);
   console.log(`  replenishments   ${bulkRequests.length}`);
   console.log(`  meter readings   ${meterReadings.length}`);
+  console.log(`  site allocations ${assignments.length}`);
   console.log(`  assets           ${assets.length}`);
   if (!bulkRequests.length) console.log(`  note: this database has no replenishment history to export`);
   console.log(`\n  wrote ${OUT} (${(fs.statSync(dest).size / 1e6).toFixed(2)} MB)\n`);
