@@ -2,14 +2,18 @@
 # ==============================================================================
 #  E&C Fuel System V2 — safe update for a LIVE server
 #
-#  data/app.db is tracked in git, so a plain pull would overwrite live operator
-#  data. This stops the app, backs the database up cleanly (SQLite WAL is only
-#  consistent once the last connection closes), takes the new code, restores the
-#  live database, migrates, syncs fuel, rebuilds June, then starts the app again.
+#  Everything here targets the database the APP actually serves, resolved from
+#  DATABASE_URL / FUEL_DATABASE_URL / .env — never assumed. On this server that
+#  is /var/lib/fuel-system/app.db, outside the repo, while a stale copy also sits
+#  at data/app.db; migrating, backing up or importing into the wrong one looks
+#  like success while the live site never changes.
 #
-#  Because the live database is deliberately kept, fuel imported on a workstation
-#  does not arrive with the code — it is carried in
-#  data/fuel-data-export.json and replayed additively by the fuel sync step.
+#  Stops the app, backs the live database up cleanly (SQLite WAL is only
+#  consistent once the last connection closes), takes the new code, migrates,
+#  syncs fuel, rebuilds June, then starts the app again.
+#
+#  Fuel imported on a workstation does not arrive with the code — it is carried
+#  in data/fuel-data-export.json and replayed additively by the fuel sync step.
 #
 #  Only the PM2 process named below is touched — other apps on the box are left
 #  running.
@@ -24,6 +28,19 @@ PM2_APP="${PM2_APP:-fuelsystem}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="${HOME}/fuel-db-backups"
 BACKUP="${BACKUP_DIR}/app.db.live.${STAMP}"
+
+# The database the running app uses. Checked in the same order src/lib/db.ts
+# checks it, so the scripts and the app can never disagree about the target.
+resolve_db() {
+  local url="${FUEL_DATABASE_URL:-${DATABASE_URL:-}}"
+  if [[ -z "$url" && -f .env ]]; then
+    url="$(grep -hE '^[[:space:]]*(FUEL_)?DATABASE_URL=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'" | xargs)"
+  fi
+  [[ -z "$url" ]] && url="file:./data/app.db"
+  local f="${url#file:}"
+  while [[ "$f" == //* ]]; do f="${f#/}"; done      # file:///abs -> /abs
+  if [[ "$f" == /* ]]; then printf '%s' "$f"; else printf '%s/%s' "$(pwd)" "${f#./}"; fi
+}
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m    OK  %s\033[0m\n' "$*"; }
@@ -72,16 +89,21 @@ if command -v pm2 >/dev/null; then
 fi
 
 say "Backing up the LIVE database"
-[[ -f data/app.db ]] || die "data/app.db not found."
+LIVE_DB="$(resolve_db)"
+echo "    app database: $LIVE_DB"
+[[ -f "$LIVE_DB" ]] || die "the app's database was not found at $LIVE_DB — check DATABASE_URL in .env"
+if [[ "$LIVE_DB" != "$(pwd)/data/app.db" ]]; then
+  ok "live database is outside the repo — git cannot touch it"
+fi
 mkdir -p "$BACKUP_DIR"
 if command -v sqlite3 >/dev/null; then
   # Online-backup API folds any remaining WAL content into one clean file.
-  sqlite3 data/app.db ".backup '${BACKUP}'" || die "sqlite3 backup failed"
+  sqlite3 "$LIVE_DB" ".backup '${BACKUP}'" || die "sqlite3 backup failed"
   ok "backed up with sqlite3 .backup (WAL included)"
 else
-  cp data/app.db "$BACKUP"
-  [[ -f data/app.db-wal ]] && cp data/app.db-wal "${BACKUP}-wal" && warn "copied -wal sidecar too"
-  [[ -f data/app.db-shm ]] && cp data/app.db-shm "${BACKUP}-shm"
+  cp "$LIVE_DB" "$BACKUP"
+  [[ -f "${LIVE_DB}-wal" ]] && cp "${LIVE_DB}-wal" "${BACKUP}-wal" && warn "copied -wal sidecar too"
+  [[ -f "${LIVE_DB}-shm" ]] && cp "${LIVE_DB}-shm" "${BACKUP}-shm"
   ok "backed up by file copy"
 fi
 [[ -s "$BACKUP" ]] || die "Backup is empty — aborting before any change."
@@ -107,12 +129,20 @@ git checkout -f -B "$BRANCH" "origin/$BRANCH"
 ok "now at $(git log --oneline -1)"
 
 # ------------------------------------------------------------ restore live data
-say "Restoring YOUR live database over the repo's copy"
-cp "$BACKUP" data/app.db
-# Any WAL/SHM left from before belongs to the OLD file; a stale WAL replayed
-# over a restored database corrupts it.
-rm -f data/app.db-wal data/app.db-shm
-ok "live database restored, stale WAL/SHM cleared"
+# Only needed when the live database sits inside the repo, where `git checkout`
+# would have just overwritten it with the committed copy. When it lives
+# elsewhere — as on this server — git never touched it and copying the backup
+# back would be pointless churn on a file the app has open.
+if [[ "$LIVE_DB" == "$(pwd)/data/app.db" ]]; then
+  say "Restoring YOUR live database over the repo's copy"
+  cp "$BACKUP" "$LIVE_DB"
+  # Any WAL/SHM left from before belongs to the OLD file; a stale WAL replayed
+  # over a restored database corrupts it.
+  rm -f "${LIVE_DB}-wal" "${LIVE_DB}-shm"
+  ok "live database restored, stale WAL/SHM cleared"
+else
+  say "Live database untouched by the code update ($LIVE_DB)"
+fi
 
 # -------------------------------------------------------- dependencies + schema
 say "Installing dependencies"
@@ -121,7 +151,7 @@ npx prisma generate
 ok "dependencies ready"
 
 say "Applying migrations (additive — nothing is dropped)"
-DATABASE_URL="file:./data/app.db" npx prisma migrate deploy
+DATABASE_URL="file:$LIVE_DB" npx prisma migrate deploy
 ok "schema up to date"
 
 # ------------------------------------------------------- Galagedara stock book
@@ -137,10 +167,10 @@ ok "schema up to date"
 GALAGEDARA_BOOK="data/source-sheets/Galagedara_Diesel_Stock_Book.xlsx"
 if [[ -f "$GALAGEDARA_BOOK" ]]; then
   say "Galagedara stock book — DRY RUN (nothing written)"
-  npx tsx scripts/import_galagedara_stock_book.ts 2>&1 | grep -v "^prisma:query"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_galagedara_stock_book.ts 2>&1 | grep -v "^prisma:query"
   echo
   confirm "Replace Galagedara's fuel with the stock book shown above?"
-  npx tsx scripts/import_galagedara_stock_book.ts --apply 2>&1 | grep -v "^prisma:query"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_galagedara_stock_book.ts --apply 2>&1 | grep -v "^prisma:query"
   ok "Galagedara stock book applied"
 else
   warn "$GALAGEDARA_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
@@ -172,10 +202,10 @@ if [[ -f "$FUEL_EXPORT" ]]; then
     && warn "FUEL_ADOPT_BALANCES=1 — tank stock will be overwritten from the export"
 
   say "Fuel sync — DRY RUN (nothing written)"
-  npx tsx scripts/import_fuel_data.ts $SYNC_FLAGS 2>&1 | grep -v "^prisma:query"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_fuel_data.ts $SYNC_FLAGS 2>&1 | grep -v "^prisma:query"
   echo
   confirm "Add the fuel issues listed above to the live database?"
-  npx tsx scripts/import_fuel_data.ts --apply $SYNC_FLAGS 2>&1 | grep -v "^prisma:query"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_fuel_data.ts --apply $SYNC_FLAGS 2>&1 | grep -v "^prisma:query"
   ok "fuel sync complete"
 else
   warn "$FUEL_EXPORT not found — skipping fuel sync"
@@ -183,10 +213,10 @@ fi
 
 # ------------------------------------------------------------- billing rebuild
 say "June 2026 rebuild — DRY RUN (nothing written)"
-npx tsx scripts/deploy_june_rebuild.ts 2>&1 | grep -v "^prisma:query"
+FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/deploy_june_rebuild.ts 2>&1 | grep -v "^prisma:query"
 echo
 confirm "Apply the June rebuild shown above?"
-npx tsx scripts/deploy_june_rebuild.ts --apply 2>&1 | grep -v "^prisma:query"
+FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/deploy_june_rebuild.ts --apply 2>&1 | grep -v "^prisma:query"
 
 # ------------------------------------------------------------- build + restart
 say "Building"
@@ -208,5 +238,5 @@ fi
 trap - EXIT
 say "DONE"
 echo "    Backup:   $BACKUP"
-echo "    Rollback: pm2 stop $PM2_APP && cp \"$BACKUP\" data/app.db && rm -f data/app.db-wal data/app.db-shm && pm2 start $PM2_APP"
+echo "    Rollback: pm2 stop $PM2_APP && cp \"$BACKUP\" \"$LIVE_DB\" && rm -f \"${LIVE_DB}-wal\" \"${LIVE_DB}-shm\" && pm2 start $PM2_APP"
 echo
