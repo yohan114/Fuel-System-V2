@@ -124,6 +124,28 @@ say "Applying migrations (additive — nothing is dropped)"
 DATABASE_URL="file:./data/app.db" npx prisma migrate deploy
 ok "schema up to date"
 
+# ------------------------------------------------------- Galagedara stock book
+# Runs BEFORE the fuel sync, and this order matters. The stock book REPLACES
+# Galagedara's fuel: the site's earlier rows came from partial imports whose
+# figures had drifted away from the invoices actually issued against them. The
+# fuel sync only ever adds, so it cannot retire those superseded rows — left to
+# the sync alone this server would end up holding both sets and double-counting
+# the site. Running the importer first retires them; the sync then finds the
+# book's rows already present and adds nothing.
+#
+# Re-running is safe: it replaces its own rows rather than stacking.
+GALAGEDARA_BOOK="data/source-sheets/Galagedara_Diesel_Stock_Book.xlsx"
+if [[ -f "$GALAGEDARA_BOOK" ]]; then
+  say "Galagedara stock book — DRY RUN (nothing written)"
+  npx tsx scripts/import_galagedara_stock_book.ts 2>&1 | grep -v "^prisma:query"
+  echo
+  confirm "Replace Galagedara's fuel with the stock book shown above?"
+  npx tsx scripts/import_galagedara_stock_book.ts --apply 2>&1 | grep -v "^prisma:query"
+  ok "Galagedara stock book applied"
+else
+  warn "$GALAGEDARA_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
+fi
+
 # ----------------------------------------------------------------- fuel sync
 # Because the live database was just restored over the repo's copy, fuel
 # imported on a workstation is NOT on this server yet. It travels as data

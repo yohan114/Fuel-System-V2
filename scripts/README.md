@@ -53,6 +53,14 @@ npx tsx scripts/import_fuel_data.ts --apply
 Direction is whichever way the data needs to go — export from the instance that
 has it, import into the one that does not.
 
+**The sync only ever adds.** That keeps it safe on a live server, but it means a
+site whose fuel was *replaced* here cannot be fixed by the sync alone — the
+server's superseded rows would survive and the site would double-count. Galagedara
+is exactly that case, which is why `deploy-to-vps.sh` runs
+`import_galagedara_stock_book` on the server *before* the sync: the importer
+retires the old rows, and the sync then finds the book's rows already present and
+adds nothing.
+
 | Script | Notes |
 |---|---|
 | `export_fuel_data` | Dumps fuel issues, replenishment requests, meter readings and tank stock by natural key (UUIDs do not survive across databases). Foreign keys travel as names: project code, username, price date. Also carries the referenced vehicles and tanks so the importer can rebuild a missing referent. |

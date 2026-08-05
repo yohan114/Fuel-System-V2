@@ -24,12 +24,18 @@ import * as XLSX from "xlsx";
 // the site, so each one gets a site assignment starting on that date — which is
 // what makes it billable from then on and not before.
 //
+// Re-running is safe and lands on the same state: it clears the book vehicles'
+// fuel for this tank and rewrites it, so a second run replaces its own rows
+// rather than stacking. That is also why the server runs it instead of relying
+// on the fuel sync — the sync only ever adds, and cannot retire the superseded
+// rows a server imported earlier.
+//
 //   npx tsx scripts/import_galagedara_stock_book.ts            # dry run
 //   npx tsx scripts/import_galagedara_stock_book.ts --apply
 
 const APPLY = process.argv.includes("--apply");
 const FILE = process.argv.find((a) => a.startsWith("--file="))?.slice(7)
-  || "/root/.claude/uploads/ddd640e9-2dc1-5d1a-9875-08410003a7a4/cd00a4b9-Diesel_stock_book_1.xlsx";
+  || "data/source-sheets/Galagedara_Diesel_Stock_Book.xlsx";
 const SHEET = "Diesel stock book ";
 const SOURCE = "Galagedara stock book";
 const PROJECT = "CEP-03F";
