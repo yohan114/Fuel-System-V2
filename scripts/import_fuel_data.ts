@@ -1,5 +1,6 @@
 import { prisma } from "../src/lib/db";
 import * as fs from "fs";
+import * as path from "path";
 
 // Replay an exported fuel dataset into THIS database. Safe to run on a live server.
 //
@@ -45,8 +46,24 @@ const rs = (c: number) => "Rs " + (c / 100).toLocaleString(undefined, { maximumF
 const keyOf = (assetCode: string, iso: string, litres: number, source: string, price: number, cost: number) =>
   `${assetCode}|${iso}|${litres}|${source}|${price}|${cost}`;
 
+
+// Print the database this run will actually touch. A server can have several
+// SQLite files side by side — the repo's committed data/app.db, a dev.db, an
+// env-configured live one — and silently reading or writing the wrong one looks
+// exactly like success while the running app sees nothing change.
+function announceDatabase(): string {
+  const url = process.env.FUEL_DATABASE_URL || process.env.DATABASE_URL || "file:./data/app.db";
+  const file = url.replace(/^file:/, "");
+  const abs = path.resolve(process.cwd(), file);
+  console.log(`  database: ${abs}${fs.existsSync(abs) ? "" : "   << DOES NOT EXIST"}`);
+  if (!process.env.FUEL_DATABASE_URL && !process.env.DATABASE_URL)
+    console.log(`  (default — set FUEL_DATABASE_URL if the running app uses a different file)`);
+  return abs;
+}
+
 async function main() {
   console.log(`\n=== Import fuel data (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
+  announceDatabase();
   if (!fs.existsSync(FILE)) throw new Error(`export file not found: ${FILE}`);
   const payload = JSON.parse(fs.readFileSync(FILE, "utf8"));
   if (payload.kind !== "fuel-data-export" && payload.kind !== "fuel-issues-export")
