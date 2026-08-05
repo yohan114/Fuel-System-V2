@@ -151,7 +151,15 @@ npx prisma generate
 ok "dependencies ready"
 
 say "Applying migrations (additive — nothing is dropped)"
-DATABASE_URL="file:$LIVE_DB" npx prisma migrate deploy
+# A database whose schema was built by `db push` has the tables but no migration
+# history, so deploy replays from the start and dies on the first "table already
+# exists". That is bookkeeping, not damage — the diagnosis prints the exact
+# resolve commands rather than leaving a bare P3018 to interpret.
+if ! DATABASE_URL="file:$LIVE_DB" npx prisma migrate deploy; then
+  warn "migrate deploy failed — diagnosing before changing anything else"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/diagnose_migrations.ts 2>&1 | grep -v "^prisma:query" || true
+  die "Migrations must be resolved first. Run the commands above, then re-run this script. Your data is untouched; backup: $BACKUP"
+fi
 ok "schema up to date"
 
 # ------------------------------------------------------- Galagedara stock book
