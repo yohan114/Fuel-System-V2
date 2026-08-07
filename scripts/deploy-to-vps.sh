@@ -244,6 +244,18 @@ else
   warn "$CEP03E_AUG not found — skipping (August meter readings will not arrive)"
 fi
 
+# --------------------------------------------- CEP-03 Wadakada August register
+# Same shape as CEP-03 E's: issues, then the postings that make the issue log
+# agree with the pump. It also carries the site's first deliveries — 800 L in two
+# receipts — and eleven machines that exist nowhere else in the fleet.
+CEP03W_AUG="data/source-sheets/CEP03W_Fuel_Issue_Register_Aug2026.xlsx"
+if [[ -f "$CEP03W_AUG" ]]; then
+  step "CEP-03 Wadakada August register" scripts/import_cep03w_aug_register.ts
+  step "CEP-03 Wadakada August postings" scripts/post_pump_vehicles.ts --site=CEP-03W --from=2026-08-01 --to=2026-08-06
+else
+  warn "$CEP03W_AUG not found — skipping"
+fi
+
 # ----------------------------------------------------------------- fuel sync
 # Because the live database was just restored over the repo's copy, fuel
 # imported on a workstation is NOT on this server yet. It travels as data

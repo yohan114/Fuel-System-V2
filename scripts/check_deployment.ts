@@ -21,6 +21,7 @@ const EXPECTED: { label: string; source: string; rows: number; litres: number }[
   { label: "Galagedara monthly workbook", source: "Galagedara ", rows: 436, litres: 18403 },
   { label: "CEP-03 E July log book", source: "CEP-03 E fuel log book", rows: 89, litres: 2172 },
   { label: "CEP-03 E August register", source: "CEP-03 E daily fuel register", rows: 20, litres: 500 },
+  { label: "CEP-03 W August register", source: "CEP-03 Wadakada fuel register", rows: 32, litres: 634 },
 ];
 
 const dayOf = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
