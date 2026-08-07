@@ -214,6 +214,99 @@ export async function submitBulkRequestAction(formData: FormData) {
   }
 }
 
+// 2b. Record a bulk refuel — applied to stock immediately, no approval step.
+//
+// A pump operator knows what the supplier just poured into their tank; making
+// them wait for an admin to confirm it left the console showing stock the site
+// did not have, and every issue after that was measured against a wrong figure.
+// So the delivery lands on the tank the moment it is recorded.
+//
+// The trade for that immediacy is that it is final: recorded against the
+// operator's name and never editable, so a wrong figure is corrected by a
+// visible counter-entry rather than by quietly rewriting history. The console
+// confirms the number before submitting, because there is no undo.
+export async function recordBulkRefuelAction(formData: FormData) {
+  let user;
+  try {
+    user = await assertCan("create");
+  } catch {
+    return { error: "You are not authorized to perform this action" };
+  }
+
+  const bulkTankId = formData.get("bulkTankId")?.toString();
+  const litresStr = formData.get("requestedLitres")?.toString();
+  const sourceType = formData.get("sourceType")?.toString() === "SITE" ? "SITE" : "OUTSIDE";
+  const sourceTankId = formData.get("sourceTankId")?.toString() || null;
+
+  if (!bulkTankId || !litresStr) return { error: "Please fill in all required fields" };
+  const litres = parseFloat(litresStr);
+  if (isNaN(litres) || litres <= 0) return { error: "Quantity must be greater than zero" };
+
+  try {
+    const tank = await prisma.bulkTank.findUnique({ where: { id: bulkTankId } });
+    if (!tank) return { error: "Storage tank not found" };
+
+    let sourceTank = null;
+    if (sourceType === "SITE") {
+      if (!sourceTankId) return { error: "Choose the site to draw fuel from." };
+      if (sourceTankId === bulkTankId) return { error: "Source and destination tanks must be different." };
+      sourceTank = await prisma.bulkTank.findUnique({ where: { id: sourceTankId } });
+      if (!sourceTank) return { error: "Source site tank not found." };
+      if (sourceTank.fuelKind !== tank.fuelKind) return { error: "That site holds a different fuel type." };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (sourceType === "SITE" && sourceTankId) {
+        // Re-read inside the transaction: the source balance can move between
+        // the check above and here, and a transfer must not overdraw it.
+        const source = await tx.bulkTank.findUnique({ where: { id: sourceTankId } });
+        if (!source) throw new Error("The source site tank no longer exists.");
+        if (source.balance < litres) {
+          throw new Error(`${source.name} only has ${source.balance.toFixed(1)}L available.`);
+        }
+        await tx.bulkTank.update({ where: { id: source.id }, data: { balance: { decrement: litres } } });
+      }
+
+      await tx.bulkTank.update({ where: { id: tank.id }, data: { balance: { increment: litres } } });
+
+      // Logged as an already-settled record: recorded and applied by the same
+      // person, in the same moment, so the history reads as it happened.
+      const rec = await tx.bulkRequest.create({
+        data: {
+          bulkTankId: tank.id,
+          fuelKind: tank.fuelKind,
+          requestedLitres: litres,
+          requestedById: user.id,
+          status: "APPROVED",
+          reviewedById: user.id,
+          reviewedAt: new Date(),
+          reviewNote: "Recorded at the pump and added to stock immediately",
+          sourceType,
+          sourceTankId: sourceType === "SITE" ? sourceTankId : null,
+        },
+      });
+
+      const where = sourceType === "SITE" ? `from site "${sourceTank!.name}"` : "by outside purchase";
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "CREATE",
+          entity: "BulkRequest",
+          entityId: rec.id,
+          summary: `Recorded ${litres}L of ${tank.fuelKind} into "${tank.name}" ${where} — added to stock immediately`,
+        },
+      });
+    });
+
+    revalidatePath("/site");
+    revalidatePath("/workshop");
+    return { success: true };
+  } catch (err: any) {
+    console.error("Record bulk refuel error:", err);
+    return { error: err.message || "Failed to record the refuel" };
+  }
+}
+
 // 3. Approve Bulk Replenishment Request (Admin only)
 export async function approveBulkRequestAction(requestId: string, reviewNote: string | null) {
   let admin;

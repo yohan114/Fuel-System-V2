@@ -83,6 +83,10 @@ export default async function SitePumpPage() {
       todayStr={colomboTodayStr}
       minDateStr={minDateStr}
       title="Site Pump Console"
+      // A site operator records the delivery that just happened rather than
+      // asking permission for one, and does not carry the stock figure.
+      immediateRefuel
+      hideStock
     />
   );
 }

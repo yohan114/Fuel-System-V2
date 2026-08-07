@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useTransition } from "react";
-import { submitBulkRequestAction, workshopIssueFuelAction } from "@/app/actions/workshop";
+import { submitBulkRequestAction, recordBulkRefuelAction, workshopIssueFuelAction } from "@/app/actions/workshop";
 import { 
   Database, 
   Plus, 
@@ -79,6 +79,13 @@ interface WorkshopConsoleProps {
   todayStr: string;
   minDateStr: string;
   title?: string;
+  // A site pump records what the supplier actually delivered and it lands on
+  // stock at once; the workshop still raises a request for an admin to approve.
+  immediateRefuel?: boolean;
+  // Site operators log fuel in and out but do not own the stock figure — that is
+  // management's number, and showing a running balance here invited operators to
+  // reconcile against it rather than simply record what happened.
+  hideStock?: boolean;
 }
 
 export default function WorkshopConsole({
@@ -93,8 +100,15 @@ export default function WorkshopConsole({
   lockMessage,
   todayStr,
   minDateStr,
-  title = "Workshop Pump Console"
+  title = "Workshop Pump Console",
+  immediateRefuel = false,
+  hideStock = false,
 }: WorkshopConsoleProps) {
+  // Held between "submit" and the confirmation, because an immediate refuel
+  // cannot be undone and the operator should see the number before it is final.
+  const [pendingRefuel, setPendingRefuel] = useState<{
+    litres: number; sourceType: string; sourceTankId: string; sourceName: string | null;
+  } | null>(null);
   const [activeTank, setActiveTank] = useState<TankProp | null>(initialTank);
   const [issues, setIssues] = useState<IssueProp[]>(initialIssues);
   const [requests, setRequests] = useState<BulkReqProp[]>(initialRequests);
@@ -125,10 +139,12 @@ export default function WorkshopConsole({
     setSuccess(false);
     setSelectedAssetCode("");
     setSelectedProjectId("");
+    setPendingRefuel(null);
   };
 
   const closeModal = () => {
     setActiveModal(null);
+    setPendingRefuel(null);
   };
 
   const handleSiteIssueSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -187,6 +203,7 @@ export default function WorkshopConsole({
     });
   };
 
+  // Immediate mode collects the entry, shows it back, and only then commits.
   const handleReplenishSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
@@ -197,9 +214,23 @@ export default function WorkshopConsole({
       formData.set("bulkTankId", activeTank.id);
     }
 
+    if (immediateRefuel && !pendingRefuel) {
+      const litres = parseFloat(formData.get("requestedLitres")?.toString() || "0");
+      if (isNaN(litres) || litres <= 0) { setError("Quantity must be greater than zero"); return; }
+      const st = formData.get("sourceType")?.toString() || "OUTSIDE";
+      const stid = formData.get("sourceTankId")?.toString() || "";
+      setPendingRefuel({
+        litres, sourceType: st, sourceTankId: stid,
+        sourceName: st === "SITE" ? (allTanks.find((t) => t.id === stid)?.name ?? null) : null,
+      });
+      return;
+    }
+
     startTransition(async () => {
       try {
-        const res = await submitBulkRequestAction(formData);
+        const res = immediateRefuel
+          ? await recordBulkRefuelAction(formData)
+          : await submitBulkRequestAction(formData);
         if (res.error) {
           setError(res.error);
         } else {
@@ -211,7 +242,7 @@ export default function WorkshopConsole({
               id: Math.random().toString(),
               fuelKind: activeTank?.fuelKind || "AUTO_DIESEL",
               requestedLitres: litres,
-              status: "PENDING",
+              status: immediateRefuel ? "APPROVED" : "PENDING",
               createdAt: new Date(),
               reviewNote: null,
             },
@@ -320,7 +351,7 @@ export default function WorkshopConsole({
             className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-gray-200 border border-white/5 px-4 py-2.5 rounded-xl text-xs font-semibold tracking-wide active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition-all w-fit"
           >
             <PlusCircle className="w-4 h-4 text-indigo-400" />
-            Request Bulk replenishment
+            {immediateRefuel ? "Record Bulk Replenishment" : "Request Bulk replenishment"}
           </button>
           
           <button
@@ -345,6 +376,7 @@ export default function WorkshopConsole({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Pump Fuel Inventory Progress card */}
+        {!hideStock && (
         <div className="lg:col-span-2 bg-[#121420] border border-white/5 p-6 rounded-2xl shadow-xl flex flex-col justify-between space-y-6">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
@@ -380,16 +412,24 @@ export default function WorkshopConsole({
             </div>
           </div>
         </div>
+        )}
 
         {/* Local Fuel Pump Scrap Info */}
-        <div className="bg-[#121420] border border-white/5 p-6 rounded-2xl shadow-xl flex flex-col justify-between">
+        <div className={`bg-[#121420] border border-white/5 p-6 rounded-2xl shadow-xl flex flex-col justify-between${hideStock ? " lg:col-span-3" : ""}`}>
           <div>
             <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3">Operator Instructions</h4>
             <ul className="text-[11px] text-gray-400 space-y-2 list-disc pl-4 leading-relaxed font-medium">
               <li>You can refuel <strong>any vehicle or machinery</strong> in the E&C fleet.</li>
               <li>Dispatched quantities are automatically deducted from your pump storage.</li>
-              <li>If the fuel level is low, request a bulk replenishment immediately.</li>
-              <li>Type custom asset codes to auto-create unregistered items under "OTHER".</li>
+              {immediateRefuel ? (
+                <li>Record a bulk replenishment as soon as fuel is delivered — it is applied immediately.</li>
+              ) : (
+                <li>If the fuel level is low, request a bulk replenishment immediately.</li>
+              )}
+              <li>Type custom asset codes to auto-create unregistered items under &quot;OTHER&quot;.</li>
+              {hideStock && (
+                <li>Tank stock figures are held by management. Every issue and every replenishment is logged against your name.</li>
+              )}
             </ul>
           </div>
           <div className="text-[9px] text-gray-500 font-bold border-t border-white/5 pt-3 mt-4">
@@ -456,7 +496,7 @@ export default function WorkshopConsole({
                       {req.requestedLitres.toLocaleString()} L
                     </div>
                     <p className="text-[9px] text-gray-500 mt-1">
-                      Submitted: {new Date(req.createdAt).toLocaleDateString()}
+                      {immediateRefuel ? "Recorded" : "Submitted"}: {new Date(req.createdAt).toLocaleDateString()}
                     </p>
                   </div>
 
@@ -467,7 +507,7 @@ export default function WorkshopConsole({
                       ? "bg-red-500/10 text-red-400"
                       : "bg-amber-500/10 text-amber-400"
                   }`}>
-                    {req.status}
+                    {immediateRefuel && req.status === "APPROVED" ? "Added to stock" : req.status}
                   </span>
                 </div>
               ))
@@ -492,10 +532,14 @@ export default function WorkshopConsole({
 
             <h3 className="text-md font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <PlusCircle className="w-5 h-5 text-indigo-400" />
-              Request Bulk Refuel
+              {immediateRefuel ? "Record Bulk Refuel" : "Request Bulk Refuel"}
             </h3>
             <p className="text-xs text-gray-400">
-              Submit a fuel request to load bulk inventory into <strong>{activeTank.name}</strong>. Admins must authorize the delivery.
+              {immediateRefuel ? (
+                <>Record fuel loaded into <strong>{activeTank.name}</strong>. It is applied to stock immediately and logged against your name.</>
+              ) : (
+                <>Submit a fuel request to load bulk inventory into <strong>{activeTank.name}</strong>. Admins must authorize the delivery.</>
+              )}
             </p>
 
             {error && (
@@ -508,10 +552,62 @@ export default function WorkshopConsole({
             {success && (
               <div className="bg-emerald-500/10 border border-emerald-500/10 text-emerald-400 text-xs px-4 py-3 rounded-xl flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                <span>Request submitted successfully! Waiting for admin review.</span>
+                <span>{immediateRefuel ? "Recorded and added to tank stock." : "Request submitted successfully! Waiting for admin review."}</span>
               </div>
             )}
 
+            {pendingRefuel ? (
+              /* There is no undo once this is applied, so the operator reads the
+                 figures back before committing rather than after. */
+              <div className="space-y-4">
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 flex gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <div className="text-[11px] text-amber-200/90 leading-relaxed">
+                    <strong className="block text-amber-300 mb-0.5">Please check carefully</strong>
+                    This is added to tank stock straight away. It <strong>cannot be edited or deleted</strong> afterwards,
+                    and is logged against your name.
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/5 overflow-hidden">
+                  {[
+                    ["Quantity", `${pendingRefuel.litres.toLocaleString()} L`],
+                    ["Fuel", activeTank.fuelKind.replace("_", " ")],
+                    ["Into tank", activeTank.name],
+                    ["Source", pendingRefuel.sourceType === "SITE"
+                      ? `Transfer from ${pendingRefuel.sourceName ?? "another site"}`
+                      : "Outside purchase (supplier delivery)"],
+                  ].map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between px-4 py-3 bg-[#1b1e30]/60 border-b border-white/5 last:border-b-0">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">{k}</span>
+                      <span className="text-xs font-bold text-white text-right">{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <form onSubmit={handleReplenishSubmit} className="flex gap-3">
+                  <input type="hidden" name="requestedLitres" value={pendingRefuel.litres} />
+                  <input type="hidden" name="sourceType" value={pendingRefuel.sourceType} />
+                  {pendingRefuel.sourceType === "SITE" && (
+                    <input type="hidden" name="sourceTankId" value={pendingRefuel.sourceTankId} />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPendingRefuel(null)}
+                    className="flex-1 bg-white/5 hover:bg-white/10 border border-white/5 text-gray-200 rounded-xl px-4 py-2.5 text-xs font-semibold transition-colors"
+                  >
+                    Go back &amp; edit
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isPending}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl px-4 py-2.5 text-xs font-bold transition-colors"
+                  >
+                    {isPending ? "Adding…" : `Yes, add ${pendingRefuel.litres.toLocaleString()} L`}
+                  </button>
+                </form>
+              </div>
+            ) : (
             <form onSubmit={handleReplenishSubmit} className="space-y-4">
               <div>
                 <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
@@ -589,9 +685,10 @@ export default function WorkshopConsole({
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs py-2.5 rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {isPending && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                Submit Bulk Request
+                {immediateRefuel ? "Review & add to stock" : "Submit Bulk Request"}
               </button>
             </form>
+            )}
           </div>
         </div>
       )}
