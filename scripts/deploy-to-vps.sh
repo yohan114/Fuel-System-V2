@@ -51,6 +51,36 @@ confirm() {
   [[ "$reply" =~ ^[Yy]$ ]] || die "Cancelled by user — nothing was changed."
 }
 
+# A data import is one step among many, and declining or failing one is not a
+# reason to abandon the rest. `confirm` aborts the whole run, which is right for
+# replacing the code and wrong here: answering "n" to the first import used to
+# mean every later import never ran and the app was never rebuilt, with no
+# message saying so. Each import now stands on its own and the run continues.
+SKIPPED_STEPS=()
+step() {                      # step "<name>" "<script.ts>" [args...]
+  local name="$1" script="$2"; shift 2
+  say "$name — DRY RUN (nothing written)"
+  if ! FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx "$script" "$@" 2>&1 | grep -v "^prisma:query"; then
+    warn "$name could not run — skipping it, the rest of the deploy continues"
+    SKIPPED_STEPS+=("$name (dry run failed)")
+    return 0
+  fi
+  echo
+  local reply
+  read -r -p "$(printf '\033[1;33mApply "%s"? [y/N] \033[0m' "$name")" reply
+  if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+    warn "$name declined — skipping it, the rest of the deploy continues"
+    SKIPPED_STEPS+=("$name (declined)")
+    return 0
+  fi
+  if ! FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx "$script" --apply "$@" 2>&1 | grep -v "^prisma:query"; then
+    warn "$name FAILED while applying — the rest of the deploy continues"
+    SKIPPED_STEPS+=("$name (failed while applying)")
+    return 0
+  fi
+  ok "$name applied"
+}
+
 APP_STOPPED=0
 start_app() {
   if [[ "$APP_STOPPED" == "1" ]]; then
@@ -174,12 +204,7 @@ ok "schema up to date"
 # Re-running is safe: it replaces its own rows rather than stacking.
 GALAGEDARA_BOOK="data/source-sheets/Galagedara_Fuel_Monthly_and_Vehicle_Allocation.xlsx"
 if [[ -f "$GALAGEDARA_BOOK" ]]; then
-  say "Galagedara stock book — DRY RUN (nothing written)"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_galagedara_monthly.ts 2>&1 | grep -v "^prisma:query"
-  echo
-  confirm "Replace Galagedara's fuel with the stock book shown above?"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_galagedara_monthly.ts --apply 2>&1 | grep -v "^prisma:query"
-  ok "Galagedara stock book applied"
+  step "Galagedara stock book" scripts/import_galagedara_monthly.ts
 else
   warn "$GALAGEDARA_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
 fi
@@ -197,12 +222,7 @@ fi
 # nothing.
 CEP03E_BOOK="data/source-sheets/CEP03E_Fuel_Lubricant_Issue_Log_Jul2026.xlsx"
 if [[ -f "$CEP03E_BOOK" ]]; then
-  say "CEP-03 E July log book — DRY RUN (nothing written)"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_july_log.ts 2>&1 | grep -v "^prisma:query"
-  echo
-  confirm "Add the CEP-03 E fuel issues listed above?"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_july_log.ts --apply 2>&1 | grep -v "^prisma:query"
-  ok "CEP-03 E July log book applied"
+  step "CEP-03 E July log book" scripts/import_cep03e_july_log.ts
 else
   warn "$CEP03E_BOOK not found — the sync will still carry its rows, minus any whose vehicle is unknown here"
 fi
@@ -214,22 +234,12 @@ fi
 # export alone would land the litres and lose every reading.
 CEP03E_AUG="data/source-sheets/CEP03E_Daily_Fuel_Issue_Register_Aug2026.xlsx"
 if [[ -f "$CEP03E_AUG" ]]; then
-  say "CEP-03 E August fuel register — DRY RUN (nothing written)"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_aug_register.ts 2>&1 | grep -v "^prisma:query"
-  echo
-  confirm "Add the August fuel issues and meter readings listed above?"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_aug_register.ts --apply 2>&1 | grep -v "^prisma:query"
-  ok "CEP-03 E August register applied"
+  step "CEP-03 E August register" scripts/import_cep03e_aug_register.ts
 
   # The litres land on the pump; the issue log files them by the vehicle's
   # POSTING, and every posting for these machines expired on 31 July. Without
   # this the register reads correctly on the pump and wrongly on the site.
-  say "CEP-03 E August postings — DRY RUN (nothing written)"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/post_pump_vehicles.ts --site=CEP-03E --from=2026-08-01 --to=2026-08-06 2>&1 | grep -v "^prisma:query"
-  echo
-  confirm "Post those vehicles to CEP-03 E for the days shown?"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/post_pump_vehicles.ts --site=CEP-03E --from=2026-08-01 --to=2026-08-06 --apply 2>&1 | grep -v "^prisma:query"
-  ok "CEP-03 E August postings applied"
+  step "CEP-03 E August postings" scripts/post_pump_vehicles.ts --site=CEP-03E --from=2026-08-01 --to=2026-08-06
 else
   warn "$CEP03E_AUG not found — skipping (August meter readings will not arrive)"
 fi
@@ -281,19 +291,10 @@ fi
 # last means the orphans go whatever the earlier steps put back.
 #
 # Idempotent: on a server that never had them it deletes nothing.
-say "Galagedara alias cleanup — DRY RUN (nothing written)"
-FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/fix_galagedara_aliases.ts 2>&1 | grep -v "^prisma:query"
-echo
-confirm "Remove the duplicate rows listed above?"
-FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/fix_galagedara_aliases.ts --apply 2>&1 | grep -v "^prisma:query"
-ok "Galagedara aliases resolved"
+step "Galagedara alias cleanup" scripts/fix_galagedara_aliases.ts
 
 # ------------------------------------------------------------- billing rebuild
-say "June 2026 rebuild — DRY RUN (nothing written)"
-FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/deploy_june_rebuild.ts 2>&1 | grep -v "^prisma:query"
-echo
-confirm "Apply the June rebuild shown above?"
-FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/deploy_june_rebuild.ts --apply 2>&1 | grep -v "^prisma:query"
+step "June 2026 rebuild" scripts/deploy_june_rebuild.ts
 
 # ------------------------------------------------------------- build + restart
 say "Building"
@@ -313,6 +314,20 @@ else
 fi
 
 trap - EXIT
+
+# Anything skipped is stated plainly. A step that quietly did not run is exactly
+# how "the deploy worked but the data is not there" happens.
+if [[ ${#SKIPPED_STEPS[@]} -gt 0 ]]; then
+  say "NOT APPLIED — ${#SKIPPED_STEPS[@]} step(s) skipped"
+  for s in "${SKIPPED_STEPS[@]}"; do warn "$s"; done
+  echo "    Re-run this script to try them again."
+fi
+
+# What the server actually holds now, so the run ends on evidence rather than on
+# the assumption that every step did what it said.
+say "What this server now holds"
+FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/check_deployment.ts 2>&1 | grep -v "^prisma:query" || warn "(check_deployment.ts failed — run it by hand)"
+
 say "DONE"
 echo "    Backup:   $BACKUP"
 echo "    Rollback: pm2 stop $PM2_APP && cp \"$BACKUP\" \"$LIVE_DB\" && rm -f \"${LIVE_DB}-wal\" \"${LIVE_DB}-shm\" && pm2 start $PM2_APP"
