@@ -23,6 +23,7 @@ const EXPECTED: { label: string; source: string; rows: number; litres: number }[
   { label: "CEP-03 E August register", source: "CEP-03 E daily fuel register", rows: 20, litres: 500 },
   { label: "CEP-03 W August register", source: "CEP-03 Wadakada fuel register", rows: 32, litres: 634 },
   { label: "Karaitivu stock book", source: "Karaitivu diesel stock book", rows: 360, litres: 13120 },
+  { label: "Pallanoya stock book", source: "Pallanoya diesel stock book", rows: 26, litres: 1385 },
 ];
 
 const dayOf = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });

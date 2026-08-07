@@ -1,49 +1,62 @@
 import { prisma } from "../src/lib/db";
 import * as XLSX from "xlsx";
 
-// Import the Karaitivu Bridge diesel stock book, 28 Oct 2025 – 02 Aug 2026.
+// Import a site diesel stock book.
 //
-// 360 issues (13,120 L) and 90 receipts (13,460 L), leaving the book's own
-// closing balance of 340 L. It is the site's primary daily record: every line
-// carries a running received/issued/balance chain and every delivery a GRN.
+// The company runs one printed stock book at every bridge site — the same ruled
+// columns of GRN, description, received, meter, issued and a running balance.
+// One importer reads them all; the per-site table below carries only what
+// genuinely differs, which is the file and the handful of descriptions written in
+// words rather than as a plate.
 //
-// It REPLACES the site's existing fuel rather than adding to it, because the two
-// describe the same refuels. Over March–June the tank already holds 94 rows from
-// the consolidated register, and vehicle by vehicle the litres agree exactly —
-// 64-7131 at 770 L, BD-05 at 530 L, LB-14 at 570 L, LB-22 at 80 L and ten others
-// match to the litre. Where they differ, the register is short: 355 L against the
-// book's 1,635 L in March, and 940 L against 3,010 L for the Lanka Pile
-// generator. Adding would double every month the two share.
-//
-// Three of the register's labels are the book's under another name, and the
-// replacement is what folds them back together:
-//   Generator (Lanka Pile)   -> GEN-KB, whose type is literally "Generator (Sub, Lanka Pile)"
-//   Crane (Lanka Pile)       -> OTH-KB, "Crane (Sub, Lanka Pile)"
-//   LK-5141                  -> the book's LK-5041, which is BM-05's plate
+// It REPLACES the site's fuel inside the book's dates rather than adding to it,
+// because the consolidated register already covers part of the same period and
+// the two describe the same refuels. At Karaitivu fourteen vehicles agree to the
+// litre over March-June, with the register short wherever they differ — 355 L
+// against the book's 1,635 L in March. At Pallam Oya the register's nine rows
+// total 520 L, exactly the book's May and June. Adding would double every month
+// the two share.
 //
 // Meters are kept only while they advance. A ten-month handwritten book will
 // carry a few readings that go backwards, and stopping the whole import for one
 // of them helps nobody — so a reading below the highest already accepted for that
 // machine is dropped, its fuel is kept, and every one is listed.
 //
-//   npx tsx scripts/import_karaitivu_stock_book.ts             # dry run
-//   npx tsx scripts/import_karaitivu_stock_book.ts --apply
-//   npx tsx scripts/import_karaitivu_stock_book.ts --apply --set-stock
+//   npx tsx scripts/import_stock_book.ts --site=KARA
+//   npx tsx scripts/import_stock_book.ts --site=PALO --apply
+//   npx tsx scripts/import_stock_book.ts --site=PALO --apply --set-stock
 
 const APPLY = process.argv.includes("--apply");
 const SET_STOCK = process.argv.includes("--set-stock");
-const FILE = process.argv.find((a) => a.startsWith("--file="))?.slice(7)
-  || "data/source-sheets/Karaitivu_Diesel_Stock_Book.xlsx";
-const PROJECT = "KARA";
-const SOURCE = "Karaitivu diesel stock book";
+const arg = (n: string) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
 
-// Descriptions that are not plates. Each already exists in the fleet under a
-// name only a human would connect to the book's wording.
-const LABEL_MAP: Record<string, string> = {
-  "Generator (Lanka Pile)": "GEN-KB",
-  "GE-118 (for lanka pile)": "GE-118",
-  "Crane (Lanka Pile)": "OTH-KB",
+// Only the differences live here. `labelMap` holds the descriptions that are not
+// plates — each already exists in the fleet under a name only a human would
+// connect to the book's wording.
+const SITES: Record<string, { name: string; file: string; labelMap: Record<string, string> }> = {
+  KARA: {
+    name: "Karaitivu",
+    file: "data/source-sheets/Karaitivu_Diesel_Stock_Book.xlsx",
+    labelMap: {
+      "Generator (Lanka Pile)": "GEN-KB",
+      "GE-118 (for lanka pile)": "GE-118",
+      "Crane (Lanka Pile)": "OTH-KB",
+    },
+  },
+  PALO: {
+    name: "Pallanoya",
+    file: "data/source-sheets/Pallanoya_Diesel_Stock_Book.xlsx",
+    labelMap: {},
+  },
 };
+
+const PROJECT = arg("site");
+if (!PROJECT) throw new Error(`need --site=CODE (one of ${Object.keys(SITES).join(", ")})`);
+const CONF = SITES[PROJECT];
+if (!CONF) throw new Error(`no stock book configured for ${PROJECT} — add it to SITES`);
+const FILE = arg("file") || CONF.file;
+const SOURCE = `${CONF.name} diesel stock book`;
+const LABEL_MAP = CONF.labelMap;
 
 const alnum = (s: string) => String(s).replace(/[^a-z0-9]/gi, "").toUpperCase();
 const rs = (c: number) => "Rs " + (c / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -63,7 +76,7 @@ function toISO(v: unknown): string | null {
 }
 
 async function main() {
-  console.log(`\n=== Karaitivu diesel stock book (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
+  console.log(`\n=== ${CONF.name} diesel stock book · site ${PROJECT} (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
   const wb = XLSX.readFile(FILE);
   const raw = XLSX.utils.sheet_to_json<any[]>(wb.Sheets["Diesel Stock Book"], { header: 1, defval: "", blankrows: false });
 
@@ -135,7 +148,7 @@ async function main() {
     if (!APPLY) { resolved.set(label, { id: `(new:${label})`, code: label, meterType }); continue; }
     const made = await prisma.asset.create({ data: {
       code: label, regNo: /^[A-Z]{2,3}-?\d{3,4}$/i.test(label) ? label : null,
-      typeLabel: "From the Karaitivu diesel stock book",
+      typeLabel: `From the ${CONF.name} diesel stock book`,
       status: "ACTIVE", meterType, ownership: "OWNED",
       categoryId: cat.id, projectId: project.id } });
     byCode.set(alnum(made.code), made);
@@ -204,7 +217,7 @@ async function main() {
         fuelKind: "AUTO_DIESEL", litres: row.litres,
         meterReading: keep, readingType: keep !== null ? asset.meterType : null,
         pricePerLitre: p.pricePerLitre, totalCost: c,
-        source: SOURCE, issueDate: when, issuePerson: "Karaitivu Bridge",
+        source: SOURCE, issueDate: when, issuePerson: `${CONF.name} Bridge`,
         assetId: asset.id, issuedById: admin.id, fuelPriceId: p.id, bulkTankId: tank.id } });
       if (keep !== null) {
         const reading = await tx.meterReading.create({ data: {

@@ -264,10 +264,18 @@ fi
 # rows already in place and adds nothing.
 KARA_BOOK="data/source-sheets/Karaitivu_Diesel_Stock_Book.xlsx"
 if [[ -f "$KARA_BOOK" ]]; then
-  step "Karaitivu diesel stock book" scripts/import_karaitivu_stock_book.ts
+  step "Karaitivu diesel stock book" scripts/import_stock_book.ts --site=KARA
   step "Karaitivu postings" scripts/post_pump_vehicles.ts --site=KARA --from=2025-10-28 --to=2026-08-02
 else
   warn "$KARA_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
+fi
+
+PALO_BOOK="data/source-sheets/Pallanoya_Diesel_Stock_Book.xlsx"
+if [[ -f "$PALO_BOOK" ]]; then
+  step "Pallanoya diesel stock book" scripts/import_stock_book.ts --site=PALO
+  step "Pallanoya postings" scripts/post_pump_vehicles.ts --site=PALO --from=2026-02-15 --to=2026-08-02
+else
+  warn "$PALO_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
 fi
 
 # ----------------------------------------------------------------- fuel sync
