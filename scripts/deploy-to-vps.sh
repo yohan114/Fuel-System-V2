@@ -220,6 +220,16 @@ if [[ -f "$CEP03E_AUG" ]]; then
   confirm "Add the August fuel issues and meter readings listed above?"
   FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_aug_register.ts --apply 2>&1 | grep -v "^prisma:query"
   ok "CEP-03 E August register applied"
+
+  # The litres land on the pump; the issue log files them by the vehicle's
+  # POSTING, and every posting for these machines expired on 31 July. Without
+  # this the register reads correctly on the pump and wrongly on the site.
+  say "CEP-03 E August postings — DRY RUN (nothing written)"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/post_pump_vehicles.ts --site=CEP-03E --from=2026-08-01 --to=2026-08-06 2>&1 | grep -v "^prisma:query"
+  echo
+  confirm "Post those vehicles to CEP-03 E for the days shown?"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/post_pump_vehicles.ts --site=CEP-03E --from=2026-08-01 --to=2026-08-06 --apply 2>&1 | grep -v "^prisma:query"
+  ok "CEP-03 E August postings applied"
 else
   warn "$CEP03E_AUG not found — skipping (August meter readings will not arrive)"
 fi

@@ -15,10 +15,23 @@ import { isSiteUser } from "./roles";
 // and compared at day granularity. endDate is the inclusive last day; a null
 // endDate means the posting is still open.
 
-// Stable integer day index for a Date, using its local Y-M-D components. Two
-// dates on the same calendar day share an index regardless of their time part.
+// Stable integer day index for a Date, on the COLOMBO calendar. Two dates on the
+// same Sri Lankan day share an index regardless of their time part.
+//
+// This used to read the server's Y-M-D, which is only the same thing when the
+// server runs on Colombo time. On a UTC host every imported row — stored at
+// Colombo midnight, i.e. 18:30Z the day before — indexed to the previous day, so
+// a posting that ended 31 July still claimed the 1st of August. The site shown
+// against a fuel issue, and the site billed for it, were both a day out at every
+// month boundary; a vehicle's first day at a new site was credited to the old
+// one. The comment above this function has always said Asia/Colombo — now the
+// code does too.
 export function dayNumber(d: Date): number {
-  return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000);
+  const [y, m, day] = d
+    .toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" })   // YYYY-MM-DD
+    .split("-")
+    .map(Number);
+  return Math.floor(Date.UTC(y, m - 1, day) / 86_400_000);
 }
 
 // Local midnight (start of day) for a date.
