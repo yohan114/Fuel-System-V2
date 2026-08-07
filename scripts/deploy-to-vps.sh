@@ -184,6 +184,29 @@ else
   warn "$GALAGEDARA_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
 fi
 
+# ----------------------------------------------------- CEP-03 E July log book
+# Also BEFORE the fuel sync, for a different reason than Galagedara's. This
+# import is additive and the export already carries its rows, so the sync could
+# deliver them on its own — except for one thing: the book's "Tractor (water)"
+# row needs an asset that does not exist on a server which has never run this
+# importer, and the sync skips rows whose vehicle it cannot find. Running first
+# registers the machine, so nothing is silently dropped.
+#
+# It reconciles on (day, vehicle) count, so the 24 rows the consolidated register
+# already put on 01-05 July are recognised and left alone. Re-running adds
+# nothing.
+CEP03E_BOOK="data/source-sheets/CEP03E_Fuel_Lubricant_Issue_Log_Jul2026.xlsx"
+if [[ -f "$CEP03E_BOOK" ]]; then
+  say "CEP-03 E July log book — DRY RUN (nothing written)"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_july_log.ts 2>&1 | grep -v "^prisma:query"
+  echo
+  confirm "Add the CEP-03 E fuel issues listed above?"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_july_log.ts --apply 2>&1 | grep -v "^prisma:query"
+  ok "CEP-03 E July log book applied"
+else
+  warn "$CEP03E_BOOK not found — the sync will still carry its rows, minus any whose vehicle is unknown here"
+fi
+
 # ----------------------------------------------------------------- fuel sync
 # Because the live database was just restored over the repo's copy, fuel
 # imported on a workstation is NOT on this server yet. It travels as data
