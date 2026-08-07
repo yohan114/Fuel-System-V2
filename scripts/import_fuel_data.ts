@@ -72,23 +72,62 @@ async function main() {
   console.log(`  file ${FILE} · exported ${payload.exportedAt} · ${payload.issues.length} issues\n`);
 
   // ---------------------------------------------------------------- referents
-  const projByCode = new Map((await prisma.project.findMany()).map((p) => [p.code, p]));
+  // Two instances can hold the same site under different codes — one calls
+  // Awissawella "AWIS", the other something else — while Project.name is unique.
+  // Matching on code alone then tries to create a duplicate name and the whole
+  // import dies on a constraint. Match by code first, then by name.
+  const norm = (s: string) => String(s || "").trim().toLowerCase();
+  const allProjects = await prisma.project.findMany();
+  const projByCode = new Map(allProjects.map((p) => [p.code, p]));
+  const projByName = new Map(allProjects.map((p) => [norm(p.name), p]));
+  const tanksByName = new Map((await prisma.bulkTank.findMany()).map((t) => [norm(t.name), t]));
   const tankByProj = new Map<string, { id: string }>();
+  // The export names sites by ITS code; this database may file the same site
+  // under another. Remember the resolution so anything else keyed by the export's
+  // code — site allocations especially — lands on the right site instead of being
+  // dropped for a site that is present under a different name.
+  const projByExportCode = new Map<string, { id: string; code: string }>();
+
   for (const t of payload.tanks || []) {
     if (!t.projectCode) continue;          // unattached tank: nothing to resolve against
-    let proj = projByCode.get(t.projectCode);
+    let proj = projByCode.get(t.projectCode) || projByName.get(norm(t.projectName));
+    if (proj && proj.code !== t.projectCode)
+      console.log(`  site "${t.projectName}" is ${proj.code} here, ${t.projectCode} in the export — using ${proj.code}`);
     if (!proj) {
       console.log(`  project ${t.projectCode} (${t.projectName}) missing${APPLY ? " — creating" : " — would create"}`);
-      if (APPLY) { proj = await prisma.project.create({ data: { code: t.projectCode, name: t.projectName } }); projByCode.set(proj.code, proj); }
+      if (APPLY) {
+        try {
+          proj = await prisma.project.create({ data: { code: t.projectCode, name: t.projectName } });
+        } catch {
+          // lost a race, or the name exists under a code we have not seen
+          const found = await prisma.project.findFirst({ where: { OR: [{ code: t.projectCode }, { name: t.projectName }] } });
+          if (!found) throw new Error(`could not create or find project ${t.projectCode} (${t.projectName})`);
+          proj = found;
+          console.log(`    -> matched existing ${proj.code}`);
+        }
+        projByCode.set(proj.code, proj); projByName.set(norm(proj.name), proj);
+      }
     }
     if (!proj) continue;
-    let tank = await prisma.bulkTank.findFirst({ where: { projectId: proj.id } });
+
+    let tank = (await prisma.bulkTank.findFirst({ where: { projectId: proj.id } }))
+      ?? tanksByName.get(norm(t.tankName)) ?? null;
     if (!tank) {
-      console.log(`  tank for ${t.projectCode} missing${APPLY ? " — creating" : " — would create"}`);
-      if (APPLY) tank = await prisma.bulkTank.create({ data: {
-        name: t.tankName, fuelKind: t.fuelKind, capacity: t.capacity ?? 15000, balance: 0, projectId: proj.id } });
+      console.log(`  tank for ${proj.code} missing${APPLY ? " — creating" : " — would create"}`);
+      if (APPLY) {
+        try {
+          tank = await prisma.bulkTank.create({ data: {
+            name: t.tankName, fuelKind: t.fuelKind, capacity: t.capacity ?? 15000, balance: 0, projectId: proj.id } });
+        } catch {
+          const found = await prisma.bulkTank.findFirst({ where: { name: t.tankName } });
+          if (!found) throw new Error(`could not create or find tank "${t.tankName}"`);
+          tank = found;
+        }
+        tanksByName.set(norm(tank.name), tank);
+      }
     }
     if (tank) tankByProj.set(t.projectCode, tank);
+    projByExportCode.set(t.projectCode, proj);
   }
 
   const assets = await prisma.asset.findMany({ select: { id: true, code: true, regNo: true } });
@@ -232,21 +271,19 @@ async function main() {
   // { createdAt: <Date> }` misses rows that are in fact identical — a row can
   // fail to find itself. Reading the dates back and comparing them as ISO
   // strings is exact, and one query beats one per row.
-  const tanksByName = new Map((await prisma.bulkTank.findMany({ select: { id: true, name: true } }))
-    .map((t) => [t.name, t]));
   const liveReq = new Set((await prisma.bulkRequest.findMany({
     select: { requestedLitres: true, createdAt: true, bulkTank: { select: { name: true } } } }))
     .map((r) => `${r.bulkTank.name}|${r.requestedLitres}|${r.createdAt.toISOString()}`));
   let reqAdded = 0, reqPresent = 0, reqNoTank = 0;
   for (const b of payload.bulkRequests || []) {
-    const tank = tanksByName.get(b.tank);
+    const tank = tanksByName.get(norm(b.tank));
     if (!tank) { reqNoTank++; continue; }
     const when = new Date(b.createdAt);
     const rk = `${b.tank}|${b.litres}|${when.toISOString()}`;
     if (liveReq.has(rk)) { reqPresent++; continue; }
     liveReq.add(rk);
     if (APPLY) {
-      const src = b.sourceTank ? tanksByName.get(b.sourceTank) : null;
+      const src = b.sourceTank ? tanksByName.get(norm(b.sourceTank)) : null;
       await prisma.bulkRequest.create({ data: {
         fuelKind: b.fuelKind, requestedLitres: b.litres, status: b.status,
         createdAt: when, sourceType: b.sourceType || "OUTSIDE", sourceTankId: src?.id ?? null,
@@ -271,7 +308,7 @@ async function main() {
   for (const a of payload.assignments || []) {
     const asset = byCode.get(alnum(a.asset));
     if (!asset) { asgNoAsset++; continue; }
-    const proj = projByCode.get(a.project);
+    const proj = projByCode.get(a.project) || projByExportCode.get(a.project);
     if (!proj) { asgNoProject++; continue; }
     const start = new Date(a.startDate);
     const ak = `${asset.code}|${a.project}|${start.toISOString()}`;
