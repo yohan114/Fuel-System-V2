@@ -1,6 +1,12 @@
 import { prisma } from "../src/lib/db";
 import * as XLSX from "xlsx";
 
+// SUPERSEDED by import_galagedara_monthly.ts — do not run this against a database
+// that has taken the newer workbook. Both replace the same site's fuel, so this
+// one would roll Galagedara back to 1 August and drop the "Issue log" and "Aug
+// photo sheets" rows the newer workbook adds. Kept for the record of how the
+// stock book alone was read.
+//
 // Import the Galagedara (CEP-03F) diesel stock book — the site's day-by-day
 // pump register: every delivery in, every issue out, and the running balance.
 //

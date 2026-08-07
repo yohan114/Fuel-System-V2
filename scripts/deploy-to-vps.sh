@@ -163,7 +163,7 @@ fi
 ok "schema up to date"
 
 # ------------------------------------------------------- Galagedara stock book
-# Runs BEFORE the fuel sync, and this order matters. The stock book REPLACES
+# Runs BEFORE the fuel sync, and this order matters. The workbook REPLACES
 # Galagedara's fuel: the site's earlier rows came from partial imports whose
 # figures had drifted away from the invoices actually issued against them. The
 # fuel sync only ever adds, so it cannot retire those superseded rows — left to
@@ -172,13 +172,13 @@ ok "schema up to date"
 # book's rows already present and adds nothing.
 #
 # Re-running is safe: it replaces its own rows rather than stacking.
-GALAGEDARA_BOOK="data/source-sheets/Galagedara_Diesel_Stock_Book.xlsx"
+GALAGEDARA_BOOK="data/source-sheets/Galagedara_Fuel_Monthly_and_Vehicle_Allocation.xlsx"
 if [[ -f "$GALAGEDARA_BOOK" ]]; then
   say "Galagedara stock book — DRY RUN (nothing written)"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_galagedara_stock_book.ts 2>&1 | grep -v "^prisma:query"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_galagedara_monthly.ts 2>&1 | grep -v "^prisma:query"
   echo
   confirm "Replace Galagedara's fuel with the stock book shown above?"
-  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_galagedara_stock_book.ts --apply 2>&1 | grep -v "^prisma:query"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_galagedara_monthly.ts --apply 2>&1 | grep -v "^prisma:query"
   ok "Galagedara stock book applied"
 else
   warn "$GALAGEDARA_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
