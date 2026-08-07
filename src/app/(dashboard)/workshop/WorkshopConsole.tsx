@@ -2,6 +2,7 @@
 
 import React, { useState, useTransition } from "react";
 import { submitBulkRequestAction, recordBulkRefuelAction, workshopIssueFuelAction } from "@/app/actions/workshop";
+import { fuelDate } from "@/lib/colombo-date";
 import { 
   Database, 
   Plus, 
@@ -464,7 +465,7 @@ export default function WorkshopConsole({
                       <span className="text-[10px] text-gray-400 font-semibold">({issue.litres}L)</span>
                     </div>
                     <p className="text-[9px] text-gray-500 mt-1">
-                      Issued to {issue.asset.code}{issue.asset.regNo ? ` (${issue.asset.regNo})` : ""} • {new Date(issue.issueDate).toLocaleDateString()}
+                      Issued to {issue.asset.code}{issue.asset.regNo ? ` (${issue.asset.regNo})` : ""} • {fuelDate(issue.issueDate)}
                     </p>
                   </div>
                   <div className="text-right">

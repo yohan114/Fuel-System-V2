@@ -3,6 +3,7 @@ import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
+import { fuelDateTime } from "@/lib/colombo-date";
 import { isSiteUser } from "@/lib/roles";
 import CorrectionButton from "./CorrectionButton";
 import Link from "next/link";
@@ -276,7 +277,7 @@ export default async function FuelIssuesPage(props: PageProps) {
               {issues.map((issue) => (
                 <tr key={issue.id} className={`hover:bg-white/[0.02] transition-colors ${issue.voided ? "opacity-50" : ""}`}>
                   <td className="px-6 py-4 text-gray-300 font-medium whitespace-nowrap">
-                    {new Date(issue.issueDate).toLocaleString("en-US", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {fuelDateTime(issue.issueDate)}
                   </td>
                   <td className="px-6 py-4">
                     <Link

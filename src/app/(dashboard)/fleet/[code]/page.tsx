@@ -1,4 +1,5 @@
 import { isSiteUser } from "@/lib/roles";
+import { fuelDate, fuelDateShort } from "@/lib/colombo-date";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
@@ -149,7 +150,7 @@ export default async function AssetDetailPage(props: PageProps) {
 
   const issuesChartData = issues
     .map((i) => ({
-      date: new Date(i.issueDate).toLocaleDateString("en-US", { day: "numeric", month: "short" }),
+      date: fuelDateShort(i.issueDate),
       litres: i.litres,
     }))
     .reverse();
@@ -395,7 +396,7 @@ export default async function AssetDetailPage(props: PageProps) {
                     {issues.map((issue) => (
                       <tr key={issue.id} className="hover:bg-white/[0.01]">
                         <td className="py-3.5 text-gray-300 font-medium">
-                          {new Date(issue.issueDate).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })}
+                          {fuelDate(issue.issueDate)}
                         </td>
                         <td className="py-3.5 text-gray-400 capitalize">
                           {issue.fuelKind.replace("_", " ").toLowerCase()}

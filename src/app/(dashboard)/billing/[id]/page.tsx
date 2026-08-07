@@ -1,4 +1,5 @@
 import { isSiteUser } from "@/lib/roles";
+import { fuelDateGB } from "@/lib/colombo-date";
 import React from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
@@ -83,7 +84,7 @@ export default async function BillDetailPage(props: PageProps) {
   });
 
   const fuelData = fuelIssues.map((f) => ({
-    date: new Date(f.issueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }),
+    date: fuelDateGB(f.issueDate),
     litres: f.litres,
   }));
 
@@ -131,7 +132,7 @@ export default async function BillDetailPage(props: PageProps) {
     runningFuelLitres += f.litres;
     return {
       date: f.issueDate,
-      dateStr: new Date(f.issueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }),
+      dateStr: fuelDateGB(f.issueDate),
       runningStandard: fuelConsTyp && fuelConsTyp > 0 ? (runningFuelLitres / fuelConsTyp) : 0,
       runningEcon: fuelConsEcon && fuelConsEcon > 0 ? (runningFuelLitres / fuelConsEcon) : 0,
     };

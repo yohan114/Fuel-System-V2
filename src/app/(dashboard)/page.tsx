@@ -2,6 +2,7 @@ import { isSiteUser } from "@/lib/roles";
 import { visibleAssetIdsForUser } from "@/lib/assignments";
 import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
+import { fuelDateShort, colomboDayKey } from "@/lib/colombo-date";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession, requireUser } from "@/lib/auth";
@@ -150,7 +151,7 @@ export default async function DashboardPage() {
     kt.litres += issue.litres;
     kt.cost += issue.totalCost;
 
-    const dayStr = issue.issueDate.getDate().toString().padStart(2, "0");
+    const dayStr = colomboDayKey(issue.issueDate).slice(8);
     if (dailyGroups[dayStr]) {
       dailyGroups[dayStr].litres += issue.litres;
       dailyGroups[dayStr].cost += issue.totalCost;
@@ -473,7 +474,7 @@ export default async function DashboardPage() {
                       </span>
                     </div>
                     <p className="text-[10px] text-gray-500 mt-0.5">
-                      Issued by {issue.issuedBy.name} • {new Date(issue.issueDate).toLocaleDateString("en-US", { day: "numeric", month: "short" })}
+                      Issued by {issue.issuedBy.name} • {fuelDateShort(issue.issueDate)}
                     </p>
                   </div>
                   <div className="text-right">
