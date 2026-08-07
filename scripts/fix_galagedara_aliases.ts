@@ -76,9 +76,25 @@ async function main() {
   for (const [from, to] of Object.entries(RENAMES)) {
     const asset = await prisma.asset.findFirst({ where: { code: from } });
     if (!asset) { console.log(`\n  ${from}: not present`); continue; }
-    const clash = await prisma.asset.findFirst({ where: { code: to } });
-    if (clash) { console.log(`\n  rename ${from} -> ${to} SKIPPED: ${to} already exists`); continue; }
+    const target = await prisma.asset.findFirst({ where: { code: to } });
     const n = await prisma.fuelIssue.count({ where: { assetId: asset.id } });
+
+    // A later fuel sync replays an export that still spells it the old way, so
+    // the source code can reappear after the rename has already happened. Fold
+    // it into the target rather than skipping, or the same refuel ends up on two
+    // assets and the vehicle's history splits in half.
+    if (target) {
+      console.log(`\n  merge   ${from} -> ${to}  (${to} already exists; ${n} issue(s) move across, none deleted)`);
+      if (APPLY) {
+        await prisma.$transaction(async (tx) => {
+          await tx.fuelIssue.updateMany({ where: { assetId: asset.id }, data: { assetId: target.id } });
+          await tx.assetAssignment.deleteMany({ where: { assetId: asset.id } });
+          await tx.asset.delete({ where: { id: asset.id } });
+        });
+      }
+      continue;
+    }
+
     console.log(`\n  rename  ${from} -> ${to}  (${n} issue(s) follow the asset, none deleted)`);
     if (APPLY) await prisma.asset.update({ where: { id: asset.id }, data: { code: to } });
   }

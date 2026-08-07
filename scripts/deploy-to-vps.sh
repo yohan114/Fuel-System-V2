@@ -219,6 +219,25 @@ else
   warn "$FUEL_EXPORT not found — skipping fuel sync"
 fi
 
+# --------------------------------------------------- Galagedara alias cleanup
+# Runs AFTER the fuel sync, and that order is the whole point. Two Galagedara
+# refuels were filed twice, once against the real vehicle and once against the
+# plate as it was misread on the sheet — DAG-4929 for DAG-4969, LA-0920 for
+# LL-0920 (DT-02). The workbook's own name map states both merges.
+#
+# The stock-book importer above cannot retire them: it only replaces rows for
+# vehicles the workbook names, and these two plates are not in it. The fuel sync
+# would happily re-add them from any export taken before the cleanup. Running
+# last means the orphans go whatever the earlier steps put back.
+#
+# Idempotent: on a server that never had them it deletes nothing.
+say "Galagedara alias cleanup — DRY RUN (nothing written)"
+FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/fix_galagedara_aliases.ts 2>&1 | grep -v "^prisma:query"
+echo
+confirm "Remove the duplicate rows listed above?"
+FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/fix_galagedara_aliases.ts --apply 2>&1 | grep -v "^prisma:query"
+ok "Galagedara aliases resolved"
+
 # ------------------------------------------------------------- billing rebuild
 say "June 2026 rebuild — DRY RUN (nothing written)"
 FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/deploy_june_rebuild.ts 2>&1 | grep -v "^prisma:query"
