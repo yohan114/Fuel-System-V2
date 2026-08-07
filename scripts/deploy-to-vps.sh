@@ -207,6 +207,23 @@ else
   warn "$CEP03E_BOOK not found — the sync will still carry its rows, minus any whose vehicle is unknown here"
 fi
 
+# ------------------------------------------------ CEP-03 E August fuel register
+# After the July book, whose days it continues, and before the fuel sync. It
+# carries the system's first meter readings, and those must go in as MeterReading
+# rows linked to their issue — the sync moves fuel, not meters, so replaying the
+# export alone would land the litres and lose every reading.
+CEP03E_AUG="data/source-sheets/CEP03E_Daily_Fuel_Issue_Register_Aug2026.xlsx"
+if [[ -f "$CEP03E_AUG" ]]; then
+  say "CEP-03 E August fuel register — DRY RUN (nothing written)"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_aug_register.ts 2>&1 | grep -v "^prisma:query"
+  echo
+  confirm "Add the August fuel issues and meter readings listed above?"
+  FUEL_DATABASE_URL="file:$LIVE_DB" npx tsx scripts/import_cep03e_aug_register.ts --apply 2>&1 | grep -v "^prisma:query"
+  ok "CEP-03 E August register applied"
+else
+  warn "$CEP03E_AUG not found — skipping (August meter readings will not arrive)"
+fi
+
 # ----------------------------------------------------------------- fuel sync
 # Because the live database was just restored over the repo's copy, fuel
 # imported on a workstation is NOT on this server yet. It travels as data
