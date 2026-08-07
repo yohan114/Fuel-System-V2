@@ -1,4 +1,6 @@
 import { prisma } from "../src/lib/db";
+import fs from "fs";
+import path from "path";
 
 // Fold one bulk tank into another.
 //
@@ -33,6 +35,17 @@ const INTO = arg("into");
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
+// Say which file is about to be changed. A server can hold a stale copy of the
+// database inside the repo while the app serves one from elsewhere, and a merge
+// applied to the wrong file reports success while the site stays broken.
+function announceDatabase() {
+  const url = process.env.FUEL_DATABASE_URL || process.env.DATABASE_URL || "file:./data/app.db";
+  const abs = path.resolve(process.cwd(), url.replace(/^file:/, ""));
+  console.log(`  database: ${abs}${fs.existsSync(abs) ? "" : "   << DOES NOT EXIST"}`);
+  if (!process.env.FUEL_DATABASE_URL && !process.env.DATABASE_URL)
+    console.log(`  (default — set FUEL_DATABASE_URL if the running app uses a different file)`);
+}
+
 async function find(needle: string) {
   const all = await prisma.bulkTank.findMany({ include: { project: { select: { code: true, name: true } } } });
   const exact = all.filter((t) => t.id === needle || norm(t.name) === norm(needle));
@@ -58,6 +71,8 @@ async function census(id: string) {
 // Without --from/--into, report rather than act: name the pairs that look like
 // the same pump recorded twice, so the merge is chosen from evidence.
 async function survey() {
+  console.log("");
+  announceDatabase();
   const all = await prisma.bulkTank.findMany({ include: { project: { select: { code: true, name: true } } }, orderBy: { name: "asc" } });
   console.log(`\n=== ${all.length} tanks ===`);
 
@@ -105,6 +120,7 @@ async function main() {
   if (!FROM || !INTO) return survey();
 
   console.log(`\n=== merge tanks (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
+  announceDatabase();
   const from = await find(FROM);
   const into = await find(INTO);
   if (from.id === into.id) throw new Error("--from and --into resolve to the same tank");
