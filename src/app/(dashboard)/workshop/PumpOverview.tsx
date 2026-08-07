@@ -31,11 +31,12 @@ function Card({ p }: { p: PumpCard }) {
     : 0;
   const low = p.capacity > 0 && p.balance < p.capacity * LOW_FRACTION;
 
-  // Site users filter the issue log by site code; without one the link would
-  // silently show every site's fuel, so fall back to the unfiltered log.
-  const href = p.projectCode
-    ? `/fuel/issues?site=${encodeURIComponent(p.projectCode)}`
-    : "/fuel/issues";
+  // Filter by the PUMP, not by the site. The issue log's site filter follows the
+  // vehicle's allocation, which answers a different question: a Marawila vehicle
+  // fuelled at the workshop belongs to Marawila but not to the workshop pump's
+  // history. It also keys on the project's id rather than its code, so a code
+  // here would have matched nothing and shown an empty list.
+  const href = `/fuel/issues?tank=${encodeURIComponent(p.id)}`;
 
   return (
     <Link

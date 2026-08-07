@@ -9,10 +9,14 @@ import Link from "next/link";
 import { Search, MapPin } from "lucide-react";
 
 interface PageProps {
-  searchParams: Promise<{ q?: string; fuelKind?: string; site?: string; issuedBy?: string; source?: string }>;
+  searchParams: Promise<{ q?: string; fuelKind?: string; site?: string; issuedBy?: string; source?: string; tank?: string }>;
 }
 
 const ISSUE_LIMIT = 1000;
+// One pump's whole history is a deliberate request — "show me everything this
+// tank ever issued" — and Marawila alone has over three thousand rows, so the
+// general cap would silently hide most of it.
+const PUMP_LIMIT = 20000;
 
 export default async function FuelIssuesPage(props: PageProps) {
   const session = await getSession();
@@ -28,6 +32,7 @@ export default async function FuelIssuesPage(props: PageProps) {
   const siteFilter = searchParams.site || "";
   const issuedByFilter = searchParams.issuedBy || "";
   const sourceFilter = searchParams.source || "";
+  const tankFilter = searchParams.tank || "";
 
   // 1. Build where query
   const where: any = {};
@@ -35,6 +40,11 @@ export default async function FuelIssuesPage(props: PageProps) {
   if (issuedByFilter) where.issuedById = issuedByFilter;
   if (sourceFilter) where.source = sourceFilter;
   if (q) where.asset = { code: { contains: q.trim().toUpperCase() } };
+  // Which PUMP dispensed the fuel — a different question from which site the
+  // vehicle was allocated to, and the one the pump overview asks. A vehicle
+  // posted to Marawila can still be fuelled at the workshop, so filtering by the
+  // vehicle's site would miss exactly the rows this view is opened to see.
+  if (tankFilter) where.bulkTankId = tankFilter;
 
   // Visibility follows the vehicle's ALLOCATED site, not the pump it was drawn
   // from. Site users (USER / SITE_PUMP) are locked to their own site; privileged
@@ -58,8 +68,18 @@ export default async function FuelIssuesPage(props: PageProps) {
     omit: { photoData: true },
     include: { asset: { include: { project: true } }, issuedBy: true },
     orderBy: { issueDate: "desc" },
-    take: ISSUE_LIMIT,
+    take: tankFilter ? PUMP_LIMIT : ISSUE_LIMIT,
   });
+
+  // The true number behind the cap, so a truncated list says so rather than
+  // looking like the whole story.
+  const matchingTotal = await prisma.fuelIssue.count({ where });
+  const selectedTank = tankFilter
+    ? await prisma.bulkTank.findUnique({
+        where: { id: tankFilter },
+        select: { name: true, balance: true, capacity: true, project: { select: { name: true, code: true } } },
+      })
+    : null;
 
   // 3. Resolve each issue's assigned site (assignment covering the issue date;
   // fall back to the vehicle's current project pointer).
@@ -108,10 +128,24 @@ export default async function FuelIssuesPage(props: PageProps) {
     <div className="space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-xl font-bold text-white tracking-wide">Fuel Issues Log</h1>
+        <h1 className="text-xl font-bold text-white tracking-wide">
+          {selectedTank ? selectedTank.name : "Fuel Issues Log"}
+        </h1>
         <p className="text-xs text-gray-400 mt-1">
-          Historical record of fuel dispatches, cost snapshots, and linked request references.
+          {selectedTank
+            ? <>Every fuel issue dispensed from this pump{selectedTank.project ? <> · {selectedTank.project.name} ({selectedTank.project.code})</> : null} · stock {selectedTank.balance.toLocaleString(undefined, { maximumFractionDigits: 1 })} L of {selectedTank.capacity.toLocaleString()} L</>
+            : "Historical record of fuel dispatches, cost snapshots, and linked request references."}
         </p>
+        {selectedTank && (
+          <p className="text-[11px] text-gray-500 mt-2">
+            {issues.length.toLocaleString()} issue{issues.length === 1 ? "" : "s"} shown
+            {matchingTotal > issues.length && <> of {matchingTotal.toLocaleString()} — narrow the filters to see the rest</>}
+            {" · "}
+            <a href="/fuel/issues" className="text-indigo-400 hover:text-indigo-300">clear pump filter</a>
+            {" · "}
+            <a href="/workshop" className="text-indigo-400 hover:text-indigo-300">back to pump overview</a>
+          </p>
+        )}
       </div>
 
       {/* Filter and Summary Panel */}
@@ -119,6 +153,7 @@ export default async function FuelIssuesPage(props: PageProps) {
         {/* Filters Form */}
         <div className="lg:col-span-2 bg-[#121420] border border-white/5 rounded-2xl p-5 shadow-lg flex items-center">
           <form method="GET" action="/fuel/issues" className="w-full grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {tankFilter && <input type="hidden" name="tank" value={tankFilter} />}
             {/* Search by vehicle */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
