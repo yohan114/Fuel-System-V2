@@ -278,6 +278,17 @@ else
   warn "$PALO_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
 fi
 
+# ------------------------------------------- Batticaloa Lot-02 August sheets
+# A differently shaped form: one sheet line can hold two issues, so 49 lines are
+# 60 refuels. Additive — the tank held nothing on or after 1 August.
+LOT02_AUG="data/source-sheets/Batticaloa_Lot02_Fuel_Issue_Aug2026.xlsx"
+if [[ -f "$LOT02_AUG" ]]; then
+  step "Lot-02 August issuing sheets" scripts/import_lot02_aug_sheet.ts
+  step "Lot-02 August postings" scripts/post_pump_vehicles.ts --site=BATTI-02 --from=2026-08-01 --to=2026-08-03
+else
+  warn "$LOT02_AUG not found — skipping"
+fi
+
 # ----------------------------------------------------------------- fuel sync
 # Because the live database was just restored over the repo's copy, fuel
 # imported on a workstation is NOT on this server yet. It travels as data
