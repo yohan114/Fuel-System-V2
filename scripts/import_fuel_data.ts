@@ -35,6 +35,7 @@ import * as path from "path";
 const APPLY = process.argv.includes("--apply");
 const CREATE_ASSETS = process.argv.includes("--create-missing-assets");
 const ADOPT_BALANCES = process.argv.includes("--adopt-balances");
+const SKIP_SAME_DAY = process.argv.includes("--skip-same-day");
 const FILE = process.argv.find((a) => a.startsWith("--file="))?.slice(7)
   || "data/fuel-data-export.json";
 
@@ -112,9 +113,26 @@ async function main() {
   }
   console.log(`  this database already holds ${live.length} fuel issues\n`);
 
+  // Cross-instance duplicates do not share a timestamp. Rows imported from
+  // paperwork sit at Colombo midnight; rows an operator typed carry the real
+  // time of day. The same refuel therefore looks different to the exact key, and
+  // would be inserted a second time. Matching on the calendar day instead catches
+  // it — but a vehicle can legitimately draw the same litres at its site and
+  // again at the workshop on one day, so this reports by default and only skips
+  // when asked.
+  const dayOf = (iso: string) => iso.slice(0, 10);
+  const liveDay = new Map<string, number>();
+  for (const f of live) {
+    const k = `${f.asset.code}|${dayOf(f.issueDate.toISOString())}|${f.litres}`;
+    liveDay.set(k, (liveDay.get(k) || 0) + 1);
+  }
+
   // ------------------------------------------------------------- reconcile
   const emitted = new Map<string, number>();   // export rows of each key seen so far
   let created = 0, present = 0, missingAsset = 0, missingTank = 0, missingCategory = 0, litres = 0, cost = 0;
+  let sameDay = 0, sameDayLitres = 0;
+  const sameDaySamples: string[] = [];
+  const dayEmitted = new Map<string, number>();
   const unmatched = new Map<string, number>();
   const createdAssets: string[] = [];
   const assetMeta = new Map<string, any>((payload.assets || []).map((a: any) => [a.code, a]));
@@ -129,6 +147,19 @@ async function main() {
     const done = emitted.get(k) || 0;
     emitted.set(k, done + 1);
     if (done < already) { present++; continue; }
+
+    // Not an exact match — but is the same vehicle already recorded taking the
+    // same litres on the same day, under another label?
+    const dk = `${i.asset}|${dayOf(i.date)}|${i.litres}`;
+    const dayHits = liveDay.get(dk) || 0;
+    const dayUsed = dayEmitted.get(dk) || 0;
+    if (dayHits > dayUsed) {
+      dayEmitted.set(dk, dayUsed + 1);
+      sameDay++;
+      sameDayLitres += i.litres;
+      if (sameDaySamples.length < 12) sameDaySamples.push(`${i.asset} ${dayOf(i.date)} ${i.litres}L`);
+      if (SKIP_SAME_DAY) continue;
+    }
 
     let asset = byCode.get(alnum(i.asset)) || (i.regNo ? byReg.get(alnum(i.regNo)) : undefined);
     if (!asset) {
@@ -292,6 +323,13 @@ async function main() {
   console.log(`=== RESULT ===`);
   console.log(`  ${APPLY ? "added" : "would add"}: ${created} issues · ${litres.toFixed(0)} L · ${rs(cost)}`);
   console.log(`  already present, left alone: ${present}`);
+  if (sameDay) {
+    console.log(`\n  ${sameDay} row(s) (${sameDayLitres.toFixed(0)} L) match a vehicle already recorded taking`);
+    console.log(`  the same litres on the same day, under a different label or time —`);
+    console.log(`  ${SKIP_SAME_DAY ? "SKIPPED as duplicates." : "TREATED AS NEW and included above."}`);
+    for (const x of sameDaySamples) console.log(`      ${x}`);
+    if (!SKIP_SAME_DAY) console.log(`  Re-run with --skip-same-day to leave them out.`);
+  }
   if (createdAssets.length) console.log(`  assets ${APPLY ? "created" : "to create"}: ${createdAssets.length} (${[...new Set(createdAssets)].slice(0, 12).join(", ")}${createdAssets.length > 12 ? " …" : ""})`);
   if (missingAsset) {
     console.log(`\n  SKIPPED — ${missingAsset} issues for ${unmatched.size} vehicles not in this database:`);
