@@ -45,6 +45,21 @@ export async function createBulkTankAction(formData: FormData) {
       return { error: `Tank name "${name}" is already in use` };
     }
 
+    // A unique NAME does not stop a site getting a second pump record: "CEP-03 E
+    // Package" and "CEP-03 E Package Tank" are different strings and the same
+    // pump. When that happens the site's history splits across two tanks and
+    // neither balance is the real stock. Sites with genuinely two pumps tick the
+    // box; everyone else gets told what already exists.
+    if (projectId) {
+      const already = await prisma.bulkTank.findFirst({
+        where: { projectId },
+        select: { name: true },
+      });
+      if (already && formData.get("allowSecondTank")?.toString() !== "on") {
+        return { error: `This site already has a pump: "${already.name}". If this is a second physical pump, tick "site has more than one pump" — otherwise use the existing one.` };
+      }
+    }
+
     const tank = await prisma.bulkTank.create({
       data: {
         name,

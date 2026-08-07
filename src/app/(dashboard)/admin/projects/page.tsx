@@ -257,6 +257,21 @@ export default async function AdminProjectsPage() {
                 </select>
               </div>
 
+              <label className="flex items-start gap-2 text-[10px] text-gray-400 leading-relaxed">
+                <input
+                  type="checkbox"
+                  name="allowSecondTank"
+                  className="mt-0.5 accent-indigo-500 shrink-0"
+                />
+                <span>
+                  This site has more than one physical pump.
+                  <span className="block text-gray-500">
+                    Leave unticked — a site normally has one. Ticking it lets you add a second
+                    pump record, which splits the site&apos;s fuel history across the two.
+                  </span>
+                </span>
+              </label>
+
               <button
                 type="submit"
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs py-2.5 rounded-xl active:scale-95 transition-all shadow-md"
