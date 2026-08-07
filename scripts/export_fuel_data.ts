@@ -100,6 +100,12 @@ async function main() {
     },
   });
 
+  // Every site, not just the ones owning a tank. A site can hold allocations
+  // without a pump of its own — Badalgama has 34 — and carrying only tank-owning
+  // sites left those allocations with nothing to resolve against on the far side.
+  const projects = await prisma.project.findMany({
+    select: { code: true, name: true }, orderBy: { code: "asc" } });
+
   const assetCodes = new Set([...issues.map((i) => i.asset.code), ...meterReadings.map((m) => m.asset.code),
     ...assignments.map((a) => a.asset.code)]);
   const assets = await prisma.asset.findMany({
@@ -118,8 +124,9 @@ async function main() {
     counts: {
       issues: issues.length, tanks: tanks.length,
       bulkRequests: bulkRequests.length, meterReadings: meterReadings.length,
-      assignments: assignments.length, assets: assets.length,
+      assignments: assignments.length, assets: assets.length, projects: projects.length,
     },
+    projects: projects.map((p) => ({ code: p.code, name: p.name })),
     tanks: tanks.map((t) => ({
       tankName: t.name, fuelKind: t.fuelKind, capacity: t.capacity, balance: t.balance,
       projectCode: t.project?.code || null, projectName: t.project?.name || null,
@@ -186,6 +193,7 @@ async function main() {
   console.log(`  replenishments   ${bulkRequests.length}`);
   console.log(`  meter readings   ${meterReadings.length}`);
   console.log(`  site allocations ${assignments.length}`);
+  console.log(`  sites            ${projects.length}`);
   console.log(`  assets           ${assets.length}`);
   if (!bulkRequests.length) console.log(`  note: this database has no replenishment history to export`);
   console.log(`\n  wrote ${OUT} (${(fs.statSync(dest).size / 1e6).toFixed(2)} MB)\n`);

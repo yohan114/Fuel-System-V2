@@ -88,6 +88,26 @@ async function main() {
   // dropped for a site that is present under a different name.
   const projByExportCode = new Map<string, { id: string; code: string }>();
 
+  // Resolve every site the export knows about first, so allocations for a site
+  // with no pump of its own still have somewhere to land.
+  for (const pr of payload.projects || []) {
+    if (projByCode.has(pr.code) || projByName.has(norm(pr.name))) {
+      projByExportCode.set(pr.code, (projByCode.get(pr.code) || projByName.get(norm(pr.name)))!);
+      continue;
+    }
+    console.log(`  site ${pr.code} (${pr.name}) missing${APPLY ? " — creating" : " — would create"}`);
+    if (APPLY) {
+      let made;
+      try { made = await prisma.project.create({ data: { code: pr.code, name: pr.name } }); }
+      catch {
+        made = await prisma.project.findFirst({ where: { OR: [{ code: pr.code }, { name: pr.name }] } });
+        if (!made) continue;
+      }
+      projByCode.set(made.code, made); projByName.set(norm(made.name), made);
+      projByExportCode.set(pr.code, made);
+    }
+  }
+
   for (const t of payload.tanks || []) {
     if (!t.projectCode) continue;          // unattached tank: nothing to resolve against
     let proj = projByCode.get(t.projectCode) || projByName.get(norm(t.projectName));
