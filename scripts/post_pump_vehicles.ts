@@ -63,49 +63,85 @@ async function main() {
   });
   console.log(`  ${rows.length} issue(s) on "${tank.name}" in that window\n`);
 
-  // First and last day each machine drew from this pump.
-  const span = new Map<string, { code: string; first: string; last: string; n: number; litres: number; pinned: string | null }>();
-  for (const r of rows) {
-    const d = dayOf(r.issueDate);
-    const e = span.get(r.asset.id);
-    if (!e) span.set(r.asset.id, { code: r.asset.code, first: d, last: d, n: 1, litres: r.litres, pinned: r.asset.projectId });
-    else { if (d < e.first) e.first = d; if (d > e.last) e.last = d; e.n++; e.litres += r.litres; }
+  // A single first-to-last span is only safe over a short window. Across ten
+  // months a machine leaves and comes back, and one span from its first draw to
+  // its last would claim every refuel it made at every other site in between.
+  // So each machine gets a span per VISIT: a run of draw-days broken wherever it
+  // drew at a different pump.
+  //
+  // A day with draws at both pumps counts as a visit day here, because the rows
+  // on this pump need covering. Those days are the genuinely ambiguous ones and
+  // are listed separately below.
+  const ids = [...new Set(rows.map((r) => r.asset.id))];
+  const everything = await prisma.fuelIssue.findMany({
+    where: {
+      assetId: { in: ids }, voided: false,
+      issueDate: { gte: colombo(FROM), lt: new Date(colombo(TO).getTime() + 86400000) },
+    },
+    select: { assetId: true, issueDate: true, litres: true, bulkTankId: true },
+  });
+
+  type Visit = { code: string; first: string; last: string; n: number; litres: number; pinned: string | null };
+  const visits = new Map<string, Visit[]>();
+  const meta = new Map<string, { code: string; pinned: string | null }>();
+  for (const r of rows) meta.set(r.asset.id, { code: r.asset.code, pinned: r.asset.projectId });
+
+  for (const assetId of ids) {
+    const days = new Map<string, { here: number; litres: number; away: number }>();
+    for (const e of everything.filter((x) => x.assetId === assetId)) {
+      const d = dayOf(e.issueDate);
+      const slot = days.get(d) ?? { here: 0, litres: 0, away: 0 };
+      if (e.bulkTankId === tank.id) { slot.here++; slot.litres += e.litres; } else slot.away++;
+      days.set(d, slot);
+    }
+    const ordered = [...days.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const out: Visit[] = [];
+    let cur: Visit | null = null;
+    for (const [d, slot] of ordered) {
+      if (slot.here > 0) {
+        if (!cur) cur = { code: meta.get(assetId)!.code, first: d, last: d, n: slot.here, litres: slot.litres, pinned: meta.get(assetId)!.pinned };
+        else { cur.last = d; cur.n += slot.here; cur.litres += slot.litres; }
+      } else if (cur) { out.push(cur); cur = null; }   // drew elsewhere — the visit ended
+    }
+    if (cur) out.push(cur);
+    visits.set(assetId, out);
   }
 
   const codeOf = new Map((await prisma.project.findMany({ select: { id: true, code: true } })).map((p) => [p.id, p.code]));
   let created = 0, covered = 0;
 
-  for (const [assetId, s] of [...span].sort((a, b) => a[1].code.localeCompare(b[1].code))) {
+  const ordered = [...visits].sort((a, b) => (meta.get(a[0])!.code).localeCompare(meta.get(b[0])!.code));
+  for (const [assetId, runs] of ordered) {
     const existing = await prisma.assetAssignment.findMany({
       where: { assetId, projectId: project.id },
       select: { id: true, startDate: true, endDate: true },
     });
-    // Already covered when one span spans the whole window this pump fuelled it.
-    const already = existing.some((a) =>
-      dayOf(a.startDate) <= s.first && (a.endDate === null || dayOf(a.endDate) >= s.last));
-    const where = s.pinned ? codeOf.get(s.pinned) ?? "—" : "—";
+    for (const s of runs) {
+      const already = existing.some((a) =>
+        dayOf(a.startDate) <= s.first && (a.endDate === null || dayOf(a.endDate) >= s.last));
+      const where = s.pinned ? codeOf.get(s.pinned) ?? "—" : "—";
 
-    if (already) {
-      covered++;
-      console.log(`  ${s.code.padEnd(9)} ${String(s.n).padStart(2)} draws ${String(s.litres).padStart(4)} L  ${s.first}..${s.last}   already posted to ${SITE}`);
-      continue;
+      if (already) {
+        covered++;
+        console.log(`  ${s.code.padEnd(9)} ${String(s.n).padStart(3)} draws ${String(s.litres).padStart(5)} L  ${s.first}..${s.last}   already posted to ${SITE}`);
+        continue;
+      }
+      created++;
+      console.log(`  ${s.code.padEnd(9)} ${String(s.n).padStart(3)} draws ${String(s.litres).padStart(5)} L  ${s.first}..${s.last}   post to ${SITE}` +
+        `${where !== SITE ? `   (pinned to ${where} — pin left alone)` : ""}`);
+
+      if (APPLY) await prisma.assetAssignment.create({ data: {
+        assetId, projectId: project.id,
+        startDate: colombo(s.first), endDate: colombo(s.last),
+        note: `Drew from ${tank.name} ${s.first} to ${s.last}`,
+        createdById: admin.id,
+      }});
     }
-    created++;
-    console.log(`  ${s.code.padEnd(9)} ${String(s.n).padStart(2)} draws ${String(s.litres).padStart(4)} L  ${s.first}..${s.last}   post to ${SITE}` +
-      `${where !== SITE ? `   (pinned to ${where} — that pin is left alone)` : ""}`);
-
-    if (APPLY) await prisma.assetAssignment.create({ data: {
-      assetId, projectId: project.id,
-      startDate: colombo(s.first), endDate: colombo(s.last),
-      note: `Drew from ${tank.name} ${s.first} to ${s.last}`,
-      createdById: admin.id,
-    }});
   }
 
   // A new span can pull in a row from ANOTHER pump that falls on the same days —
   // the same machine fuelling at two sites in one window. Those are the rows
   // whose site label changes without their pump changing, so they are named.
-  const ids = [...span.keys()];
   const elsewhere = await prisma.fuelIssue.findMany({
     where: {
       assetId: { in: ids }, voided: false, bulkTankId: { not: tank.id },
@@ -113,10 +149,11 @@ async function main() {
     },
     include: { asset: { select: { id: true, code: true } }, bulkTank: { select: { project: { select: { code: true } } } } },
   });
+  // With visit-level spans the only rows still caught are ones on a day the
+  // machine drew here too — a real ambiguity rather than an artefact of the span.
   const affected = elsewhere.filter((r) => {
-    const s = span.get(r.asset.id)!;
     const d = dayOf(r.issueDate);
-    return d >= s.first && d <= s.last;
+    return (visits.get(r.asset.id) ?? []).some((s) => d >= s.first && d <= s.last);
   });
   if (affected.length) {
     console.log(`\n  ! ${affected.length} row(s) on OTHER pumps fall inside these spans and will now read ${SITE}:`);

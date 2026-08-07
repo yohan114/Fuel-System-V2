@@ -256,6 +256,20 @@ else
   warn "$CEP03W_AUG not found — skipping"
 fi
 
+# ------------------------------------------------- Karaitivu Bridge stock book
+# REPLACES the site's fuel, like Galagedara's, and for the same reason: the
+# consolidated register already covers March-June and the two record the same
+# refuels — fourteen vehicles agree to the litre — with the register short
+# wherever they differ. Runs before the fuel sync so the sync finds the book's
+# rows already in place and adds nothing.
+KARA_BOOK="data/source-sheets/Karaitivu_Diesel_Stock_Book.xlsx"
+if [[ -f "$KARA_BOOK" ]]; then
+  step "Karaitivu diesel stock book" scripts/import_karaitivu_stock_book.ts
+  step "Karaitivu postings" scripts/post_pump_vehicles.ts --site=KARA --from=2025-10-28 --to=2026-08-02
+else
+  warn "$KARA_BOOK not found — skipping (the fuel sync would then DOUBLE-COUNT this site)"
+fi
+
 # ----------------------------------------------------------------- fuel sync
 # Because the live database was just restored over the repo's copy, fuel
 # imported on a workstation is NOT on this server yet. It travels as data
