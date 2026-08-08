@@ -39,11 +39,13 @@ const s = StyleSheet.create({
 
   thead: { flexDirection: "row", backgroundColor: NAVY, paddingVertical: 6, paddingHorizontal: 6 },
   th: { fontSize: 7, fontFamily: "Helvetica-Bold", color: WHITE, textTransform: "uppercase", letterSpacing: 0.4 },
+  thR: { fontSize: 7, fontFamily: "Helvetica-Bold", color: WHITE, textTransform: "uppercase", letterSpacing: 0.4, textAlign: "right" },
   tr: { flexDirection: "row", paddingVertical: 6, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: GRAY_LIGHT },
   td: { fontSize: 8 },
-  cMach: { width: "20%" }, cDays: { width: "9%", textAlign: "right" }, cMin: { width: "13%", textAlign: "right" },
-  cBill: { width: "13%", textAlign: "right" }, cRate: { width: "11%", textAlign: "right" },
-  cRent: { width: "14%", textAlign: "right" }, cFuel: { width: "9%", textAlign: "right" }, cTot: { width: "11%", textAlign: "right" },
+  cMach: { width: "17%" }, cDays: { width: "6%", textAlign: "right" },
+  cCons: { width: "12%", textAlign: "right" }, cMeter: { width: "11%", textAlign: "right" },
+  cBill: { width: "11%", textAlign: "right" }, cRate: { width: "10%", textAlign: "right" },
+  cRent: { width: "14%", textAlign: "right" }, cFuel: { width: "7%", textAlign: "right" }, cTot: { width: "12%", textAlign: "right" },
 
   totalsWrap: { flexDirection: "row", justifyContent: "flex-end", marginTop: 14 },
   totals: { width: "56%" },
@@ -76,7 +78,13 @@ function Row({ l }: { l: SiteSummaryLine }) {
         <Text style={[s.td, { fontSize: 7, color: GRAY }]}>{l.regNo ?? "—"}</Text>
       </View>
       <Text style={[s.td, s.cDays]}>{l.daysHere} / {l.daysInMonth}</Text>
-      <Text style={[s.td, s.cMin]}>{n1(l.minimumProrated)} {l.unit}</Text>
+      <View style={s.cCons}>
+        <Text style={s.td}>{l.consRefUnits != null ? `${n1(l.consRefUnits)} ${l.unit}` : "—"}</Text>
+        {l.consEconRate != null && (
+          <Text style={[s.td, { fontSize: 6.5, color: GRAY }]}>@ {l.consEconRate} L/{l.unit}</Text>
+        )}
+      </View>
+      <Text style={[s.td, s.cMeter]}>{l.actualUnits != null ? `${n1(l.actualUnits)} ${l.unit}` : "—"}</Text>
       <Text style={[s.td, s.cBill]}>{n1(l.billableUnits)} {l.unit}</Text>
       <Text style={[s.td, s.cRate]}>{l.rateCents != null ? rs(l.rateCents) : "no rate"}</Text>
       <Text style={[s.td, s.cRent]}>{rs(l.rentalCents)}</Text>
@@ -87,7 +95,8 @@ function Row({ l }: { l: SiteSummaryLine }) {
 }
 
 export function SiteSummaryDocument({ summary, generatedAt }: { summary: SiteSummary; generatedAt: string }) {
-  const noMeter = summary.lines.filter((l) => l.actualUnits == null).map((l) => l.code);
+  // An unread meter shows as "—" in its own column rather than as a notice: the
+  // page states what each figure is, and lets the reader draw the conclusion.
   return (
     <Document>
       <Page size="A4" style={s.page}>
@@ -121,7 +130,13 @@ export function SiteSummaryDocument({ summary, generatedAt }: { summary: SiteSum
           <View style={s.thead}>
             <Text style={[s.th, s.cMach]}>Machine</Text>
             <Text style={[s.th, s.cDays]}>Days</Text>
-            <Text style={[s.th, s.cMin]}>Min (pro-rata)</Text>
+            {/* Stacked on purpose — left to wrap, "(meter)" hyphenates to "(me-ter)". */}
+            <View style={s.cCons}>
+              <Text style={s.thR}>Actual</Text><Text style={s.thR}>(cons ref)</Text>
+            </View>
+            <View style={s.cMeter}>
+              <Text style={s.thR}>Actual</Text><Text style={s.thR}>(meter)</Text>
+            </View>
             <Text style={[s.th, s.cBill]}>Billable</Text>
             <Text style={[s.th, s.cRate]}>Rate</Text>
             <Text style={[s.th, s.cRent]}>Rental</Text>
@@ -131,10 +146,12 @@ export function SiteSummaryDocument({ summary, generatedAt }: { summary: SiteSum
           {summary.lines.map((l) => <Row key={l.assetId} l={l} />)}
 
           <Text style={s.note}>
-            Rental is the guaranteed minimum prorated to the days each machine was posted to this site
+            Actual (cons ref) is the work the fuel supports at the machine&apos;s economic consumption rate;
+            Actual (meter) is the movement of its own meter over the days here. Billable is the guaranteed
+            minimum prorated to those days
             ({summary.lines[0] ? `${summary.lines[0].minimumFull} ${summary.lines[0].unit}` : "the monthly minimum"} x days here / {summary.daysInMonth} days in the month),
-            or its measured work where that is higher. Fuel is what this site&apos;s own pumps issued to
-            these machines in the month, priced as issued. No other site&apos;s register is counted.
+            or the measured work where that is higher. Fuel is what this site&apos;s own pumps issued to these
+            machines in the month, priced as issued. No other site&apos;s register is counted.
           </Text>
 
           <View style={s.totalsWrap}>
@@ -153,20 +170,12 @@ export function SiteSummaryDocument({ summary, generatedAt }: { summary: SiteSum
             </View>
           </View>
 
-          {(noMeter.length > 0 || summary.unrated.length > 0) && (
+          {summary.unrated.length > 0 && (
             <View style={s.warn}>
-              {noMeter.length > 0 && (
-                <Text style={s.warnText}>
-                  No meter reading was recorded this month for {noMeter.join(", ")}. Those machines bill on the
-                  guaranteed minimum. If the site book holds readings, entering them may raise the amount due.
-                </Text>
-              )}
-              {summary.unrated.length > 0 && (
-                <Text style={s.warnText}>
-                  {summary.unrated.join(", ")} {summary.unrated.length === 1 ? "has" : "have"} no rate card, so
-                  no rental is charged for {summary.unrated.length === 1 ? "it" : "them"} above.
-                </Text>
-              )}
+              <Text style={s.warnText}>
+                {summary.unrated.join(", ")} {summary.unrated.length === 1 ? "has" : "have"} no rate card, so
+                no rental is charged for {summary.unrated.length === 1 ? "it" : "them"} above.
+              </Text>
             </View>
           )}
 

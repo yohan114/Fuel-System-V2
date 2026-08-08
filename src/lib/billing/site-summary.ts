@@ -36,7 +36,11 @@ export interface SiteSummaryLine {
   daysInMonth: number;
   minimumFull: number;
   minimumProrated: number;
-  actualUnits: number | null;   // null when the meter was never read this month
+  /** Work the fuel implies: litres at this site ÷ the economic consumption rate. */
+  consRefUnits: number | null;
+  consEconRate: number | null;
+  /** Movement of the real meter over the days at this site. Null when unread. */
+  actualUnits: number | null;
   billableUnits: number;
   rateCents: number | null;
   rentalCents: number;
@@ -142,6 +146,16 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     const inWindow = readings.filter((r) => here.some((s) => r.readingDate >= s.start && r.readingDate <= s.end));
     const actualUnits = inWindow.length >= 2 ? inWindow[inWindow.length - 1].value - inWindow[0].value : null;
 
+    // A second, independent read on the same question. The meter says what the
+    // machine recorded; the fuel says what it must have burnt to do the work.
+    // Cons Econ is the light-load end of the band, so this is the most
+    // conservative estimate of hours the fuel can support — the figure to put
+    // beside a meter, since it cannot be accused of flattering the bill.
+    const consEconRate = a.rentalRate?.fuelConsEcon ?? null;
+    const isMeterMode = mode === "hourly" || mode === "perkm";
+    const consRefUnits = isMeterMode && consEconRate && consEconRate > 0 && fuelLitres > 0
+      ? fuelLitres / consEconRate : null;
+
     const billableUnits = Math.max(actualUnits ?? 0, minimumProrated);
     const rentalCents = rateCents == null ? 0 : Math.round(billableUnits * rateCents);
     const chargesFuel = basis !== "d";
@@ -152,6 +166,7 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
       billingMode: mode, rateBasis: basis,
       unit: mode === "perkm" ? "km" : mode === "hourly" ? "hr" : "days",
       daysHere, daysInMonth, minimumFull, minimumProrated,
+      consRefUnits, consEconRate,
       actualUnits, billableUnits, rateCents, rentalCents,
       fuelLitres, fuelCostCents: fuelChargedCents, fuelIssues: onHereDays.length,
       lineTotalCents: rentalCents + fuelChargedCents,

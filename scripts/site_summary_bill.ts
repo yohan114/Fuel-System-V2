@@ -29,14 +29,15 @@ async function main() {
   if (!sum.lines.length) { console.log(`\n  nobody was posted to ${sum.siteName} in ${MONTH}.\n`); return; }
 
   console.log(`\n  ${sum.siteName} · ${sum.monthLabel} · ${sum.daysInMonth} days in month\n`);
-  console.log(`  ${"machine".padEnd(20)}${"days".padStart(8)}${"min pro-rata".padStart(16)}${"billable".padStart(14)}` +
+  console.log(`  ${"machine".padEnd(20)}${"days".padStart(8)}${"cons ref".padStart(13)}${"meter".padStart(12)}${"billable".padStart(13)}` +
     `${"rate".padStart(12)}${"rental".padStart(16)}${"fuel".padStart(11)}${"total".padStart(16)}`);
   for (const l of sum.lines) {
     console.log(`  ${(l.code + " / " + (l.regNo ?? "—")).padEnd(20)}${`${l.daysHere}/${l.daysInMonth}`.padStart(8)}` +
-      `${`${n1(l.minimumProrated)} ${l.unit}`.padStart(16)}${`${n1(l.billableUnits)} ${l.unit}`.padStart(14)}` +
+      `${(l.consRefUnits != null ? `${n1(l.consRefUnits)} ${l.unit}` : "—").padStart(13)}` +
+      `${(l.actualUnits != null ? `${n1(l.actualUnits)} ${l.unit}` : "—").padStart(12)}` +
+      `${`${n1(l.billableUnits)} ${l.unit}`.padStart(13)}` +
       `${(l.rateCents != null ? rs(l.rateCents) : "no rate").padStart(12)}${rs(l.rentalCents).padStart(16)}` +
       `${`${n1(l.fuelLitres)} L`.padStart(11)}${rs(l.lineTotalCents).padStart(16)}`);
-    if (l.actualUnits == null) console.log(`  ${" ".repeat(20)}no meter reading this month — bills on the guaranteed minimum`);
   }
 
   console.log(`\n  rental                 ${rs(sum.rentalCents)}`);
