@@ -17,8 +17,13 @@ import path from "path";
 // cents. Three tiers, all optional: fw = full wet (fuel + operator), w = wet,
 // d = dry. Billing falls back to the wet tier when a basis is not forced.
 //
+// --basis pins which tier the machine bills on by default: "d" (dry, rental
+// only — no fuel is charged), "w" (wet, fuel included) or "fw" (full wet).
+// Without it, billing falls back to wet.
+//
 //   npx tsx scripts/set_rental_rate.ts --code=PE-3723 --mode=hourly --w=2400
 //   npx tsx scripts/set_rental_rate.ts --code=DAG-4969 --mode=perkm --fw=110 --w=70 --d=45 --apply
+//   npx tsx scripts/set_rental_rate.ts --code=WG-13 --mode=portable --w=9500 --d=6500 --basis=d --apply
 //   npx tsx scripts/set_rental_rate.ts --file=rates.csv --apply
 //
 // The CSV wants a header and one machine per line — blanks mean "no such tier":
@@ -30,6 +35,8 @@ import path from "path";
 const APPLY = process.argv.includes("--apply");
 const REPLACE = process.argv.includes("--replace");
 const arg = (n: string) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
+const BASIS = arg("basis");
+if (BASIS && !["fw", "w", "d"].includes(BASIS)) throw new Error(`--basis must be fw, w or d — got "${BASIS}"`);
 
 type Row = { code: string; mode: string; fw: number | null; w: number | null; d: number | null };
 
@@ -108,14 +115,17 @@ async function main() {
     const warn = want && a.meterType !== want
       ? `   ! this machine's meter is ${a.meterType}, not ${want} — it will not bill ${r.mode}` : "";
     console.log(`  ${a.code.padEnd(12)}${(a.category?.name ?? "—").padEnd(28)}${r.mode.padEnd(10)}` +
-      `fw ${rs(r.fw).padEnd(12)}w ${rs(r.w).padEnd(12)}d ${rs(r.d)}${a.rentalRate ? "   (replacing)" : ""}${warn}`);
+      `fw ${rs(r.fw).padEnd(12)}w ${rs(r.w).padEnd(12)}d ${rs(r.d)}` +
+      `${BASIS ? `   bills on ${BASIS === "d" ? "DRY — no fuel charged" : BASIS.toUpperCase()}` : ""}` +
+      `${a.rentalRate ? "   (replacing)" : ""}${warn}`);
     if (!APPLY) continue;
     const cols = columnsFor(r.mode, r);
     await prisma.rentalRate.upsert({
       where: { assetId: a.id },
       create: { assetId: a.id, equipType: r.mode === "portable" ? "PORTABLE" : "FLEET",
-        category: a.category?.name ?? null, sourceLabel: "set by hand from the rate card", ...cols },
-      update: cols });
+        category: a.category?.name ?? null, sourceLabel: "set by hand from the rate card",
+        ...(BASIS ? { defaultBasis: BASIS } : {}), ...cols },
+      update: { ...(BASIS ? { defaultBasis: BASIS } : {}), ...cols } });
     set++;
   }
 
