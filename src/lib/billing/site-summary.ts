@@ -43,7 +43,7 @@ export interface SiteSummaryLine {
   actualUnits: number | null;
   billableUnits: number;
   /** Which of the three readings the billable figure came from. */
-  billedOn: "meter" | "fuel" | "minimum";
+  billedOn: "meter" | "fuel" | "minimum" | "days on site";
   rateCents: number | null;
   rentalCents: number;
   fuelLitres: number;
@@ -160,7 +160,15 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
       where: { assetId: a.id, readingDate: { gte: period.start, lte: period.end } },
       orderBy: { readingDate: "asc" }, select: { value: true, readingDate: true } });
     const inWindow = readings.filter((r) => here.some((s) => r.readingDate >= s.start && r.readingDate <= s.end));
-    const actualUnits = inWindow.length >= 2 ? inWindow[inWindow.length - 1].value - inWindow[0].value : null;
+    // A per-day machine's unit IS its presence — a welding plant or a light
+    // tower has no meter to read, so looking for one and finding nothing left
+    // it with no actual at all. The prorated guarantee then won by default and
+    // billed a fraction of a day: WG-13 stood on site for one day and was
+    // charged 0.8 of one, because 26 days ÷ 31 is 0.84. Days on site is the
+    // figure, and the site can check it against the same Days column.
+    const actualUnits = mode === "perday"
+      ? daysHere
+      : inWindow.length >= 2 ? inWindow[inWindow.length - 1].value - inWindow[0].value : null;
 
     // A second, independent read on the same question. The meter says what the
     // machine recorded; the fuel says what it must have burnt to do the work.
@@ -190,9 +198,11 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     // instead let a coincidence rewrite the reason: HCC-09's June fuel implied
     // 1,100 km and its guarantee was also 1,100 km, and the line claimed to be
     // billed on fuel when nothing about the fuel had changed what was charged.
-    const billedOn: "meter" | "fuel" | "minimum" =
+    const billedOn: SiteSummaryLine["billedOn"] =
       billableUnits > minimumProrated
-        ? (actualUnits != null && billableUnits === actualUnits ? "meter" : "fuel")
+        ? (actualUnits != null && billableUnits === actualUnits
+            ? (mode === "perday" ? "days on site" : "meter")
+            : "fuel")
         : "minimum";
     const rentalCents = rateCents == null ? 0 : Math.round(billableUnits * rateCents);
     const chargesFuel = basis !== "d";

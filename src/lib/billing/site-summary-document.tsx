@@ -87,7 +87,9 @@ function Row({ l }: { l: SiteSummaryLine }) {
       <Text style={[s.td, s.cMeter]}>{l.actualUnits != null ? `${n1(l.actualUnits)} ${l.unit}` : "—"}</Text>
       <View style={s.cBill}>
         <Text style={s.td}>{n1(l.billableUnits)} {l.unit}</Text>
-        <Text style={[s.td, { fontSize: 6.5, color: GRAY }]}>on {l.billedOn}</Text>
+        <Text style={[s.td, { fontSize: 6.5, color: GRAY }]}>
+          {l.billedOn === "days on site" ? "days on site" : `on ${l.billedOn}`}
+        </Text>
       </View>
       <Text style={[s.td, s.cRate]}>{l.rateCents != null ? rs(l.rateCents) : "no rate"}</Text>
       <Text style={[s.td, s.cRent]}>{rs(l.rentalCents)}</Text>
