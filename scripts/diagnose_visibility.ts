@@ -38,10 +38,32 @@ async function main() {
     }
   }
 
-  const byStatus = await prisma.asset.groupBy({ by: ["status"], _count: { _all: true } });
+  // Pointing at the wrong file is easy — a typo, an unexpanded placeholder, a
+  // path that does not exist yet. SQLite answers by creating an empty file
+  // rather than complaining, so the first query is where it surfaces. Say what
+  // happened instead of unwinding a Prisma stack over it.
+  // Counted with a plain findMany rather than groupBy: the shape is simple, and
+  // groupBy's generics make the catch below hard to type for no gain.
+  let byStatus: { status: string; n: number }[];
+  try {
+    const rows = await prisma.asset.findMany({ select: { status: true } });
+    const tally = new Map<string, number>();
+    for (const r of rows) tally.set(r.status, (tally.get(r.status) ?? 0) + 1);
+    byStatus = [...tally].map(([status, n]) => ({ status, n })).sort((a, b) => b.n - a.n);
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "P2021" || /no such table/i.test(String(e))) {
+      console.log(`\n  THAT FILE IS NOT A FUEL-SYSTEM DATABASE — it has no Asset table.`);
+      console.log(`  SQLite creates an empty file rather than failing, so a mistyped path`);
+      console.log(`  looks like an empty system. Check the path above against .env:\n`);
+      console.log(`      grep DATABASE_URL .env\n`);
+      return;
+    }
+    throw e;
+  }
   console.log(`\n--- machines by status ---`);
-  for (const s of byStatus) console.log(`  ${s.status.padEnd(10)} ${s._count._all}`);
-  const visible = byStatus.filter((s) => s.status === "ACTIVE" || s.status === "INACTIVE").reduce((n, s) => n + s._count._all, 0);
+  for (const s of byStatus) console.log(`  ${s.status.padEnd(10)} ${s.n}`);
+  const visible = byStatus.filter((s) => s.status === "ACTIVE" || s.status === "INACTIVE").reduce((n, s) => n + s.n, 0);
   console.log(`  the fleet directory shows ACTIVE + INACTIVE = ${visible}`);
   if (visible === 0) console.log(`  ! nothing would show for ANY login`);
 
