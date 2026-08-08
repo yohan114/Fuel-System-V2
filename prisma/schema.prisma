@@ -127,6 +127,15 @@ model Asset {
   // and no rate card required. Kept off by default so the fleet bills as usual.
   billFuelOnly  Boolean        @default(false)
 
+  // Billed direct: the client settles this machine with its owner without E&C
+  // in the middle, so E&C invoices neither its rental nor its fuel — even
+  // though it is posted to a site and draws from that site's pump, and so
+  // appears in every other report. Distinct from billFuelOnly, which still
+  // recharges the fuel. Off by default: a machine is billable unless someone
+  // says otherwise, and the summary names the ones left out so an exclusion is
+  // never silent.
+  billedDirect  Boolean        @default(false)
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 

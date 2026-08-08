@@ -169,12 +169,21 @@ export function SiteSummaryDocument({ summary, generatedAt }: { summary: SiteSum
             </View>
           </View>
 
-          {summary.unrated.length > 0 && (
+          {(summary.unrated.length > 0 || summary.billedDirect.length > 0) && (
             <View style={s.warn}>
-              <Text style={s.warnText}>
-                {summary.unrated.join(", ")} {summary.unrated.length === 1 ? "has" : "have"} no rate card, so
-                no rental is charged for {summary.unrated.length === 1 ? "it" : "them"} above.
-              </Text>
+              {summary.billedDirect.length > 0 && (
+                <Text style={s.warnText}>
+                  {summary.billedDirect.join(", ")} {summary.billedDirect.length === 1 ? "was" : "were"} on
+                  site this month but {summary.billedDirect.length === 1 ? "is" : "are"} settled direct with
+                  the owner — neither rental nor fuel is charged here.
+                </Text>
+              )}
+              {summary.unrated.length > 0 && (
+                <Text style={s.warnText}>
+                  {summary.unrated.join(", ")} {summary.unrated.length === 1 ? "has" : "have"} no rate card, so
+                  no rental is charged for {summary.unrated.length === 1 ? "it" : "them"} above.
+                </Text>
+              )}
             </View>
           )}
 

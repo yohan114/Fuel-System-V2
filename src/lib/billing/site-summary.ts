@@ -71,6 +71,7 @@ export interface SiteSummary {
   vatCents: number;
   grandTotalCents: number;
   unrated: string[];            // posted here but no rate card — bills no rental
+  billedDirect: string[];       // posted here but settled direct — deliberately not billed
 }
 
 function modeFor(meterType: string | null, equipType: string): "hourly" | "perkm" | "perday" {
@@ -117,6 +118,7 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
 
   const lines: SiteSummaryLine[] = [];
   const unrated: string[] = [];
+  const billedDirect: string[] = [];
   const prices = new Set<number>();
 
   for (const a of assets) {
@@ -124,6 +126,12 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     const here = segs.filter((s) => s.projectId === project.id);
     const daysHere = here.reduce((n, s) => n + s.days, 0);
     if (!daysHere) continue;
+
+    // Settled between the client and the machine's owner. It was on site and it
+    // drew fuel, so it stays in the fleet and fuel reports — it just earns E&C
+    // nothing. Named on the summary rather than dropped quietly, so a site can
+    // see it was considered.
+    if (a.billedDirect) { billedDirect.push(a.code); continue; }
 
     const mode = modeFor(a.meterType, a.rentalRate?.equipType ?? "");
     const basis = here[0]?.billingType === "DRY" ? "d" : (a.rentalRate?.defaultBasis ?? "w");
@@ -198,6 +206,6 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     fuelRateBlended: prices.size > 1,
     ssclRate: cfg.ssclRate, ssclCents, vatRate: cfg.vatRate, vatCents,
     grandTotalCents: subtotalCents + ssclCents + vatCents,
-    unrated,
+    unrated, billedDirect,
   };
 }
