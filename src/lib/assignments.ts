@@ -34,6 +34,26 @@ export function dayNumber(d: Date): number {
   return Math.floor(Date.UTC(y, m - 1, day) / 86_400_000);
 }
 
+// The inverse of dayNumber: a day index back to the instants that bound that
+// COLOMBO day. dayNumber indexes on the Colombo calendar, so rebuilding a Date
+// from an index has to return through the same calendar. Reading the server's
+// own Y-M-D instead — which is what the segment reconstruction used to do —
+// lands a day early on a UTC host, and those bounds are what each billing
+// segment uses to gather its fuel, its meter delta and its working days. A
+// vehicle that moved sites mid-month therefore had one day's fuel and one day's
+// meter movement charged to the site it had just left.
+export function startOfColomboDay(dayNum: number): Date {
+  return new Date(`${colomboDayString(dayNum)}T00:00:00+05:30`);
+}
+
+export function endOfColomboDay(dayNum: number): Date {
+  return new Date(`${colomboDayString(dayNum)}T23:59:59.999+05:30`);
+}
+
+function colomboDayString(dayNum: number): string {
+  return new Date(dayNum * 86_400_000).toISOString().slice(0, 10);
+}
+
 // Local midnight (start of day) for a date.
 export function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
@@ -253,17 +273,15 @@ export async function getMonthSegments(
 
   const runs = resolveDayRuns(spans, monthStartNum, monthEndNum);
 
-  // Reconstruct concrete Date bounds per run, clamped to the month boundaries so
-  // the first/last segments line up exactly with periodStart/periodEnd.
-  const dayToLocalMidnight = (dayNum: number): Date =>
-    new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + (dayNum - monthStartNum), 0, 0, 0, 0);
-
+  // Reconstruct concrete Date bounds per run on the Colombo calendar, clamped to
+  // the month boundaries so the first/last segments line up exactly with
+  // periodStart/periodEnd.
   return runs.map((r) => ({
     projectId: r.projectId,
     projectCode: r.projectCode,
     projectName: r.projectName,
-    start: r.startDay <= monthStartNum ? periodStart : dayToLocalMidnight(r.startDay),
-    end: r.endDay >= monthEndNum ? periodEnd : endOfLocalDay(dayToLocalMidnight(r.endDay)),
+    start: r.startDay <= monthStartNum ? periodStart : startOfColomboDay(r.startDay),
+    end: r.endDay >= monthEndNum ? periodEnd : endOfColomboDay(r.endDay),
     days: r.days,
     billingType: r.billingType,
     driverName: r.driverName,
