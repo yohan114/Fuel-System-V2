@@ -29,7 +29,7 @@ async function main() {
   if (!sum.lines.length) { console.log(`\n  nobody was posted to ${sum.siteName} in ${MONTH}.\n`); return; }
 
   console.log(`\n  ${sum.siteName} · ${sum.monthLabel} · ${sum.daysInMonth} days in month\n`);
-  console.log(`  ${"machine".padEnd(20)}${"days".padStart(8)}${"cons ref".padStart(13)}${"meter".padStart(12)}${"billable".padStart(13)}` +
+  console.log(`  ${"machine".padEnd(20)}${"days".padStart(8)}${"cons typ".padStart(13)}${"meter".padStart(12)}${"billable".padStart(13)}` +
     `${"rate".padStart(12)}${"rental".padStart(16)}${"fuel".padStart(11)}${"total".padStart(16)}`);
   for (const l of sum.lines) {
     console.log(`  ${(l.code + " / " + (l.regNo ?? "—")).padEnd(20)}${`${l.daysHere}/${l.daysInMonth}`.padStart(8)}` +

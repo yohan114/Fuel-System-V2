@@ -80,8 +80,8 @@ function Row({ l }: { l: SiteSummaryLine }) {
       <Text style={[s.td, s.cDays]}>{l.daysHere} / {l.daysInMonth}</Text>
       <View style={s.cCons}>
         <Text style={s.td}>{l.consRefUnits != null ? `${n1(l.consRefUnits)} ${l.unit}` : "—"}</Text>
-        {l.consEconRate != null && (
-          <Text style={[s.td, { fontSize: 6.5, color: GRAY }]}>@ {l.consEconRate} L/{l.unit}</Text>
+        {l.consTypRate != null && (
+          <Text style={[s.td, { fontSize: 6.5, color: GRAY }]}>@ {l.consTypRate} L/{l.unit}</Text>
         )}
       </View>
       <Text style={[s.td, s.cMeter]}>{l.actualUnits != null ? `${n1(l.actualUnits)} ${l.unit}` : "—"}</Text>
@@ -132,7 +132,7 @@ export function SiteSummaryDocument({ summary, generatedAt }: { summary: SiteSum
             <Text style={[s.th, s.cDays]}>Days</Text>
             {/* Stacked on purpose — left to wrap, "(meter)" hyphenates to "(me-ter)". */}
             <View style={s.cCons}>
-              <Text style={s.thR}>Actual</Text><Text style={s.thR}>(cons ref)</Text>
+              <Text style={s.thR}>Actual</Text><Text style={s.thR}>(cons typ)</Text>
             </View>
             <View style={s.cMeter}>
               <Text style={s.thR}>Actual</Text><Text style={s.thR}>(meter)</Text>
