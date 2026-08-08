@@ -10,10 +10,12 @@
 // not exist. Deleting the orphans leaves Galagedara at exactly the workbook's
 // 436 issues and 18,403 L.
 //
-// GE-47 is a different case and is only renamed. It is one genuine refuel — the
-// 172 L on 05 Aug — whose plate was unclear in the photograph; the workbook
-// reads it GE-M47. Nothing duplicates it, so the row stays and the label is
-// corrected.
+// GE-47 is NOT renamed, and that is a correction. The workbook reads the plate
+// GE-M47 on its one refuel — the 172 L on 05 Aug — but says plainly it could not
+// make the photograph out: "GE-M47 and LK-5041 appear once each, on 05 Aug, and
+// match nothing else in the records. Both plates were unclear." The site has
+// since confirmed the generator is GE-47, so the transcription is what was
+// wrong. The rename that used to sit here would now undo that on every deploy.
 //
 // Dry-run unless --apply.
 import { prisma } from "@/lib/db";
@@ -23,7 +25,10 @@ const APPLY = process.argv.includes("--apply");
 // code -> the vehicle the workbook says it really is. null means "delete the
 // issues and the phantom asset"; a string means "rename in place".
 const ORPHANS = ["DAG-4929", "LA-0920"];
-const RENAMES: Record<string, string> = { "GE-47": "GE-M47" };
+// Empty by design. GE-47 -> GE-M47 was removed once the site confirmed the
+// plate; leave it empty unless a rename is confirmed by someone who has seen the
+// machine, not by a transcriber's best reading of a photograph.
+const RENAMES: Record<string, string> = {};
 
 async function main() {
   console.log(`\n=== Galagedara alias cleanup (${APPLY ? "APPLY" : "DRY-RUN"}) ===\n`);
