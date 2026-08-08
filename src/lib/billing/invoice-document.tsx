@@ -118,6 +118,16 @@ function d(date: Date | null | undefined) {
   return date ? new Date(date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—";
 }
 
+// The standard PDF fonts are WinAnsi-encoded. Anything outside it does not fall
+// back to a similar glyph — it prints as a different letter, so the capped
+// variance "≥ +999%" reached a client's invoice reading "e+999%". Text shared
+// with the screen, where the glyphs are fine, is made safe here at the point it
+// becomes a PDF rather than by impoverishing the HTML.
+const PDF_GLYPHS: Record<string, string> = { "≥": ">=", "≤": "<=", "≈": "~", "−": "-" };
+function pdfText(s: string | null | undefined): string {
+  return (s ?? "").replace(/[≥≤≈−]/g, (c) => PDF_GLYPHS[c] ?? c);
+}
+
 export function InvoiceDocument({ bill }: { bill: any }) {
   const monthLabel = new Date(bill.year, bill.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   const isDraft = bill.status === "DRAFT";
@@ -146,8 +156,14 @@ export function InvoiceDocument({ bill }: { bill: any }) {
   const isMetered = (bill.billingMode === "hourly" || bill.billingMode === "perkm") && !isFuelOnly;
   const actualMeter: number = bill.actualMeterUnits ?? (bill.derivedFromFuel ? 0 : bill.actualUnits);
   const recommended: number | null = bill.derivedStandardUnits ?? null;
+  // A variance needs two figures to compare. With no meter reading in the month
+  // the divisor was floored to 1, turning "nobody read the meter" into a
+  // several-thousand-percent discrepancy printed on a client's invoice. The
+  // machine did not run 5,000% over — it was never read, which is a different
+  // statement and the one the client should see.
   const variancePct: number | null =
-    isMetered && recommended != null ? ((recommended - actualMeter) / Math.max(actualMeter, 1)) * 100 : null;
+    isMetered && recommended != null && actualMeter > 0
+      ? ((recommended - actualMeter) / actualMeter) * 100 : null;
 
   return (
     <Document>
@@ -274,9 +290,11 @@ export function InvoiceDocument({ bill }: { bill: any }) {
                 <View style={styles.usageCell}>
                   <Text style={styles.usageCellLabel}>Variance</Text>
                   <Text style={[styles.usageCellVal, variancePct != null && Math.abs(variancePct) >= 20 ? { color: "#b91c1c" } : {}]}>
-                    {variancePct != null ? formatVariancePct(variancePct / 100) : "—"}
+                    {variancePct != null ? pdfText(formatVariancePct(variancePct / 100)) : "—"}
                   </Text>
-                  <Text style={styles.usageCellUnit}>{bill.derivedFromFuel ? "billed on fuel" : "billed on meter"}</Text>
+                  <Text style={styles.usageCellUnit}>
+                    {variancePct == null && isMetered ? "no meter reading" : bill.derivedFromFuel ? "billed on fuel" : "billed on meter"}
+                  </Text>
                 </View>
                 <View style={styles.usageCell}>
                   <Text style={styles.usageCellLabel}>Rate / {unit}</Text>
