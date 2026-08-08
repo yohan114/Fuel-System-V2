@@ -15,13 +15,22 @@ import path from "path";
 // tool that moves the history across and deletes the loser. Silently folding
 // them here would hide a duplicate behind what looks like a typo fix.
 //
+// --reg corrects the PLATE instead of, or as well as, the code. A plate that
+// several machines share is worse than a blank one: it is what the fuel books
+// are matched on, so a row written against it can land on any of them. Five
+// excavators arrived from one import all carrying "14160". Setting a machine's
+// plate to its own code is how the rest of the fleet records a machine that has
+// no real registration.
+//
 //   npx tsx scripts/rename_asset.ts --from=GE-M47 --to=GE-47
 //   npx tsx scripts/rename_asset.ts --from=GE-M47 --to=GE-47 --apply
+//   npx tsx scripts/rename_asset.ts --from=HEX-33 --reg=HEX-33 --apply
 
 const APPLY = process.argv.includes("--apply");
 const arg = (n: string) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
 const FROM = arg("from");
 const TO = arg("to");
+const REG = arg("reg");
 
 function announceDatabase() {
   const url = process.env.FUEL_DATABASE_URL || process.env.DATABASE_URL || "file:./data/app.db";
@@ -30,7 +39,7 @@ function announceDatabase() {
 }
 
 async function main() {
-  if (!FROM || !TO) throw new Error("need --from=OLD-CODE --to=NEW-CODE");
+  if (!FROM || (!TO && !REG)) throw new Error("need --from=CODE with --to=NEW-CODE and/or --reg=PLATE");
   console.log(`\n=== rename a machine (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
   announceDatabase();
 
@@ -38,13 +47,13 @@ async function main() {
     where: { code: FROM },
     select: { id: true, code: true, regNo: true, category: { select: { name: true } }, project: { select: { code: true } } } });
   if (!asset) {
-    const already = await prisma.asset.findFirst({ where: { code: TO }, select: { code: true } });
+    const already = TO ? await prisma.asset.findFirst({ where: { code: TO }, select: { code: true } }) : null;
     throw new Error(already
       ? `no machine is called "${FROM}" — but "${TO}" already exists, so this rename has been done`
       : `no machine is called "${FROM}"`);
   }
 
-  const clash = await prisma.asset.findFirst({ where: { code: TO }, select: { id: true, code: true, regNo: true } });
+  const clash = TO ? await prisma.asset.findFirst({ where: { code: TO }, select: { id: true, code: true, regNo: true } }) : null;
   if (clash) {
     throw new Error(`"${TO}" already belongs to another machine (plate ${clash.regNo ?? "—"}).\n` +
       `  That makes this a merge, not a rename. Use:\n` +
@@ -60,14 +69,31 @@ async function main() {
     prisma.serviceRecord.count({ where: { assetId: asset.id } }),
   ]);
 
-  console.log(`\n  ${asset.code}  ->  ${TO}`);
-  console.log(`  plate ${asset.regNo ?? "—"} · ${asset.category?.name} @ ${asset.project?.code ?? "—"}`);
+  console.log(`\n  ${asset.code}${TO ? `  ->  ${TO}` : ""}`);
+  console.log(`  plate ${asset.regNo ?? "—"}${REG ? `  ->  ${REG}` : ""} · ${asset.category?.name} @ ${asset.project?.code ?? "—"}`);
+
+  // A plate is not unique in the schema, but it is what the fuel books are
+  // matched on, so sharing one is a real hazard rather than untidiness.
+  if (REG) {
+    const sharing = await prisma.asset.findMany({
+      where: { regNo: REG, id: { not: asset.id } }, select: { code: true } });
+    if (sharing.length) {
+      console.log(`  ! "${REG}" is already on ${sharing.map((x) => x.code).join(", ")} — a shared plate`);
+      console.log(`    matches whichever machine is found first. Give each its own, or merge them.`);
+    }
+    if (asset.regNo) {
+      const others = await prisma.asset.findMany({
+        where: { regNo: asset.regNo, id: { not: asset.id } }, select: { code: true } });
+      if (others.length) console.log(`  the old plate "${asset.regNo}" stays on ${others.map((x) => x.code).join(", ")}`);
+    }
+  }
   console.log(`  ${issues} fuel issues (${Math.round(litres._sum.litres ?? 0).toLocaleString()} L) · ${readings} meter readings · ${postings} postings · ${bills} bills · ${services} services`);
   console.log(`  all of it follows the machine — nothing is deleted or re-dated`);
 
   if (!APPLY) { console.log(`\nDRY-RUN — nothing written. Re-run with --apply\n`); return; }
-  await prisma.asset.update({ where: { id: asset.id }, data: { code: TO } });
-  console.log(`\nDone. "${FROM}" is now "${TO}".\n`);
+  await prisma.asset.update({ where: { id: asset.id },
+    data: { ...(TO ? { code: TO } : {}), ...(REG ? { regNo: REG } : {}) } });
+  console.log(`\nDone. ${TO ? `"${FROM}" is now "${TO}"` : `"${FROM}" now carries plate "${REG}"`}.\n`);
 }
 
 main().finally(() => prisma.$disconnect());
