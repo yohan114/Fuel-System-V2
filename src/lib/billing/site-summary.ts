@@ -42,6 +42,8 @@ export interface SiteSummaryLine {
   /** Movement of the real meter over the days at this site. Null when unread. */
   actualUnits: number | null;
   billableUnits: number;
+  /** Which of the three readings the billable figure came from. */
+  billedOn: "meter" | "fuel" | "minimum";
   rateCents: number | null;
   rentalCents: number;
   fuelLitres: number;
@@ -171,7 +173,20 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     const consRefUnits = isMeterMode && consTypRate && consTypRate > 0 && fuelLitres > 0
       ? fuelLitres / consTypRate : null;
 
-    const billableUnits = Math.max(actualUnits ?? 0, minimumProrated);
+    // Three readings of the same month, and the machine is billed on whichever
+    // is highest:
+    //   the meter        — what it recorded, when anyone read it
+    //   the fuel         — what it must have burnt to do the work, at Cons Typ
+    //   the guarantee    — what the contract owes regardless
+    // The guarantee alone was acting as a ceiling, not a floor: with no meter
+    // read all month, a machine that plainly out-worked its minimum still
+    // billed only the minimum, and the fuel proving it sat unused in the next
+    // column. Fuel is a physical record — a litre issued is a litre burnt — so
+    // where it exceeds the guarantee it is evidence of work done, not an
+    // estimate to set aside.
+    const billableUnits = Math.max(actualUnits ?? 0, consRefUnits ?? 0, minimumProrated);
+    const billedOn = billableUnits === (actualUnits ?? -1) ? "meter"
+      : consRefUnits != null && billableUnits === consRefUnits ? "fuel" : "minimum";
     const rentalCents = rateCents == null ? 0 : Math.round(billableUnits * rateCents);
     const chargesFuel = basis !== "d";
     const fuelChargedCents = chargesFuel ? fuelCostCents : 0;
@@ -182,7 +197,7 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
       unit: mode === "perkm" ? "km" : mode === "hourly" ? "hr" : "days",
       daysHere, daysInMonth, minimumFull, minimumProrated,
       consRefUnits, consTypRate,
-      actualUnits, billableUnits, rateCents, rentalCents,
+      actualUnits, billableUnits, billedOn, rateCents, rentalCents,
       fuelLitres, fuelCostCents: fuelChargedCents, fuelIssues: onHereDays.length,
       lineTotalCents: rentalCents + fuelChargedCents,
     });
