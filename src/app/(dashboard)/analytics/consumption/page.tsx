@@ -1,3 +1,4 @@
+import { isScopedSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
@@ -27,7 +28,7 @@ export default async function ConsumptionPage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
 
-  const isSiteUser = session.role === "USER" && !!session.projectId;
+  const isSiteUser = isScopedSiteUser(session);
   const sp = await props.searchParams;
   const cur = currentMonthPeriod();
   const fromStr = sp.from || cur.start.toISOString().split("T")[0];

@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
@@ -26,7 +27,7 @@ export default async function FleetPage(props: PageProps) {
     status: {
       in: ["ACTIVE", "INACTIVE"], // Excluding DISPOSED assets by default
     },
-    ...(session.role === "USER" && session.projectId ? {
+    ...(isSiteUser(session.role) && session.projectId ? {
       projectId: session.projectId
     } : {}),
   };
@@ -46,6 +47,13 @@ export default async function FleetPage(props: PageProps) {
       { site: { contains: q } },
     ];
   }
+
+  // Context for the empty state: the site this login is pinned to, if any, and
+  // how many machines exist regardless of the filter.
+  const scopedTo = isSiteUser(session.role) && session.projectId
+    ? (await prisma.project.findUnique({ where: { id: session.projectId }, select: { code: true } }))?.code ?? "its site"
+    : null;
+  const fleetTotal = await prisma.asset.count({ where: { status: { in: ["ACTIVE", "INACTIVE"] } } });
 
   // 3. Query matching assets
   const assets = await prisma.asset.findMany({
@@ -161,8 +169,28 @@ export default async function FleetPage(props: PageProps) {
 
       {/* Assets Grid / Table */}
       {assets.length === 0 ? (
-        <div className="bg-[#121420] border border-white/5 rounded-2xl py-16 text-center text-sm text-gray-500">
-          No fleet assets matching your criteria were found.
+        <div className="bg-[#121420] border border-white/5 rounded-2xl py-16 text-center text-sm text-gray-500 space-y-2">
+          <p>No fleet assets matching your criteria were found.</p>
+          {/* An empty directory has three quite different causes and the reader
+              cannot tell them apart from a bare "none found". A site login is
+              scoped to its own site and will show nothing when that site holds no
+              machines — which looks identical to a bad search term. */}
+          {scopedTo ? (
+            <p className="text-xs text-gray-600">
+              This login only sees machines posted to <span className="text-gray-400">{scopedTo}</span>
+              {fleetTotal > 0 && <> — the fleet has {fleetTotal.toLocaleString()} machines in total.</>}
+            </p>
+          ) : q || categoryCode ? (
+            <p className="text-xs text-gray-600">
+              {fleetTotal.toLocaleString()} machines are in the fleet; none match{q && <> “{q}”</>}
+              {categoryCode && <> in {categoryCode}</>}.
+            </p>
+          ) : (
+            <p className="text-xs text-gray-600">
+              The fleet is empty. If you expected machines here, check the app is reading the
+              right database.
+            </p>
+          )}
         </div>
       ) : (
         <>

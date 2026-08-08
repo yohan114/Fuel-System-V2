@@ -1,0 +1,422 @@
+import { prisma } from "../src/lib/db";
+import * as fs from "fs";
+import * as path from "path";
+
+// Replay an exported fuel dataset into THIS database. Safe to run on a live server.
+//
+// Companion to export_fuel_data.ts. Carries issues, replenishment requests,
+// meter readings, site allocations and tank stock levels. deploy-to-vps.sh keeps
+// the server's own database, so fuel imported on a workstation has to be carried
+// across as data rather than as a file. This adds what is missing and nothing else:
+//
+//   * Never deletes or edits an existing fuel issue. Rows the operators entered
+//     on the server, and rows not present in the export, are left untouched.
+//   * Idempotent. Rows are reconciled by natural key (asset + timestamp +
+//     litres + source + price) COUNT, not mere existence — 12 vehicles legitimately
+//     refuelled twice on one day for the same litres, and those genuine repeats
+//     must survive while a re-run still adds nothing.
+//   * Foreign keys are re-resolved against this database's own ids: assets by
+//     code then plate, tanks by project code, users by username.
+//   * Every duplicate check compares dates in memory rather than filtering on
+//     them. DateTime text is not stored in one single representation here, so a
+//     `where: { <dateField>: <Date> }` filter can miss rows that are identical —
+//     a row can fail to match itself — which would silently re-insert everything.
+//
+// Tank stock is the one thing that cannot be merged: a balance is a single
+// current number, not a history, so adopting the export's figure overwrites
+// this instance's. That never happens automatically — differences are reported
+// and only applied with --adopt-balances.
+//
+//   npx tsx scripts/import_fuel_data.ts               # dry run
+//   npx tsx scripts/import_fuel_data.ts --apply
+//   npx tsx scripts/import_fuel_data.ts --apply --create-missing-assets
+//   npx tsx scripts/import_fuel_data.ts --apply --adopt-balances
+
+const APPLY = process.argv.includes("--apply");
+const CREATE_ASSETS = process.argv.includes("--create-missing-assets");
+const ADOPT_BALANCES = process.argv.includes("--adopt-balances");
+const SKIP_SAME_DAY = process.argv.includes("--skip-same-day");
+const FILE = process.argv.find((a) => a.startsWith("--file="))?.slice(7)
+  || "data/fuel-data-export.json";
+
+const alnum = (s: string) => s.replace(/[^a-z0-9]/gi, "").toUpperCase();
+const rs = (c: number) => "Rs " + (c / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+// Price is part of the identity: a handful of rows share vehicle+day+litres+
+// source but were priced differently, and without price in the key a restore
+// could put back the right NUMBER of rows with the wrong rate on one of them.
+const keyOf = (assetCode: string, iso: string, litres: number, source: string, price: number, cost: number) =>
+  `${assetCode}|${iso}|${litres}|${source}|${price}|${cost}`;
+
+
+// Print the database this run will actually touch. A server can have several
+// SQLite files side by side — the repo's committed data/app.db, a dev.db, an
+// env-configured live one — and silently reading or writing the wrong one looks
+// exactly like success while the running app sees nothing change.
+function announceDatabase(): string {
+  const url = process.env.FUEL_DATABASE_URL || process.env.DATABASE_URL || "file:./data/app.db";
+  const file = url.replace(/^file:/, "");
+  const abs = path.resolve(process.cwd(), file);
+  console.log(`  database: ${abs}${fs.existsSync(abs) ? "" : "   << DOES NOT EXIST"}`);
+  if (!process.env.FUEL_DATABASE_URL && !process.env.DATABASE_URL)
+    console.log(`  (default — set FUEL_DATABASE_URL if the running app uses a different file)`);
+  return abs;
+}
+
+async function main() {
+  console.log(`\n=== Import fuel data (${APPLY ? "APPLY" : "DRY-RUN"}) ===`);
+  announceDatabase();
+  if (!fs.existsSync(FILE)) throw new Error(`export file not found: ${FILE}`);
+  const payload = JSON.parse(fs.readFileSync(FILE, "utf8"));
+  if (payload.kind !== "fuel-data-export" && payload.kind !== "fuel-issues-export")
+    throw new Error(`not a fuel export: ${FILE}`);
+  console.log(`  file ${FILE} · exported ${payload.exportedAt} · ${payload.issues.length} issues\n`);
+
+  // ---------------------------------------------------------------- referents
+  // Two instances can hold the same site under different codes — one calls
+  // Awissawella "AWIS", the other something else — while Project.name is unique.
+  // Matching on code alone then tries to create a duplicate name and the whole
+  // import dies on a constraint. Match by code first, then by name.
+  const norm = (s: string) => String(s || "").trim().toLowerCase();
+  const allProjects = await prisma.project.findMany();
+  const projByCode = new Map(allProjects.map((p) => [p.code, p]));
+  const projByName = new Map(allProjects.map((p) => [norm(p.name), p]));
+  const tanksByName = new Map((await prisma.bulkTank.findMany()).map((t) => [norm(t.name), t]));
+  const tankByProj = new Map<string, { id: string }>();
+  // The export names sites by ITS code; this database may file the same site
+  // under another. Remember the resolution so anything else keyed by the export's
+  // code — site allocations especially — lands on the right site instead of being
+  // dropped for a site that is present under a different name.
+  const projByExportCode = new Map<string, { id: string; code: string }>();
+
+  // Resolve every site the export knows about first, so allocations for a site
+  // with no pump of its own still have somewhere to land.
+  for (const pr of payload.projects || []) {
+    if (projByCode.has(pr.code) || projByName.has(norm(pr.name))) {
+      projByExportCode.set(pr.code, (projByCode.get(pr.code) || projByName.get(norm(pr.name)))!);
+      continue;
+    }
+    console.log(`  site ${pr.code} (${pr.name}) missing${APPLY ? " — creating" : " — would create"}`);
+    if (APPLY) {
+      let made;
+      try { made = await prisma.project.create({ data: { code: pr.code, name: pr.name } }); }
+      catch {
+        made = await prisma.project.findFirst({ where: { OR: [{ code: pr.code }, { name: pr.name }] } });
+        if (!made) continue;
+      }
+      projByCode.set(made.code, made); projByName.set(norm(made.name), made);
+      projByExportCode.set(pr.code, made);
+    }
+  }
+
+  for (const t of payload.tanks || []) {
+    if (!t.projectCode) continue;          // unattached tank: nothing to resolve against
+    let proj = projByCode.get(t.projectCode) || projByName.get(norm(t.projectName));
+    if (proj && proj.code !== t.projectCode)
+      console.log(`  site "${t.projectName}" is ${proj.code} here, ${t.projectCode} in the export — using ${proj.code}`);
+    if (!proj) {
+      console.log(`  project ${t.projectCode} (${t.projectName}) missing${APPLY ? " — creating" : " — would create"}`);
+      if (APPLY) {
+        try {
+          proj = await prisma.project.create({ data: { code: t.projectCode, name: t.projectName } });
+        } catch {
+          // lost a race, or the name exists under a code we have not seen
+          const found = await prisma.project.findFirst({ where: { OR: [{ code: t.projectCode }, { name: t.projectName }] } });
+          if (!found) throw new Error(`could not create or find project ${t.projectCode} (${t.projectName})`);
+          proj = found;
+          console.log(`    -> matched existing ${proj.code}`);
+        }
+        projByCode.set(proj.code, proj); projByName.set(norm(proj.name), proj);
+      }
+    }
+    if (!proj) continue;
+
+    let tank = (await prisma.bulkTank.findFirst({ where: { projectId: proj.id } }))
+      ?? tanksByName.get(norm(t.tankName)) ?? null;
+    if (!tank) {
+      console.log(`  tank for ${proj.code} missing${APPLY ? " — creating" : " — would create"}`);
+      if (APPLY) {
+        try {
+          tank = await prisma.bulkTank.create({ data: {
+            name: t.tankName, fuelKind: t.fuelKind, capacity: t.capacity ?? 15000, balance: 0, projectId: proj.id } });
+        } catch {
+          const found = await prisma.bulkTank.findFirst({ where: { name: t.tankName } });
+          if (!found) throw new Error(`could not create or find tank "${t.tankName}"`);
+          tank = found;
+        }
+        tanksByName.set(norm(tank.name), tank);
+      }
+    }
+    if (tank) tankByProj.set(t.projectCode, tank);
+    projByExportCode.set(t.projectCode, proj);
+  }
+
+  const assets = await prisma.asset.findMany({ select: { id: true, code: true, regNo: true } });
+  const byCode = new Map(assets.map((a) => [alnum(a.code), a]));
+  const byReg = new Map(assets.filter((a) => a.regNo).map((a) => [alnum(a.regNo!), a]));
+
+  const users = new Map((await prisma.user.findMany({ select: { id: true, username: true, role: true } })).map((u) => [u.username, u]));
+  const fallbackAdmin = [...users.values()].find((u) => u.role === "ADMIN");
+  if (!fallbackAdmin) throw new Error("no ADMIN user in this database to attribute imported issues to");
+
+  const priceRows = await prisma.fuelPrice.findMany({ select: { id: true, fuelKind: true, effectiveFrom: true } });
+  const priceByKey = new Map(priceRows.map((p) => [`${p.fuelKind}|${p.effectiveFrom.toISOString()}`, p]));
+
+  // ------------------------------------------------- what this database has
+  const live = await prisma.fuelIssue.findMany({
+    select: { litres: true, source: true, issueDate: true, pricePerLitre: true, totalCost: true,
+              asset: { select: { code: true } } } });
+  const liveCount = new Map<string, number>();
+  for (const f of live) {
+    const k = keyOf(f.asset.code, f.issueDate.toISOString(), f.litres, f.source, f.pricePerLitre, f.totalCost);
+    liveCount.set(k, (liveCount.get(k) || 0) + 1);
+  }
+  console.log(`  this database already holds ${live.length} fuel issues\n`);
+
+  // Cross-instance duplicates do not share a timestamp. Rows imported from
+  // paperwork sit at Colombo midnight; rows an operator typed carry the real
+  // time of day. The same refuel therefore looks different to the exact key, and
+  // would be inserted a second time. Matching on the calendar day instead catches
+  // it — but a vehicle can legitimately draw the same litres at its site and
+  // again at the workshop on one day, so this reports by default and only skips
+  // when asked.
+  const dayOf = (iso: string) => iso.slice(0, 10);
+  const liveDay = new Map<string, number>();
+  for (const f of live) {
+    const k = `${f.asset.code}|${dayOf(f.issueDate.toISOString())}|${f.litres}`;
+    liveDay.set(k, (liveDay.get(k) || 0) + 1);
+  }
+
+  // ------------------------------------------------------------- reconcile
+  const emitted = new Map<string, number>();   // export rows of each key seen so far
+  let created = 0, present = 0, missingAsset = 0, missingTank = 0, missingCategory = 0, litres = 0, cost = 0;
+  let sameDay = 0, sameDayLitres = 0;
+  const sameDaySamples: string[] = [];
+  const dayEmitted = new Map<string, number>();
+  const unmatched = new Map<string, number>();
+  const createdAssets: string[] = [];
+  const assetMeta = new Map<string, any>((payload.assets || []).map((a: any) => [a.code, a]));
+
+  for (const i of payload.issues) {
+    // For a key the export holds W times and this database holds L times, the
+    // first L export rows are covered by what is already here and the rest are
+    // new. Counting rather than testing existence is what preserves the genuine
+    // twice-in-a-day refuels while keeping a re-run a no-op.
+    const k = keyOf(i.asset, i.date, i.litres, i.source, i.pricePerLitre, i.totalCost);
+    const already = liveCount.get(k) || 0;
+    const done = emitted.get(k) || 0;
+    emitted.set(k, done + 1);
+    if (done < already) { present++; continue; }
+
+    // Not an exact match — but is the same vehicle already recorded taking the
+    // same litres on the same day, under another label?
+    const dk = `${i.asset}|${dayOf(i.date)}|${i.litres}`;
+    const dayHits = liveDay.get(dk) || 0;
+    const dayUsed = dayEmitted.get(dk) || 0;
+    if (dayHits > dayUsed) {
+      dayEmitted.set(dk, dayUsed + 1);
+      sameDay++;
+      sameDayLitres += i.litres;
+      if (sameDaySamples.length < 12) sameDaySamples.push(`${i.asset} ${dayOf(i.date)} ${i.litres}L`);
+      if (SKIP_SAME_DAY) continue;
+    }
+
+    let asset = byCode.get(alnum(i.asset)) || (i.regNo ? byReg.get(alnum(i.regNo)) : undefined);
+    if (!asset) {
+      const meta = assetMeta.get(i.asset);
+      if (CREATE_ASSETS && meta) {
+        if (APPLY) {
+          // Categories carry PM schedules and service intervals, so one is never
+          // invented here — a fabricated category would hand the vehicle a wrong
+          // maintenance plan. Match this database's own categories or give up.
+          const cat = (meta.categoryCode ? await prisma.category.findUnique({ where: { code: meta.categoryCode } }) : null)
+            || (meta.category ? await prisma.category.findFirst({ where: { name: meta.category } }) : null)
+            || await prisma.category.findFirst({ where: { name: "Other Asset" } });
+          if (!cat) {
+            missingCategory++;
+            unmatched.set(i.asset, (unmatched.get(i.asset) || 0) + 1);
+            continue;
+          }
+          const proj = meta.project ? projByCode.get(meta.project) : null;
+          const made = await prisma.asset.create({ data: {
+            code: meta.code, regNo: meta.regNo, typeLabel: meta.typeLabel,
+            status: meta.status || "ACTIVE", meterType: meta.meterType || "KM",
+            ownership: meta.ownership || "OWNED", categoryId: cat.id, projectId: proj?.id ?? null } });
+          asset = { id: made.id, code: made.code, regNo: made.regNo };
+          byCode.set(alnum(made.code), asset);
+          if (made.regNo) byReg.set(alnum(made.regNo), asset);
+        } else {
+          asset = { id: "(dry-run)", code: i.asset, regNo: i.regNo ?? null };
+        }
+        createdAssets.push(i.asset);
+      } else {
+        missingAsset++;
+        unmatched.set(i.asset, (unmatched.get(i.asset) || 0) + 1);
+        continue;
+      }
+    }
+
+    const tank = i.tankProject ? tankByProj.get(i.tankProject) : undefined;
+    if (i.tankProject && !tank && APPLY) { missingTank++; continue; }
+
+    if (APPLY) {
+      await prisma.fuelIssue.create({ data: {
+        fuelKind: i.fuelKind,
+        litres: i.litres,
+        meterReading: i.meterReading ?? null,
+        readingType: i.readingType ?? null,
+        pricePerLitre: i.pricePerLitre,
+        totalCost: i.totalCost,
+        source: i.source,
+        issueDate: new Date(i.date),
+        issuePerson: i.issuePerson ?? null,
+        voided: !!i.voided,
+        voidedAt: i.voidedAt ? new Date(i.voidedAt) : null,
+        assetId: asset.id,
+        issuedById: (i.issuedBy && users.get(i.issuedBy)?.id) || fallbackAdmin.id,
+        fuelPriceId: i.priceEffectiveFrom
+          ? (priceByKey.get(`${i.fuelKind}|${i.priceEffectiveFrom}`)?.id ?? null) : null,
+        bulkTankId: tank?.id ?? null,
+      }});
+    }
+    emitted.set(k, done + 1);
+    created++; litres += i.litres; cost += i.totalCost;
+  }
+
+  // ------------------------------------------------- replenishment requests
+  // A pump's stock level is meaningless without the deliveries that filled it,
+  // so these travel with the issues. Matched on tank + litres + submission
+  // time, which is unique in practice for a delivery.
+  // Matching happens in memory, never through a date-equality filter: this
+  // database holds DateTime text in more than one representation, so `where:
+  // { createdAt: <Date> }` misses rows that are in fact identical — a row can
+  // fail to find itself. Reading the dates back and comparing them as ISO
+  // strings is exact, and one query beats one per row.
+  const liveReq = new Set((await prisma.bulkRequest.findMany({
+    select: { requestedLitres: true, createdAt: true, bulkTank: { select: { name: true } } } }))
+    .map((r) => `${r.bulkTank.name}|${r.requestedLitres}|${r.createdAt.toISOString()}`));
+  let reqAdded = 0, reqPresent = 0, reqNoTank = 0;
+  for (const b of payload.bulkRequests || []) {
+    const tank = tanksByName.get(norm(b.tank));
+    if (!tank) { reqNoTank++; continue; }
+    const when = new Date(b.createdAt);
+    const rk = `${b.tank}|${b.litres}|${when.toISOString()}`;
+    if (liveReq.has(rk)) { reqPresent++; continue; }
+    liveReq.add(rk);
+    if (APPLY) {
+      const src = b.sourceTank ? tanksByName.get(norm(b.sourceTank)) : null;
+      await prisma.bulkRequest.create({ data: {
+        fuelKind: b.fuelKind, requestedLitres: b.litres, status: b.status,
+        createdAt: when, sourceType: b.sourceType || "OUTSIDE", sourceTankId: src?.id ?? null,
+        bulkTankId: tank.id,
+        requestedById: (b.requestedBy && users.get(b.requestedBy)?.id) || fallbackAdmin.id,
+        reviewedById: (b.reviewedBy && users.get(b.reviewedBy)?.id) || null,
+        reviewedAt: b.reviewedAt ? new Date(b.reviewedAt) : null,
+        reviewNote: b.reviewNote ?? null,
+      }});
+    }
+    reqAdded++;
+  }
+
+  // ---------------------------------------------------------- site allocations
+  // Where a vehicle's cost lands, and from when. Matched on vehicle + site +
+  // start date, so a re-run adds nothing and an allocation the server already
+  // has is never disturbed.
+  const liveAsg = new Set((await prisma.assetAssignment.findMany({
+    select: { startDate: true, asset: { select: { code: true } }, project: { select: { code: true } } } }))
+    .map((a) => `${a.asset.code}|${a.project.code}|${a.startDate.toISOString()}`));
+  let asgAdded = 0, asgPresent = 0, asgNoAsset = 0, asgNoProject = 0;
+  for (const a of payload.assignments || []) {
+    const asset = byCode.get(alnum(a.asset));
+    if (!asset) { asgNoAsset++; continue; }
+    const proj = projByCode.get(a.project) || projByExportCode.get(a.project);
+    if (!proj) { asgNoProject++; continue; }
+    const start = new Date(a.startDate);
+    const ak = `${asset.code}|${a.project}|${start.toISOString()}`;
+    if (liveAsg.has(ak)) { asgPresent++; continue; }
+    liveAsg.add(ak);
+    if (APPLY) await prisma.assetAssignment.create({ data: {
+      assetId: asset.id, projectId: proj.id,
+      startDate: start, endDate: a.endDate ? new Date(a.endDate) : null,
+      note: a.note ?? null, driverName: a.driverName ?? null, billingType: a.billingType ?? null,
+      createdById: (a.createdBy && users.get(a.createdBy)?.id) || fallbackAdmin.id,
+    }});
+    asgAdded++;
+  }
+
+  // ------------------------------------------------------------ meter readings
+  const liveMr = new Set((await prisma.meterReading.findMany({
+    select: { value: true, readingDate: true, asset: { select: { code: true } } } }))
+    .map((m) => `${m.asset.code}|${m.readingDate.toISOString()}|${m.value}`));
+  let mrAdded = 0, mrPresent = 0, mrNoAsset = 0;
+  for (const m of payload.meterReadings || []) {
+    const asset = byCode.get(alnum(m.asset));
+    if (!asset) { mrNoAsset++; continue; }
+    const when = new Date(m.readingDate);
+    const mk = `${asset.code}|${when.toISOString()}|${m.value}`;
+    if (liveMr.has(mk)) { mrPresent++; continue; }
+    liveMr.add(mk);
+    if (APPLY) await prisma.meterReading.create({ data: {
+      value: m.value, readingType: m.readingType, readingDate: when, source: m.source || "MANUAL",
+      assetId: asset.id,
+      recordedById: (m.recordedBy && users.get(m.recordedBy)?.id) || fallbackAdmin.id,
+    }});
+    mrAdded++;
+  }
+
+  // -------------------------------------------------------------- tank stock
+  // A balance is a single current number, not a history — merging two of them is
+  // meaningless, so adopting the export's figure overwrites this instance's and
+  // is never automatic. Only tanks whose balance actually differs are touched.
+  const balanceChanges: string[] = [];
+  for (const t of payload.tanks || []) {
+    if (typeof t.balance !== "number") continue;
+    const tank = await prisma.bulkTank.findFirst({ where: { name: t.tankName }, select: { id: true, balance: true } });
+    if (!tank || tank.balance === t.balance) continue;   // name is unique; balance is a plain number, safe to compare
+    balanceChanges.push(`${t.tankName}: ${tank.balance} L → ${t.balance} L`);
+    if (APPLY && ADOPT_BALANCES) await prisma.bulkTank.update({ where: { id: tank.id }, data: { balance: t.balance } });
+  }
+
+  // ------------------------------------------------------------------ report
+  console.log(`=== RESULT ===`);
+  console.log(`  ${APPLY ? "added" : "would add"}: ${created} issues · ${litres.toFixed(0)} L · ${rs(cost)}`);
+  console.log(`  already present, left alone: ${present}`);
+  if (sameDay) {
+    console.log(`\n  ${sameDay} row(s) (${sameDayLitres.toFixed(0)} L) match a vehicle already recorded taking`);
+    console.log(`  the same litres on the same day, under a different label or time —`);
+    console.log(`  ${SKIP_SAME_DAY ? "SKIPPED as duplicates." : "TREATED AS NEW and included above."}`);
+    for (const x of sameDaySamples) console.log(`      ${x}`);
+    if (!SKIP_SAME_DAY) console.log(`  Re-run with --skip-same-day to leave them out.`);
+  }
+  if (createdAssets.length) console.log(`  assets ${APPLY ? "created" : "to create"}: ${createdAssets.length} (${[...new Set(createdAssets)].slice(0, 12).join(", ")}${createdAssets.length > 12 ? " …" : ""})`);
+  if (missingAsset) {
+    console.log(`\n  SKIPPED — ${missingAsset} issues for ${unmatched.size} vehicles not in this database:`);
+    for (const [c, n] of [...unmatched].sort((a, b) => b[1] - a[1]).slice(0, 20)) console.log(`      ${c.padEnd(14)} ${n} issues`);
+    console.log(`  Re-run with --create-missing-assets to add those vehicles and their fuel.`);
+  }
+  if (missingTank) console.log(`  SKIPPED — ${missingTank} issues whose tank could not be resolved`);
+  if (missingCategory) console.log(`  SKIPPED — ${missingCategory} issues whose vehicle category does not exist here (import the fleet first)`);
+
+  console.log(`\n  replenishments: ${APPLY ? "added" : "would add"} ${reqAdded}, already present ${reqPresent}` +
+    (reqNoTank ? `, skipped ${reqNoTank} with no matching tank` : ""));
+  console.log(`  meter readings: ${APPLY ? "added" : "would add"} ${mrAdded}, already present ${mrPresent}` +
+    (mrNoAsset ? `, skipped ${mrNoAsset} with no matching vehicle` : ""));
+  console.log(`  site allocations: ${APPLY ? "added" : "would add"} ${asgAdded}, already present ${asgPresent}` +
+    (asgNoAsset ? `, skipped ${asgNoAsset} with no matching vehicle` : "") +
+    (asgNoProject ? `, skipped ${asgNoProject} with no matching site` : ""));
+  if (balanceChanges.length) {
+    if (ADOPT_BALANCES) console.log(`\n  tank stock ${APPLY ? "set" : "would be set"} from the export (${balanceChanges.length} tanks):`);
+    else console.log(`\n  tank stock DIFFERS on ${balanceChanges.length} tanks — not changed (pass --adopt-balances to take the export's figures):`);
+    for (const c of balanceChanges.slice(0, 15)) console.log(`      ${c}`);
+    if (balanceChanges.length > 15) console.log(`      … and ${balanceChanges.length - 15} more`);
+  } else console.log(`\n  tank stock: identical on every tank`);
+
+  const after = await prisma.fuelIssue.count();
+  console.log(`\n  fuel issues in this database now: ${after}`);
+  if (!APPLY) console.log(`\nDRY-RUN — nothing written. Re-run with --apply\n`);
+  else console.log(`\nDone. No existing row was modified or deleted.` +
+    (ADOPT_BALANCES ? ` Tank stock adopted from the export.\n` : ` Tank stock untouched.\n`));
+
+  await prisma.$disconnect();
+}
+
+main().catch(async (e) => { console.error(e); await prisma.$disconnect(); process.exit(1); });

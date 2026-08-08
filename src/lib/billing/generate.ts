@@ -1,4 +1,4 @@
-import type { Asset, Bill, Category, Project, RentalRate } from "@prisma/client";
+import type { Asset, Bill, Category, Prisma, Project, RentalRate } from "@prisma/client";
 import { prisma } from "../db";
 import { getBillingConfig, minimumForMode, type BillingConfig } from "./config";
 import { resolvePeriod, type BillingPeriod } from "./period";
@@ -9,15 +9,19 @@ import {
   computeWindowDelta,
   sumFuelForWindow,
 } from "./usage";
-import { pickRateCents, defaultModeForAsset } from "./rate";
+import { pickRateCents, defaultModeForAsset, resolveRateBasis, basisFromBillingType } from "./rate";
 import { computeTotals, unitLabel, basisLabel, type BillingMode, type RateBasis } from "./calc";
-import { getMonthSegments, type MonthSegment } from "../assignments";
+import { computeSegmentedTotals, type SegmentInput } from "./segmented";
+import { attributeSegmentFuel } from "./fuel-attribution";
+import { buildBillSnapshot } from "./revisions";
+import { getMonthSegments, assetHasAssignments, type MonthSegment } from "../assignments";
 
 export type GenerateStatus =
   | "created"
   | "regenerated"
   | "skipped-finalized"
   | "skipped-existing"
+  | "skipped-not-here"
   | "no-rate";
 
 export interface GenerateOptions {
@@ -26,6 +30,7 @@ export interface GenerateOptions {
   assetIds?: string[];
   regenerate?: boolean;
   actorId?: string | null;
+  basis?: RateBasis; // force every bill in this run onto one hire basis
 }
 
 export interface AssetOutcome {
@@ -43,6 +48,7 @@ export interface GenerateResult {
   regenerated: number;
   skippedFinalized: number;
   skippedExisting: number;
+  skippedNotHere: number;
   noRate: number;
   errors: { assetId: string; assetCode?: string; message: string }[];
   assets: AssetOutcome[];
@@ -100,11 +106,34 @@ async function resolveProjectForAssetMonth(
   return defaultProject;
 }
 
+// Capture the current persisted state of a DRAFT bill as a BillRevision row
+// before a regenerate overwrites it, preserving an auditable trail of every
+// prior invoice figure. Runs inside the regenerate transaction, before the old
+// line items are deleted, so it sees the bill exactly as it stood.
+async function snapshotPriorRevision(
+  tx: Prisma.TransactionClient,
+  existing: Bill,
+  actorId: string | null,
+): Promise<void> {
+  const priorLines = await tx.billLineItem.findMany({ where: { billId: existing.id } });
+  const priorCount = await tx.billRevision.count({ where: { billId: existing.id } });
+  await tx.billRevision.create({
+    data: {
+      billId: existing.id,
+      revision: priorCount + 1,
+      snapshotJson: JSON.stringify(buildBillSnapshot(existing, priorLines)),
+      subtotalCents: existing.subtotalCents,
+      grandTotalCents: existing.grandTotalCents,
+      createdById: actorId,
+    },
+  });
+}
+
 // Generates (or regenerates a DRAFT) bill for one asset for the given period.
 export async function generateBillForAsset(
   assetId: string,
   period: BillingPeriod,
-  opts: { regenerate: boolean; actorId?: string | null }
+  opts: { regenerate: boolean; actorId?: string | null; basis?: RateBasis }
 ): Promise<{ status: GenerateStatus; billId?: string }> {
   const cfg = await getBillingConfig();
 
@@ -113,7 +142,10 @@ export async function generateBillForAsset(
     include: { category: true, project: true, rentalRate: true },
   });
   if (!asset) throw new Error("Asset not found");
-  if (!asset.rentalRate) return { status: "no-rate" };
+  // A fuel-only vehicle (privately owned, E&C fuels but does not rent) bills its
+  // issued fuel without a rate card, so it is allowed through the no-rate gate.
+  if (!asset.rentalRate && !asset.billFuelOnly) return { status: "no-rate" };
+  const fuelOnly = asset.billFuelOnly;
 
   const existing = await prisma.bill.findUnique({
     where: { assetId_year_month: { assetId, year: period.year, month: period.month } },
@@ -131,13 +163,29 @@ export async function generateBillForAsset(
   // are resolved up front for both the per-site (assignment-driven) and the
   // legacy single-site billing paths.
   const billingMode: BillingMode = (existing?.billingMode as BillingMode) ||
-    defaultModeForAsset(asset.meterType, asset.rentalRate.equipType);
-  // Default to the Wet basis (machine + driver, no fuel baked into the rate);
-  // the vehicle's actual monthly fuel total is billed as a separate line.
-  const rateBasis: RateBasis = (existing?.rateBasis as RateBasis) || "w";
-  const minimumUnits = existing ? existing.minimumUnits : minimumForMode(cfg, billingMode);
+    defaultModeForAsset(asset.meterType, asset.rentalRate?.equipType ?? "");
 
-  const pickedRate = pickRateCents(asset.rentalRate, billingMode, rateBasis);
+  // PER-SITE PATH: when the vehicle has saved assignments overlapping this month,
+  // split the month into one segment per site and bill each site for its slice.
+  // Fetched up front because an allocation can also carry a per-allocation
+  // Dry/Wet hire type and a driver, which drive the bill basis below.
+  const segments = await getMonthSegments(asset.id, period.start, period.end);
+  // The allocation covering the most days in the month sets the hire type and
+  // driver (a manually-allocated site is billed exactly as it was allocated).
+  const dominant = [...segments].sort((a, b) => b.days - a.days)[0] ?? null;
+  const allocBasis: RateBasis | undefined = basisFromBillingType(dominant?.billingType);
+  const driverName = dominant?.driverName ?? null;
+
+  // Basis: a forced run-level choice (whole-month "generate as Dry/Wet") wins;
+  // otherwise the allocation's Dry/Wet type → explicit draft choice → vehicle
+  // default → Wet. Dry bills the dry rate with no fuel; Wet adds the fuel cost.
+  const rateBasis: RateBasis = opts.basis ?? allocBasis ?? resolveRateBasis(existing?.rateBasis, asset.rentalRate?.defaultBasis);
+  // A per-asset minimum working-hours floor (set on hired machines) overrides
+  // the global billing.minHours for that machine's hourly bills.
+  const assetMinHours = billingMode === "hourly" && asset.minBillHours != null && asset.minBillHours > 0 ? asset.minBillHours : null;
+  const minimumUnits = existing ? existing.minimumUnits : (assetMinHours ?? minimumForMode(cfg, billingMode));
+
+  const pickedRate = asset.rentalRate ? pickRateCents(asset.rentalRate, billingMode, rateBasis) : null;
   const rateCents = pickedRate ?? 0;
 
   // Count breakdown days in period (used for display + deduction).
@@ -145,12 +193,6 @@ export async function generateBillForAsset(
     where: { assetId: asset.id, status: "BREAKDOWN", logDate: { gte: period.start, lte: period.end } },
   });
 
-  // PER-SITE PATH: when the vehicle has saved assignments overlapping this month,
-  // split the month into one segment per site and bill each site for its slice
-  // (minimum prorated by days, fuel attributed by issue date). Vehicles with no
-  // assignment fall through to the legacy single-site path, so previously
-  // generated bills are reproduced unchanged.
-  const segments = await getMonthSegments(asset.id, period.start, period.end);
   if (segments.length > 0) {
     return persistSegmentedBill({
       asset,
@@ -160,11 +202,13 @@ export async function generateBillForAsset(
       cfg,
       billingMode,
       rateBasis,
+      driverName,
       minimumUnits,
       rateCents,
       pickedRate,
       breakdownDays,
       segments,
+      fuelOnly,
       actorId: opts.actorId ?? null,
     });
   }
@@ -194,6 +238,20 @@ export async function generateBillForAsset(
 
   const fuel = await sumFuelForMonth(asset.id, period.start, period.end, projectCode);
 
+  // Phantom-bill guard. We are on the legacy single-site path, which means the
+  // vehicle had NO assignment overlapping this month, so the project was taken
+  // from its (possibly stale) current pin. If the vehicle has moved between
+  // sites at all (it owns assignments, just none this month) and shows no
+  // measurable activity at the pinned project — no fuel issued there, no meter
+  // movement / working days — there is no evidence it was on this site, so it
+  // must not be billed a guaranteed minimum here. This stops a vehicle that has
+  // since left (e.g. arrives at a new site next month) from appearing on its
+  // old site's consolidated invoice. Truly never-assigned vehicles are exempt,
+  // preserving back-compat.
+  if (fuel.litres === 0 && actualUnits === 0 && (await assetHasAssignments(asset.id))) {
+    return { status: "skipped-not-here", billId: existing?.id };
+  }
+
   const actualMeterUnits = actualUnits;
   let derivedStandardUnits: number | null = null;
   let derivedEconUnits: number | null = null;
@@ -201,7 +259,7 @@ export async function generateBillForAsset(
   if (
     fuel.litres > 0 &&
     (billingMode === "hourly" || billingMode === "perkm") &&
-    asset.rentalRate.fuelConsTyp != null &&
+    asset.rentalRate?.fuelConsTyp != null &&
     asset.rentalRate.fuelConsTyp > 0
   ) {
     const fuelConsTyp = asset.rentalRate.fuelConsTyp;
@@ -254,13 +312,15 @@ export async function generateBillForAsset(
     fuelCostCents: fuel.costCents,
     ssclRate: cfg.ssclRate,
     vatRate: cfg.vatRate,
+    fuelOnly,
   });
 
   const unit = unitLabel(billingMode);
   const assetLabel =
     [asset.brand, asset.model].filter(Boolean).join(" ").trim() || asset.category.name;
 
-  // Line items: rental always, fuel only when actually charged (fw + litres),
+  // Line items: rental always (except fuel-only vehicles, which carry no rental
+  // line), fuel only when actually charged (fw/w + litres, or fuel-only),
   // breakdown deduction as ADJUSTMENT when applicable.
   const lineItems: {
     kind: string;
@@ -269,8 +329,9 @@ export async function generateBillForAsset(
     unit: string;
     unitRateCents: number;
     amountCents: number;
-  }[] = [
-    {
+  }[] = [];
+  if (!fuelOnly) {
+    lineItems.push({
       kind: "RENTAL",
       description: pickedRate == null
         ? `Machine rental (no rate card tier for ${billingMode}/${rateBasis})`
@@ -279,13 +340,15 @@ export async function generateBillForAsset(
       unit,
       unitRateCents: rateCents,
       amountCents: totals.rentalAmountCents,
-    },
-  ];
+    });
+  }
   if (totals.fuelChargedCents > 0) {
     const avgPerL = fuel.litres > 0 ? Math.round(fuel.costCents / fuel.litres) : 0;
     lineItems.push({
       kind: "FUEL",
-      description: `Fuel issued — monthly total, all sites (${basisLabel(rateBasis)})`,
+      description: fuelOnly
+        ? `Fuel issued — monthly total, all sites (E&C-supplied, fuel only)`
+        : `Fuel issued — monthly total, all sites (${basisLabel(rateBasis)})`,
       quantity: fuel.litres,
       unit: "L",
       unitRateCents: avgPerL,
@@ -318,6 +381,7 @@ export async function generateBillForAsset(
     projectCode,
     billingMode,
     rateBasis,
+    driverName,
     rateCents,
     openingMeter,
     closingMeter,
@@ -341,13 +405,15 @@ export async function generateBillForAsset(
     actualMeterUnits,
     derivedStandardUnits,
     derivedEconUnits,
-    fuelConsEconSnapshot: asset.rentalRate.fuelConsEcon,
-    fuelConsTypSnapshot: asset.rentalRate.fuelConsTyp,
+    fuelConsEconSnapshot: asset.rentalRate?.fuelConsEcon ?? null,
+    fuelConsTypSnapshot: asset.rentalRate?.fuelConsTyp ?? null,
+    fuelConsHeavySnapshot: asset.rentalRate?.fuelConsHeavy ?? null,
   };
 
   const billId = await prisma.$transaction(async (tx) => {
     let id: string;
     if (existing) {
+      await snapshotPriorRevision(tx, existing, opts.actorId ?? null);
       await tx.billLineItem.deleteMany({ where: { billId: existing.id } });
       await tx.bill.update({
         where: { id: existing.id },
@@ -377,17 +443,19 @@ export async function generateBillForAsset(
 
 interface SegmentedArgs {
   asset: Asset & { category: Category; project: Project | null };
-  rentalRate: RentalRate;
+  rentalRate: RentalRate | null; // null only for fuel-only vehicles (no rate card)
   period: BillingPeriod;
   existing: Bill | null;
   cfg: BillingConfig;
   billingMode: BillingMode;
   rateBasis: RateBasis;
+  driverName: string | null;
   minimumUnits: number;
   rateCents: number;
   pickedRate: number | null;
   breakdownDays: number;
   segments: MonthSegment[];
+  fuelOnly: boolean;
   actorId: string | null;
 }
 
@@ -399,167 +467,101 @@ interface SegmentedArgs {
 async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: GenerateStatus; billId?: string }> {
   const {
     asset, rentalRate, period, existing, cfg,
-    billingMode, rateBasis, minimumUnits, rateCents, pickedRate, breakdownDays, segments, actorId,
+    billingMode, rateBasis, driverName, minimumUnits, rateCents, pickedRate, breakdownDays, segments, fuelOnly, actorId,
   } = args;
 
-  const unit = unitLabel(billingMode);
   const isMeter = billingMode === "hourly" || billingMode === "perkm";
   const meterType: "KM" | "HOURS" = billingMode === "perkm" ? "KM" : "HOURS";
-  const chargesFuel = rateBasis === "fw" || rateBasis === "w";
-  const totalDays = segments.reduce((s, seg) => s + seg.days, 0) || 1;
 
-  type Line = {
-    kind: string; description: string; quantity: number; unit: string;
-    unitRateCents: number; amountCents: number; projectId: string | null; projectName: string | null;
-  };
-  const rentalLines: Line[] = [];
-  const fuelLines: Line[] = [];
-
-  let actualUnitsSum = 0;
-  let rawMeterSum = 0;
-  let derivedStdSum = 0;
-  let derivedEconSum = 0;
-  let billableSum = 0;
-  let rentalSum = 0;
-  let litresSum = 0;
-  let fuelCostSum = 0;
-  let derivedFromFuel = false;
-  let fuelConsMidRate: number | null = null;
+  // Gather each segment's raw facts from the DB (meter movement / working days,
+  // fuel). All money math then happens in the pure computeSegmentedTotals so it
+  // is provable and the line items are the single source of truth.
+  const segInputs: SegmentInput[] = [];
   let openingMeter: number | null = null;
   let closingMeter: number | null = null;
-
+  let potLitres = 0;
+  let potCents = 0;
   for (const seg of segments) {
-    const minShare = minimumUnits * (seg.days / totalDays);
-
-    let rawSeg = 0;
-    let actualSeg = 0;
+    let rawUnits = 0;
     if (isMeter) {
       const rd = await computeWindowDelta(asset.id, meterType, seg.start, seg.end, seg.projectCode);
-      rawSeg = rd.delta;
-      actualSeg = rd.delta;
+      rawUnits = rd.delta;
       if (openingMeter === null && rd.opening != null) openingMeter = rd.opening;
       if (rd.closing != null) closingMeter = rd.closing;
     } else {
-      rawSeg = await countWorkingDays(asset.id, seg.start, seg.end);
-      actualSeg = rawSeg;
+      rawUnits = await countWorkingDays(asset.id, seg.start, seg.end);
     }
-
     const fuelSeg = await sumFuelForWindow(asset.id, seg.start, seg.end);
-
-    // Fuel-derived units: when metered movement is missing/low but fuel was
-    // burnt, back the units out of the consumption rate (mirrors the legacy
-    // single-site logic, applied per segment).
-    let dStd: number | null = null;
-    let dEcon: number | null = null;
-    let segDerived = false;
-    if (
-      isMeter &&
-      fuelSeg.litres > 0 &&
-      rentalRate.fuelConsTyp != null &&
-      rentalRate.fuelConsTyp > 0
-    ) {
-      dStd = fuelSeg.litres / rentalRate.fuelConsTyp;
-      if (rentalRate.fuelConsEcon && rentalRate.fuelConsEcon > 0) {
-        dEcon = fuelSeg.litres / rentalRate.fuelConsEcon;
-      }
-
-      const tolerance = billingMode === "hourly" ? 10 : 50;
-      if (Math.abs(actualSeg - dStd) <= tolerance) {
-        // Within tolerance - keep actual
-      } else {
-        // Outside tolerance - override
-        actualSeg = dStd;
-        segDerived = true;
-        derivedFromFuel = true;
-        fuelConsMidRate = rentalRate.fuelConsTyp;
-      }
-    }
-
-    if (billingMode === "hourly") {
-      const maxSegHours = 720 * (seg.days / totalDays);
-      if (actualSeg > maxSegHours) {
-        actualSeg = maxSegHours;
-      }
-    }
-
-    if (billingMode === "perkm") {
-      const maxSegKm = 200 * seg.days;
-      if (actualSeg > maxSegKm) {
-        actualSeg = maxSegKm;
-      }
-    }
-
-    const billableSeg = Math.max(actualSeg, minShare);
-    const rentalSeg = Math.round(billableSeg * rateCents);
-
-    rawMeterSum += rawSeg;
-    actualUnitsSum += actualSeg;
-    derivedStdSum += dStd ?? 0;
-    derivedEconSum += dEcon ?? 0;
-    billableSum += billableSeg;
-    rentalSum += rentalSeg;
-    litresSum += fuelSeg.litres;
-    fuelCostSum += fuelSeg.costCents;
-
-    rentalLines.push({
-      kind: "RENTAL",
-      description: pickedRate == null
-        ? `Machine rental — ${seg.projectCode} (no rate tier for ${billingMode}/${rateBasis})`
-        : `Machine rental — ${seg.projectCode} · ${billingMode} (${rateBasis.toUpperCase()}) · ${seg.days} day${seg.days !== 1 ? "s" : ""}${segDerived ? " [units incl. fuel]" : ""}`,
-      quantity: billableSeg,
-      unit,
-      unitRateCents: rateCents,
-      amountCents: rentalSeg,
+    potLitres += fuelSeg.litres;
+    potCents += fuelSeg.costCents;
+    segInputs.push({
       projectId: seg.projectId,
       projectName: seg.projectName,
-    });
-
-    if (chargesFuel && fuelSeg.litres > 0) {
-      fuelLines.push({
-        kind: "FUEL",
-        description: `Fuel issued — ${seg.projectCode} (${basisLabel(rateBasis)})`,
-        quantity: fuelSeg.litres,
-        unit: "L",
-        unitRateCents: Math.round(fuelSeg.costCents / fuelSeg.litres),
-        amountCents: fuelSeg.costCents,
-        projectId: seg.projectId,
-        projectName: seg.projectName,
-      });
-    }
-  }
-
-  // RENTAL lines first, then FUEL lines (mirrors the legacy ordering).
-  const lineItems: Line[] = [...rentalLines, ...fuelLines];
-
-  const fuelChargedCents = chargesFuel ? fuelCostSum : 0;
-
-  // Breakdown deduction is shown as an informational line only, mirroring the
-  // legacy path (which does not subtract it from the grand total either).
-  let breakdownDeductCents = 0;
-  if (breakdownDays > 0 && isMeter) {
-    const workingDays = await countWorkingDays(asset.id, period.start, period.end);
-    const totalD = workingDays + breakdownDays;
-    if (totalD > 0 && actualUnitsSum > 0) {
-      breakdownDeductCents = Math.round((actualUnitsSum / totalD) * breakdownDays * rateCents);
-    }
-  }
-  if (breakdownDeductCents > 0) {
-    lineItems.push({
-      kind: "ADJUSTMENT",
-      description: `Breakdown deduction (${breakdownDays} day${breakdownDays !== 1 ? "s" : ""} out of service)`,
-      quantity: breakdownDays,
-      unit: "day",
-      unitRateCents: 0,
-      amountCents: -breakdownDeductCents,
-      projectId: null,
-      projectName: null,
+      projectCode: seg.projectCode,
+      days: seg.days,
+      rawUnits,
+      fuelLitres: fuelSeg.litres,
+      fuelCostCents: fuelSeg.costCents,
+      // Physical-work estimate stays pinned to the fuel burnt on-site during this
+      // segment's days, so re-attributing billed fuel by source (below) never
+      // moves rental between sites.
+      derivLitres: fuelSeg.litres,
     });
   }
 
-  const subtotalCents = rentalSum + fuelChargedCents;
-  const ssclCents = Math.round(subtotalCents * cfg.ssclRate);
-  const vatCents = Math.round((subtotalCents + ssclCents) * cfg.vatRate);
-  const grandTotalCents = subtotalCents + ssclCents + vatCents;
+  // Re-attribute each segment's fuel by SOURCE (the site register / pump the
+  // litres came from), folding shared-pump fuel by day-share. This redistributes
+  // exactly the same pot (potLitres/potCents) the date-window sums above produced,
+  // so the bill's fuel total — hence its subtotal, SSCL, VAT and grand total — is
+  // unchanged; only which site each FUEL line is attributed to moves. Single-site
+  // bills never reach here (one segment → the whole pot).
+  if (segInputs.length > 1 && potLitres > 0) {
+    const monthIssues = await prisma.fuelIssue.findMany({
+      where: { assetId: asset.id, issueDate: { gte: period.start, lte: period.end }, voided: false },
+      select: { litres: true, totalCost: true, source: true },
+    });
+    const attributed = attributeSegmentFuel(
+      monthIssues.map((i) => ({ litres: i.litres, costCents: i.totalCost, source: i.source })),
+      segInputs.map((s) => ({ projectCode: s.projectCode, days: s.days })),
+      potLitres,
+      potCents,
+    );
+    for (let i = 0; i < segInputs.length; i++) {
+      segInputs[i].fuelLitres = attributed[i].litres;
+      segInputs[i].fuelCostCents = attributed[i].costCents;
+    }
+  }
+
+  // Working days across the whole period feed the breakdown-deduction estimate.
+  const workingDaysForBreakdown =
+    breakdownDays > 0 && isMeter ? await countWorkingDays(asset.id, period.start, period.end) : 0;
+
+  // Calendar days in the billing month — the base for prorating the guaranteed
+  // minimum by how many days the vehicle was actually posted to a site.
+  const daysInMonth = new Date(period.year, period.month, 0).getDate();
+
+  const r = computeSegmentedTotals(segInputs, {
+    billingMode,
+    rateBasis,
+    rateCents,
+    pickedRate,
+    minimumUnits,
+    daysInMonth,
+    fuelConsTyp: rentalRate?.fuelConsTyp ?? null,
+    fuelConsEcon: rentalRate?.fuelConsEcon ?? null,
+    ssclRate: cfg.ssclRate,
+    vatRate: cfg.vatRate,
+    breakdownDays,
+    workingDays: workingDaysForBreakdown,
+    fuelOnly,
+  });
+
+  const lineItems = r.lineItems;
+  const {
+    actualUnitsSum, rawMeterSum, derivedStdSum, derivedEconSum, billableSum,
+    rentalSum, litresSum, fuelCostSum, breakdownDeductCents,
+    subtotalCents, ssclCents, vatCents, grandTotalCents, derivedFromFuel, fuelConsMidRate,
+  } = r;
 
   // Header site = the one the vehicle spent the most days at; the per-site
   // detail lives in the line items.
@@ -584,10 +586,14 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     projectCode: dominant.projectCode,
     billingMode,
     rateBasis,
+    driverName,
     rateCents,
     openingMeter,
     closingMeter,
     actualUnits: actualUnitsSum,
+    // Stored minimum is the FULL monthly guarantee (the admin-editable base and
+    // the value a regenerate reads back). The availability-prorated figure that
+    // was actually applied is re-derived for display from the segment days.
     minimumUnits,
     billableUnits: billableSum,
     rentalAmountCents: rentalSum,
@@ -607,13 +613,15 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     actualMeterUnits: rawMeterSum,
     derivedStandardUnits: derivedStdSum > 0 ? derivedStdSum : null,
     derivedEconUnits: derivedEconSum > 0 ? derivedEconSum : null,
-    fuelConsEconSnapshot: rentalRate.fuelConsEcon,
-    fuelConsTypSnapshot: rentalRate.fuelConsTyp,
+    fuelConsEconSnapshot: rentalRate?.fuelConsEcon ?? null,
+    fuelConsTypSnapshot: rentalRate?.fuelConsTyp ?? null,
+    fuelConsHeavySnapshot: rentalRate?.fuelConsHeavy ?? null,
   };
 
   const billId = await prisma.$transaction(async (tx) => {
     let id: string;
     if (existing) {
+      await snapshotPriorRevision(tx, existing, actorId);
       await tx.billLineItem.deleteMany({ where: { billId: existing.id } });
       // Stamp a one-time site-split note on multi-site bills without clobbering
       // an admin's manual notes.
@@ -659,6 +667,7 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
     regenerated: 0,
     skippedFinalized: 0,
     skippedExisting: 0,
+    skippedNotHere: 0,
     noRate: 0,
     errors: [],
     assets: [],
@@ -707,7 +716,9 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
   const assets = await prisma.asset.findMany({
     where: {
       status: { not: "DISPOSED" },
-      rentalRate: { isNot: null },
+      // Billable when it has a rate card, or is a fuel-only vehicle (fuel billed
+      // without a rate card).
+      OR: [{ rentalRate: { isNot: null } }, { billFuelOnly: true }],
       id: { in: idFilter },
     },
     select: { id: true, code: true, brand: true, model: true, regNo: true, category: { select: { name: true } } },
@@ -720,11 +731,13 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
       const r = await generateBillForAsset(a.id, period, {
         regenerate: opts.regenerate ?? false,
         actorId: opts.actorId,
+        basis: opts.basis,
       });
       if (r.status === "created") result.created++;
       else if (r.status === "regenerated") result.regenerated++;
       else if (r.status === "skipped-finalized") result.skippedFinalized++;
       else if (r.status === "skipped-existing") result.skippedExisting++;
+      else if (r.status === "skipped-not-here") result.skippedNotHere++;
       else if (r.status === "no-rate") result.noRate++;
       result.assets.push({ assetId: a.id, assetCode: a.code, assetLabel, status: r.status, billId: r.billId });
     } catch (err: any) {

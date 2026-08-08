@@ -1,3 +1,8 @@
+import { isSiteUser } from "@/lib/roles";
+import { visibleAssetIdsForUser } from "@/lib/assignments";
+import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
+import { FUEL_KINDS } from "@/lib/fuel-kinds";
+import { fuelDateShort, colomboDayKey } from "@/lib/colombo-date";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession, requireUser } from "@/lib/auth";
@@ -49,66 +54,87 @@ export default async function DashboardPage() {
     ? (colomboHour < 8 ? "Closed (Opens at 08:00 AM)" : "Closed (Locked at 17:00 PM)")
     : "Open (Locks at 17:00 PM)";
 
-  const isScoped = user.role === "USER" && user.projectId;
+  // A site user (USER / SITE_PUMP) sees ONLY their own site; admin/allocator are
+  // unrestricted. A site user with no site assigned sees NOTHING — never a
+  // cross-site fallback.
+  const isSite = isSiteUser(user.role);
+  const siteId = user.projectId ?? null;
 
-  // 1. Fetch KPI metrics
-  const monthlyIssues = await prisma.fuelIssue.aggregate({
-    where: {
-      issueDate: {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      },
-      ...(isScoped ? {
-        asset: { projectId: user.projectId }
-      } : {}),
-    },
-    _sum: {
-      litres: true,
-      totalCost: true,
-    },
-    _count: {
-      id: true,
+  // Two scoping sets for a site user (both null = unrestricted admin/allocator):
+  //   • currentFleetIds — vehicles posted to the site *now* (live fleet + approvals).
+  //   • fuelAllowedIds  — vehicles *ever* posted to the site (∪ pinned): the
+  //     candidate pool whose fuel is then attributed per-issue to the site.
+  // An empty Set means "site user with no site → show nothing".
+  let currentFleetIds: Set<string> | null = null;
+  let fuelAllowedIds: Set<string> | null = null;
+  let attributionIdx: ReturnType<typeof indexAssignments> | null = null;
+
+  if (isSite) {
+    if (!siteId) {
+      currentFleetIds = new Set();
+      fuelAllowedIds = new Set();
+    } else {
+      currentFleetIds = (await visibleAssetIdsForUser(user, now)) ?? new Set();
+      const [spans, pinned] = await Promise.all([
+        prisma.assetAssignment.findMany({ where: { projectId: siteId }, select: { assetId: true }, distinct: ["assetId"] }),
+        prisma.asset.findMany({ where: { projectId: siteId }, select: { id: true } }),
+      ]);
+      fuelAllowedIds = new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)]);
+      const assignments = await prisma.assetAssignment.findMany({
+        where: { assetId: { in: [...fuelAllowedIds] } },
+        select: { assetId: true, projectId: true, startDate: true, endDate: true },
+      });
+      attributionIdx = indexAssignments(assignments);
     }
-  });
+  }
 
+  // A fuel issue counts for the site only when the vehicle was *assigned* there on
+  // the issue date (falling back to its current pin) — mirrors the Fuel Issues log.
+  const issueMatchesSite = (assetId: string, issueDate: Date, assetPin: string | null): boolean => {
+    if (!isSite) return true;
+    if (!siteId || !attributionIdx) return false;
+    const pid = assignedSiteOn(attributionIdx, assetId, issueDate) ?? assetPin;
+    return pid === siteId;
+  };
+
+  const assetIdIn = (ids: Set<string> | null) => (ids ? { assetId: { in: [...ids] } } : {});
+
+  // 1. KPI metrics — Active Fleet + Pending Approvals scoped to the site's live fleet.
   const activeAssetsCount = await prisma.asset.count({
     where: {
       status: "ACTIVE",
-      ...(isScoped ? {
-        projectId: user.projectId
-      } : {}),
+      ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
     },
   });
 
   const pendingRequestsCount = await prisma.fuelRequest.count({
-    where: {
-      status: "PENDING",
-      ...(isScoped ? {
-        asset: { projectId: user.projectId }
-      } : {}),
-    },
+    where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
   });
 
-  // 2. Fetch fuel splits
-  const issuesThisMonth = await prisma.fuelIssue.findMany({
+  // 2. This month's fuel, attributed to the site. Fetch the candidate issues, keep
+  // only those the attribution assigns here; the KPI sums (Spend/Volume), the
+  // daily trend and the product split all derive from this one filtered list.
+  const monthRaw = await prisma.fuelIssue.findMany({
     where: {
-      issueDate: {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      },
-      ...(isScoped ? {
-        asset: { projectId: user.projectId }
-      } : {}),
+      issueDate: { gte: startOfMonth, lte: endOfMonth },
+      ...assetIdIn(fuelAllowedIds),
     },
-    orderBy: {
-      issueDate: "asc",
-    },
+    orderBy: { issueDate: "asc" },
+    include: { asset: { select: { projectId: true } } },
   });
+  const issuesThisMonth = isSite
+    ? monthRaw.filter((i) => issueMatchesSite(i.assetId, i.issueDate, i.asset.projectId))
+    : monthRaw;
 
-  let autoDieselLitres = 0;
-  let superDieselLitres = 0;
-  let autoDieselCost = 0;
-  let superDieselCost = 0;
+  let monthLitres = 0;
+  let monthCost = 0;
+  for (const i of issuesThisMonth) {
+    monthLitres += i.litres;
+    monthCost += i.totalCost;
+  }
+
+  // Litres/cost per fuel product this month (diesel, petrol, kerosene …)
+  const kindTotals: Record<string, { litres: number; cost: number }> = {};
 
   // Group by day for the chart
   const dailyGroups: Record<string, { date: string; litres: number; cost: number }> = {};
@@ -121,15 +147,11 @@ export default async function DashboardPage() {
   }
 
   for (const issue of issuesThisMonth) {
-    if (issue.fuelKind === "AUTO_DIESEL") {
-      autoDieselLitres += issue.litres;
-      autoDieselCost += issue.totalCost;
-    } else {
-      superDieselLitres += issue.litres;
-      superDieselCost += issue.totalCost;
-    }
+    const kt = (kindTotals[issue.fuelKind] ??= { litres: 0, cost: 0 });
+    kt.litres += issue.litres;
+    kt.cost += issue.totalCost;
 
-    const dayStr = issue.issueDate.getDate().toString().padStart(2, "0");
+    const dayStr = colomboDayKey(issue.issueDate).slice(8);
     if (dailyGroups[dayStr]) {
       dailyGroups[dayStr].litres += issue.litres;
       dailyGroups[dayStr].cost += issue.totalCost;
@@ -140,26 +162,20 @@ export default async function DashboardPage() {
 
   const trendData = Object.values(dailyGroups).sort((a, b) => a.date.localeCompare(b.date));
 
-  // 3. Fetch active prices
-  const autoPriceRecord = await prisma.fuelPrice.findFirst({
-    where: { fuelKind: "AUTO_DIESEL" },
-    orderBy: { effectiveFrom: "desc" },
-  });
-  const superPriceRecord = await prisma.fuelPrice.findFirst({
-    where: { fuelKind: "SUPER_DIESEL" },
-    orderBy: { effectiveFrom: "desc" },
-  });
+  // 3. Latest active price per product (diesel, petrol, kerosene)
+  const priceRows = await prisma.fuelPrice.findMany({ orderBy: { effectiveFrom: "desc" } });
+  const pumpPrices = FUEL_KINDS.map((k) => ({
+    kind: k,
+    price: priceRows.find((p) => p.fuelKind === k.code) ?? null,
+  })).filter((p) => p.price != null || p.kind.code === "AUTO_DIESEL" || p.kind.code === "SUPER_DIESEL");
 
-  const autoPrice = autoPriceRecord ? autoPriceRecord.pricePerLitre / 100 : 407.00;
-  const superPrice = superPriceRecord ? superPriceRecord.pricePerLitre / 100 : 478.00;
-
-  // 4. Fetch assets for Condition Widget and Quick Actions
+  // 4. Fetch assets for Condition Widget and Quick Actions — the site's live fleet.
   const assets = await prisma.asset.findMany({
-    where: { 
+    where: {
       status: { in: ["ACTIVE", "INACTIVE"] },
-      ...(isScoped ? { projectId: user.projectId } : {}),
+      ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
     },
-    select: { 
+    select: {
       id: true, 
       code: true, 
       meterType: true, 
@@ -173,25 +189,24 @@ export default async function DashboardPage() {
     orderBy: { code: "asc" },
   });
 
-  // 5. Fetch recent issues
-  const recentIssues = await prisma.fuelIssue.findMany({
-    where: {
-      ...(isScoped ? { asset: { projectId: user.projectId } } : {}),
-    },
-    take: 5,
+  // 5. Recent dispatches — attributed to the site (over-fetch, then filter + trim).
+  const recentRaw = await prisma.fuelIssue.findMany({
+    where: { ...assetIdIn(fuelAllowedIds) },
+    take: fuelAllowedIds ? 40 : 5,
     orderBy: { issueDate: "desc" },
     include: {
       asset: true,
       issuedBy: true,
     },
   });
+  const recentIssues = (isSite
+    ? recentRaw.filter((i) => issueMatchesSite(i.assetId, i.issueDate, i.asset.projectId))
+    : recentRaw
+  ).slice(0, 5);
 
-  // 6. Fetch pending requests
+  // 6. Pending requests — the site's live fleet only.
   const pendingRequests = await prisma.fuelRequest.findMany({
-    where: { 
-      status: "PENDING",
-      ...(isScoped ? { asset: { projectId: user.projectId } } : {}),
-    },
+    where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
     take: 5,
     orderBy: { createdAt: "desc" },
     include: {
@@ -224,11 +239,11 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Quick Actions Panel */}
-      <QuickActions 
-        assets={assets.filter((a) => a.status === "ACTIVE")} 
-        isAdmin={isAdmin} 
-        isLocked={isConditionLocked}
+      {/* Quick Actions Panel — fuel issuing is 24/7, never time-locked */}
+      <QuickActions
+        assets={assets.filter((a) => a.status === "ACTIVE")}
+        isAdmin={isAdmin}
+        isLocked={false}
       />
 
       {/* KPI Cards */}
@@ -241,7 +256,7 @@ export default async function DashboardPage() {
           <div>
             <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider block">Spend This Month</span>
             <span className="text-lg font-bold text-white block mt-0.5">
-              Rs. {((monthlyIssues._sum.totalCost || 0) / 100).toLocaleString("en-LK", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              Rs. {(monthCost / 100).toLocaleString("en-LK", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             </span>
           </div>
         </div>
@@ -254,7 +269,7 @@ export default async function DashboardPage() {
           <div>
             <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider block">Volume Dispensed</span>
             <span className="text-lg font-bold text-white block mt-0.5">
-              {(monthlyIssues._sum.litres || 0).toLocaleString("en-US", { maximumFractionDigits: 1 })} Litres
+              {monthLitres.toLocaleString("en-US", { maximumFractionDigits: 1 })} Litres
             </span>
             <span className="text-[10px] text-indigo-400 block mt-0.5">View by site →</span>
           </div>
@@ -334,21 +349,17 @@ export default async function DashboardPage() {
             Ceypetco Pump Prices
           </h3>
           <div className="space-y-4">
-            <div className="flex items-center justify-between p-3.5 bg-white/5 rounded-xl border border-white/5">
-              <div>
-                <span className="text-xs text-gray-400 block font-semibold">Auto Diesel</span>
-                <span className="text-xs text-[10px] text-gray-500 block">Lanka Auto Diesel</span>
+            {pumpPrices.map(({ kind, price }) => (
+              <div key={kind.code} className="flex items-center justify-between p-3.5 bg-white/5 rounded-xl border border-white/5">
+                <div>
+                  <span className="text-xs text-gray-400 block font-semibold">{kind.short}</span>
+                  <span className="text-xs text-[10px] text-gray-500 block">{kind.label}</span>
+                </div>
+                <span className={`text-md font-bold ${price ? "text-white" : "text-gray-600"}`}>
+                  {price ? `Rs. ${(price.pricePerLitre / 100).toFixed(2)}` : "—"}
+                </span>
               </div>
-              <span className="text-md font-bold text-white">Rs. {autoPrice.toFixed(2)}</span>
-            </div>
-
-            <div className="flex items-center justify-between p-3.5 bg-white/5 rounded-xl border border-white/5">
-              <div>
-                <span className="text-xs text-gray-400 block font-semibold">Super Diesel</span>
-                <span className="text-xs text-[10px] text-gray-500 block">Lanka Super Diesel E4</span>
-              </div>
-              <span className="text-md font-bold text-white">Rs. {superPrice.toFixed(2)}</span>
-            </div>
+            ))}
           </div>
           {isAdmin && (
             <Link 
@@ -372,10 +383,11 @@ export default async function DashboardPage() {
       {/* Visual Analytics Charts */}
       <DashboardCharts 
         trendData={trendData}
-        autoDieselLitres={autoDieselLitres}
-        superDieselLitres={superDieselLitres}
-        autoDieselCost={autoDieselCost}
-        superDieselCost={superDieselCost}
+        kindSplit={FUEL_KINDS.filter((k) => kindTotals[k.code]).map((k) => ({
+          name: k.short,
+          value: kindTotals[k.code].litres,
+          cost: kindTotals[k.code].cost,
+        }))}
       />
 
       {/* Tables Row */}
@@ -462,7 +474,7 @@ export default async function DashboardPage() {
                       </span>
                     </div>
                     <p className="text-[10px] text-gray-500 mt-0.5">
-                      Issued by {issue.issuedBy.name} • {new Date(issue.issueDate).toLocaleDateString("en-US", { day: "numeric", month: "short" })}
+                      Issued by {issue.issuedBy.name} • {fuelDateShort(issue.issueDate)}
                     </p>
                   </div>
                   <div className="text-right">

@@ -2,7 +2,7 @@ import XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
 
-const UPLOADS = process.cwd();
+const UPLOADS = path.join(process.cwd(), "data/source-sheets");
 const FILES = [
   "CEP-03 A,B and C - January 2026.xlsx",
   "CEP-03 A,B and C - February 2026.xlsx",

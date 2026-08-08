@@ -16,6 +16,23 @@ export interface InvariantCheck {
 export async function runInvariantChecks(): Promise<InvariantCheck[]> {
   const checks: InvariantCheck[] = [];
 
+  // 0. A bill's subtotal must equal the sum of its charged (RENTAL + FUEL) line
+  //    items — the line items are the source of truth for the money.
+  const unreconciled = await prisma.$queryRawUnsafe<{ assetCode: string; periodKey: string; d: number }[]>(
+    `SELECT b.assetCode, b.periodKey, b.subtotalCents - COALESCE((
+        SELECT SUM(li.amountCents) FROM BillLineItem li
+        WHERE li.billId = b.id AND li.kind IN ('RENTAL','FUEL')), 0) AS d
+     FROM Bill b
+     WHERE d != 0 LIMIT 200`
+  );
+  checks.push({
+    key: "bill-line-reconcile",
+    name: "Bill totals reconcile to line items",
+    description: "Each bill's subtotal must equal the sum of its RENTAL and FUEL lines (adjustments excluded).",
+    count: unreconciled.length,
+    samples: unreconciled.slice(0, 5).map((r) => `${r.assetCode} ${r.periodKey} (Δ${r.d})`),
+  });
+
   // 1. Invoice numbers must be unique (DB enforces; catches manual imports).
   const dupInvoices = await prisma.$queryRawUnsafe<{ invoiceNumber: string; n: number }[]>(
     `SELECT invoiceNumber, COUNT(*) n FROM Bill WHERE invoiceNumber IS NOT NULL GROUP BY invoiceNumber HAVING n > 1 LIMIT 6`

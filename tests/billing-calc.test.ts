@@ -49,4 +49,35 @@ describe("computeTotals", () => {
       expect(Number.isInteger(v)).toBe(true);
     }
   });
+
+  describe("fuel-only vehicles", () => {
+    it("charges no rental — the subtotal is the issued fuel alone", () => {
+      const t = computeTotals({ ...base, fuelOnly: true });
+      expect(t.rentalAmountCents).toBe(0);
+      expect(t.fuelChargedCents).toBe(300_00);
+      expect(t.subtotalCents).toBe(300_00);
+    });
+
+    it("bills fuel even on the dry basis (E&C still supplies the fuel)", () => {
+      const t = computeTotals({ ...base, fuelOnly: true, rateBasis: "d" });
+      expect(t.rentalAmountCents).toBe(0);
+      expect(t.fuelChargedCents).toBe(300_00);
+      expect(t.subtotalCents).toBe(300_00);
+    });
+
+    it("ignores the minimum guarantee (no rental means no floor)", () => {
+      const t = computeTotals({ ...base, fuelOnly: true, actualUnits: 0 });
+      expect(t.rentalAmountCents).toBe(0);
+    });
+
+    it("still applies SSCL then VAT on the fuel-only subtotal", () => {
+      const t = computeTotals({ ...base, fuelOnly: true });
+      const subtotal = 300_00;
+      const sscl = Math.round(subtotal * 0.025);
+      const vat = Math.round((subtotal + sscl) * 0.18);
+      expect(t.ssclCents).toBe(sscl);
+      expect(t.vatCents).toBe(vat);
+      expect(t.grandTotalCents).toBe(subtotal + sscl + vat);
+    });
+  });
 });

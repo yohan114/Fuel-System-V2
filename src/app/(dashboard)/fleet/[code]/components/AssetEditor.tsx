@@ -22,6 +22,7 @@ interface AssetEditorProps {
     status: string;
     meterType: string;
     dailyCapLitres: number | null;
+    billFuelOnly: boolean;
   };
 }
 
@@ -300,6 +301,25 @@ export default function AssetEditor({ asset }: AssetEditorProps) {
                     <p className="text-[10px] text-gray-500 mt-1.5">
                       Leave blank for no limit. Blocks issues once the day's total would exceed this.
                     </p>
+                  </div>
+
+                  {/* Fuel-only billing */}
+                  <div className="sm:col-span-2">
+                    <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-white/5 bg-[#1b1e30] px-4 py-3">
+                      <input
+                        type="checkbox"
+                        name="billFuelOnly"
+                        defaultChecked={asset.billFuelOnly}
+                        className="mt-0.5 h-4 w-4 rounded border-white/20 bg-[#1b1e30] accent-indigo-500"
+                      />
+                      <span>
+                        <span className="block text-xs font-semibold text-white">Bill fuel only (private vehicle)</span>
+                        <span className="block text-[10px] text-gray-500 mt-0.5">
+                          For a privately-owned vehicle E&amp;C fuels but does not rent. Its monthly bill
+                          charges the issued fuel (+ SSCL/VAT) only — no rental line and no rate card needed.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 </div>
 

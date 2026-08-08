@@ -52,6 +52,13 @@ export default async function AdminBillingPage() {
             An external scheduler must call <code>GET /api/cron/billing?secret=&lt;CRON_SECRET&gt;</code> on this schedule
             (same model as the scraper / backup jobs).
           </p>
+          <label className="flex items-start gap-2 text-xs text-gray-300 select-none pt-1 border-t border-white/5 mt-2">
+            <input type="checkbox" name="autoEmailOnIssue" defaultChecked={cfg.autoEmailOnIssue} className="accent-indigo-500 w-4 h-4 mt-0.5" />
+            <span>
+              Auto-email the invoice PDF to the site contact when it is issued
+              <span className="block text-[10px] text-gray-500">Requires SMTP configured and a contact email on the project. Best-effort — a mail failure never blocks the issue.</span>
+            </span>
+          </label>
         </div>
 
         {/* Minimums */}

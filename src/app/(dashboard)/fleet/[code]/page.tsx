@@ -1,3 +1,5 @@
+import { isSiteUser } from "@/lib/roles";
+import { fuelDate, fuelDateShort } from "@/lib/colombo-date";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
@@ -6,6 +8,7 @@ import Link from "next/link";
 import AssetCharts from "./components/AssetCharts";
 import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
+import HireBasisControl from "./HireBasisControl";
 import { recommendedUnits, varianceFlag, formatVariancePct } from "@/lib/reports/recommended";
 import { classifyConsumption } from "@/lib/analytics/consumption";
 import { computeServiceStatus } from "@/lib/service/compute";
@@ -51,7 +54,7 @@ export default async function AssetDetailPage(props: PageProps) {
   }
 
   // Check project user scope
-  if (session.role === "USER" && session.projectId && asset.projectId !== session.projectId) {
+  if (isSiteUser(session.role) && session.projectId && asset.projectId !== session.projectId) {
     notFound();
   }
 
@@ -147,7 +150,7 @@ export default async function AssetDetailPage(props: PageProps) {
 
   const issuesChartData = issues
     .map((i) => ({
-      date: new Date(i.issueDate).toLocaleDateString("en-US", { day: "numeric", month: "short" }),
+      date: fuelDateShort(i.issueDate),
       litres: i.litres,
     }))
     .reverse();
@@ -240,6 +243,11 @@ export default async function AssetDetailPage(props: PageProps) {
           </div>
         </div>
       </div>
+
+      {/* Hire basis (Dry / Wet) — admins only, needs a rate card */}
+      {isAdmin && asset.rentalRate && (
+        <HireBasisControl assetId={asset.id} current={asset.rentalRate.defaultBasis} />
+      )}
 
       {/* Fuel-derived recommended hrs/km vs recorded meter */}
       <div className="bg-[#121420] border border-white/5 rounded-2xl p-6 shadow-xl">
@@ -388,7 +396,7 @@ export default async function AssetDetailPage(props: PageProps) {
                     {issues.map((issue) => (
                       <tr key={issue.id} className="hover:bg-white/[0.01]">
                         <td className="py-3.5 text-gray-300 font-medium">
-                          {new Date(issue.issueDate).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })}
+                          {fuelDate(issue.issueDate)}
                         </td>
                         <td className="py-3.5 text-gray-400 capitalize">
                           {issue.fuelKind.replace("_", " ").toLowerCase()}

@@ -1,6 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, renderToBuffer, Svg, Path, Line } from "@react-pdf/renderer";
 import { formatVariancePct } from "../reports/recommended";
+import { effectiveMinimumUnits, assignedDaysFromLines } from "./site-split";
 
 const NAVY = "#1e3a5f";
 const AMBER = "#f59e0b";
@@ -70,8 +71,19 @@ const styles = StyleSheet.create({
   tCellFuel: { color: "#b45309" },
   tCellAdj: { color: "#b91c1c" },
 
-  totalsOuter: { flexDirection: "row", justifyContent: "flex-end", marginTop: 10 },
+  totalsOuter: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginTop: 10 },
   totalsBox: { width: "44%", borderWidth: 1, borderColor: GRAY_LIGHT, borderRadius: 4, overflow: "hidden" },
+
+  // Formal VAT summary — the tax breakdown a compliant SL tax invoice must show:
+  // the value liable to VAT (supply + SSCL) and the output VAT charged on it.
+  vatBox: { width: "50%", borderWidth: 1, borderColor: GRAY_LIGHT, borderRadius: 4, overflow: "hidden" },
+  vatHead: { backgroundColor: NAVY, padding: "4 10" },
+  vatHeadText: { fontSize: 7.5, fontFamily: "Helvetica-Bold", color: WHITE, textTransform: "uppercase", letterSpacing: 0.5 },
+  vatRow: { flexDirection: "row", justifyContent: "space-between", padding: "4 10", borderBottomWidth: 1, borderBottomColor: GRAY_LIGHT },
+  vatBaseRow: { flexDirection: "row", justifyContent: "space-between", padding: "4 10", borderBottomWidth: 1, borderBottomColor: GRAY_LIGHT, backgroundColor: LIGHT },
+  vatLabel: { fontSize: 7.5, color: GRAY },
+  vatVal: { fontSize: 7.5, color: "#334155", fontFamily: "Helvetica-Bold" },
+  vatRegText: { fontSize: 7, color: GRAY, padding: "4 10" },
   totRow: { flexDirection: "row", justifyContent: "space-between", padding: "5 10", borderBottomWidth: 1, borderBottomColor: GRAY_LIGHT },
   totLabel: { fontSize: 8, color: GRAY },
   totVal: { fontSize: 8, color: "#334155", fontFamily: "Helvetica-Bold" },
@@ -110,9 +122,28 @@ export function InvoiceDocument({ bill }: { bill: any }) {
   const monthLabel = new Date(bill.year, bill.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   const isDraft = bill.status === "DRAFT";
 
+  // A fuel-only bill (private vehicle E&C fuels but does not rent) carries no
+  // RENTAL line — so the rental/usage sections are omitted and only the issued
+  // fuel is shown.
+  const isFuelOnly = Array.isArray(bill.lineItems) && !bill.lineItems.some((li: any) => li.kind === "RENTAL");
+
+  // Availability-prorated minimum: a part-month vehicle owes only its share of
+  // the monthly guarantee. Re-derive days-on-site and the effective minimum from
+  // the line items so the printed "Minimum" matches what was billed.
+  const daysInBillMonth = new Date(bill.year, bill.month, 0).getDate();
+  const daysOnSite = assignedDaysFromLines(bill.lineItems || []);
+  const effMinimumUnits = effectiveMinimumUnits(bill.lineItems || [], bill.minimumUnits, daysInBillMonth);
+  const isProrated = daysOnSite > 0 && daysOnSite < daysInBillMonth;
+
+  // Hire type + whether fuel is billed. A Dry hire ("d") charges the machine +
+  // driver only (fuel excluded); Wet/Fully-Wet ("w"/"fw") add the month's fuel.
+  // A fuel-only bill has no rental at all — only the issued fuel.
+  const hireType = isFuelOnly ? "Fuel only" : bill.rateBasis === "d" ? "Dry" : bill.rateBasis === "fw" ? "Fully Wet" : "Wet";
+  const fuelIncluded = isFuelOnly || bill.rateBasis === "w" || bill.rateBasis === "fw";
+
   // Actual entered meter vs the system-recommended (fuel ÷ typical rate) units.
   const unit = bill.billingMode === "perkm" ? "km" : "hr";
-  const isMetered = bill.billingMode === "hourly" || bill.billingMode === "perkm";
+  const isMetered = (bill.billingMode === "hourly" || bill.billingMode === "perkm") && !isFuelOnly;
   const actualMeter: number = bill.actualMeterUnits ?? (bill.derivedFromFuel ? 0 : bill.actualUnits);
   const recommended: number | null = bill.derivedStandardUnits ?? null;
   const variancePct: number | null =
@@ -155,7 +186,7 @@ export function InvoiceDocument({ bill }: { bill: any }) {
           </View>
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Billing Mode</Text>
-            <Text style={styles.infoVal}>{bill.billingMode.toUpperCase()} · {bill.rateBasis.toUpperCase()}</Text>
+            <Text style={styles.infoVal}>{isFuelOnly ? "FUEL ONLY" : `${bill.billingMode.toUpperCase()} · ${bill.rateBasis.toUpperCase()}`}</Text>
           </View>
         </View>
 
@@ -179,31 +210,44 @@ export function InvoiceDocument({ bill }: { bill: any }) {
               <Text style={styles.partyLine}>E&C No: {bill.assetCode}</Text>
               <Text style={styles.partyGray}>Reg No: {bill.assetRegNo || "—"}</Text>
               <Text style={styles.partyGray}>{bill.assetLabel || "—"}</Text>
+              <Text style={styles.partyGray}>Driver: {bill.driverName || "—"}</Text>
+              <Text style={styles.partyGray}>Hire: {hireType} · fuel {fuelIncluded ? "included" : "excluded"}</Text>
             </View>
           </View>
 
           <Text style={styles.secHeading}>Usage Summary</Text>
           <View style={styles.usageGrid}>
-            <View style={styles.usageCell}>
-              <Text style={styles.usageCellLabel}>Actual</Text>
-              <Text style={styles.usageCellVal}>{bill.actualUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
-              <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
-            </View>
-            <View style={styles.usageCell}>
-              <Text style={styles.usageCellLabel}>Minimum</Text>
-              <Text style={styles.usageCellVal}>{bill.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
-              <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
-            </View>
-            <View style={[styles.usageCell, { backgroundColor: "#dbeafe" }]}>
-              <Text style={styles.usageCellLabel}>Billable</Text>
-              <Text style={[styles.usageCellVal, { color: NAVY }]}>{bill.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
-              <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
-            </View>
-            <View style={styles.usageCell}>
+            {!isFuelOnly && (
+              <>
+                <View style={styles.usageCell}>
+                  <Text style={styles.usageCellLabel}>Actual</Text>
+                  <Text style={styles.usageCellVal}>{bill.actualUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+                  <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
+                </View>
+                <View style={styles.usageCell}>
+                  <Text style={styles.usageCellLabel}>Minimum{isProrated ? " (prorated)" : ""}</Text>
+                  <Text style={styles.usageCellVal}>{effMinimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+                  <Text style={styles.usageCellUnit}>{isProrated ? `${daysOnSite}/${daysInBillMonth} days on site` : (bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days")}</Text>
+                </View>
+                <View style={[styles.usageCell, { backgroundColor: "#dbeafe" }]}>
+                  <Text style={styles.usageCellLabel}>Billable</Text>
+                  <Text style={[styles.usageCellVal, { color: NAVY }]}>{bill.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+                  <Text style={styles.usageCellUnit}>{bill.billingMode === "hourly" ? "hrs" : bill.billingMode === "perkm" ? "km" : "days"}</Text>
+                </View>
+              </>
+            )}
+            <View style={[styles.usageCell, isFuelOnly ? { backgroundColor: "#dbeafe" } : {}]}>
               <Text style={styles.usageCellLabel}>Fuel Issued</Text>
-              <Text style={styles.usageCellVal}>{bill.fuelLitres.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
+              <Text style={[styles.usageCellVal, isFuelOnly ? { color: NAVY } : {}]}>{bill.fuelLitres.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</Text>
               <Text style={styles.usageCellUnit}>litres</Text>
             </View>
+            {isFuelOnly && (
+              <View style={styles.usageCell}>
+                <Text style={styles.usageCellLabel}>Basis</Text>
+                <Text style={[styles.usageCellVal, { fontSize: 9 }]}>Fuel only</Text>
+                <Text style={styles.usageCellUnit}>no rental</Text>
+              </View>
+            )}
             {bill.openingMeter != null && (
               <View style={styles.usageCell}>
                 <Text style={styles.usageCellLabel}>Meter</Text>
@@ -268,6 +312,28 @@ export function InvoiceDocument({ bill }: { bill: any }) {
           </View>
 
           <View style={styles.totalsOuter}>
+            <View style={styles.vatBox}>
+              <View style={styles.vatHead}>
+                <Text style={styles.vatHeadText}>VAT Summary</Text>
+              </View>
+              <View style={styles.vatRow}>
+                <Text style={styles.vatLabel}>Value of supply</Text>
+                <Text style={styles.vatVal}>{rs(bill.subtotalCents)}</Text>
+              </View>
+              <View style={styles.vatRow}>
+                <Text style={styles.vatLabel}>SSCL @ {(bill.ssclRate * 100).toFixed(1)}%</Text>
+                <Text style={styles.vatVal}>{rs(bill.ssclCents)}</Text>
+              </View>
+              <View style={styles.vatBaseRow}>
+                <Text style={[styles.vatLabel, { fontFamily: "Helvetica-Bold", color: NAVY }]}>Value liable to VAT</Text>
+                <Text style={styles.vatVal}>{rs(bill.subtotalCents + bill.ssclCents)}</Text>
+              </View>
+              <View style={styles.vatRow}>
+                <Text style={styles.vatLabel}>Output VAT @ {(bill.vatRate * 100).toFixed(1)}%</Text>
+                <Text style={styles.vatVal}>{rs(bill.vatCents)}</Text>
+              </View>
+              <Text style={styles.vatRegText}>{COMPANY.vatReg}</Text>
+            </View>
             <View style={styles.totalsBox}>
               <View style={styles.totRow}>
                 <Text style={styles.totLabel}>Subtotal</Text>

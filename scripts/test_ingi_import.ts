@@ -2,7 +2,7 @@ import XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
 
-const FILE = path.join(process.cwd(), "Inginimitiya Vehicle, Machinery summary.xlsx");
+const FILE = path.join(process.cwd(), "data/source-sheets", "Inginimitiya Vehicle, Machinery summary.xlsx");
 
 const toFloat = (v: unknown) => { const n = parseFloat(String(v)); return isNaN(n) ? 0 : n; };
 const stripCode = (s: string) => s.toUpperCase().replace(/[\s\-_]/g, "");

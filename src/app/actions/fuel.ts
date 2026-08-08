@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
+import { isSiteUser } from "@/lib/roles";
 import { getPriceForDate } from "@/lib/pricing";
 import { checkDailyCap } from "@/lib/fuel-policy";
 import { extractFileField } from "@/lib/upload";
@@ -24,20 +25,8 @@ export async function submitRequestAction(formData: FormData) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (colomboHour < 8 || colomboHour >= 17) {
-      return { error: "Fuel operations are only allowed between 08:00 AM and 17:00 PM." };
-    }
-  }
+  // Fuel issuing is allowed 24/7 — the 08:00–17:00 time window was removed.
+  // (Issue date/time, user, site, vehicle and issue person are still recorded.)
 
   const assetId = formData.get("assetId")?.toString();
   const fuelKind = formData.get("fuelKind")?.toString();
@@ -87,12 +76,13 @@ export async function submitRequestAction(formData: FormData) {
         }
       });
     } else {
-      // Project-scoped users may only request fuel for vehicles assigned to
-      // their site today (legacy pin honored for never-assigned vehicles).
-      if (user.role === "USER" && user.projectId) {
+      // Site-scoped users (USER / SITE_PUMP) may only request fuel for vehicles
+      // allocated to their site (legacy pin honored for never-assigned vehicles).
+      // WORKSHOP is exempt — it can issue for any site / any vehicle.
+      if (isSiteUser(user.role) && user.projectId) {
         const ok = await canUserAccessAsset(user, asset.id, new Date());
         if (!ok) {
-          return { error: "This vehicle is not assigned to your site today." };
+          return { error: "This vehicle is not assigned to your site." };
         }
       }
     }
@@ -204,6 +194,7 @@ export async function approveRequestAction(requestId: string, reviewNote: string
           source: "STATION",
           issueDate,
           issuedById: admin.id,
+          issuePerson: admin.name,
           linkedRequestId: request.id,
           fuelPriceId: resolvedPrice.id,
           ...(request.photoData
@@ -355,20 +346,8 @@ export async function recordDirectIssueAction(formData: FormData) {
     }
   }
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (colomboHour < 8 || colomboHour >= 17) {
-      return { error: "Fuel operations are only allowed between 08:00 AM and 17:00 PM." };
-    }
-  }
+  // Fuel issuing is allowed 24/7 — the 08:00–17:00 time window was removed.
+  // (Issue date/time, user, site, vehicle and issue person are still recorded.)
 
   if (isNaN(litres) || litres <= 0) {
     return { error: "Litres must be greater than zero" };
@@ -450,6 +429,7 @@ export async function recordDirectIssueAction(formData: FormData) {
           source,
           issueDate,
           issuedById: admin.id,
+          issuePerson: admin.name,
           fuelPriceId: resolvedPrice.id,
           ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
         },

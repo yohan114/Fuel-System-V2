@@ -10,7 +10,7 @@ const FILES = [
 
 function main() {
   for (const filename of FILES) {
-    const filePath = path.join(process.cwd(), filename);
+    const filePath = path.join(process.cwd(), "data/source-sheets", filename);
     if (!fs.existsSync(filePath)) continue;
     const wb = XLSX.readFile(filePath, { cellDates: false });
     const sheetName = wb.SheetNames[0];

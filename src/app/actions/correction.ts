@@ -1,5 +1,7 @@
 "use server";
 
+import { isSiteUser } from "@/lib/roles";
+import { isFuelKind } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset, getActiveAssignment } from "@/lib/assignments";
@@ -67,7 +69,7 @@ export async function submitCorrectionAction(formData: FormData) {
 
     // Site users may only correct issues for vehicles assigned to their site
     // (checked on the issue date).
-    if (user.role === "USER" && user.projectId) {
+    if (isSiteUser(user.role) && user.projectId) {
       const ok = await canUserAccessAsset(user, issue.assetId, issue.issueDate);
       if (!ok) return { error: "This issue belongs to a vehicle outside your site" };
     }
@@ -101,7 +103,7 @@ export async function submitCorrectionAction(formData: FormData) {
       if (newMeterReading !== null && newMeterReading < 0) {
         return { error: "Corrected meter reading must be zero or greater" };
       }
-      if (newFuelKind && newFuelKind !== "AUTO_DIESEL" && newFuelKind !== "SUPER_DIESEL") {
+      if (newFuelKind && !isFuelKind(newFuelKind)) {
         return { error: "Invalid fuel type" };
       }
       if (newLitres === null && newMeterReading === null && !newFuelKind && !newIssueDate) {
@@ -186,6 +188,14 @@ export async function approveCorrectionAction(correctionId: string, reviewNote: 
 
       if (corr.type === "VOID") {
         await tx.fuelIssue.update({ where: { id: issue.id }, data: { voided: true, voidedAt: new Date() } });
+        // Return the issued fuel to the bulk tank it was drawn from — issuing
+        // decremented the tank balance, so voiding must add it back.
+        if (issue.bulkTankId) {
+          await tx.bulkTank.update({
+            where: { id: issue.bulkTankId },
+            data: { balance: { increment: issue.litres } },
+          });
+        }
         summary = `Voided ${corr.assetCode} fuel issue of ${issue.litres}L (${corr.projectCode ?? "—"})`;
       } else {
         const finalFuelKind = corr.newFuelKind ?? issue.fuelKind;
@@ -222,6 +232,20 @@ export async function approveCorrectionAction(correctionId: string, reviewNote: 
             where: { id: issue.meterReadingRecordId },
             data: { value: corr.newMeterReading, readingDate: finalIssueDate },
           });
+        }
+
+        // Reconcile the bulk-tank balance for a change in litres drawn: the
+        // original draw decremented the tank by issue.litres, so return the
+        // difference when the corrected litres are lower (or draw more when
+        // higher). Only the litres delta moves fuel; other edits do not.
+        if (issue.bulkTankId && corr.newLitres !== null) {
+          const delta = issue.litres - finalLitres; // >0 returns fuel to the tank
+          if (delta !== 0) {
+            await tx.bulkTank.update({
+              where: { id: issue.bulkTankId },
+              data: { balance: { increment: delta } },
+            });
+          }
         }
 
         const parts: string[] = [];

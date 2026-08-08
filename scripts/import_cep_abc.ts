@@ -238,7 +238,7 @@ async function main() {
   const rowsToInsert: ParsedRow[] = [];
 
   for (const fileInfo of FILES) {
-    const filePath = path.join(process.cwd(), fileInfo.name);
+    const filePath = path.join(process.cwd(), "data/source-sheets", fileInfo.name);
     if (!fs.existsSync(filePath)) {
       console.warn(`File ${fileInfo.name} not found!`);
       continue;

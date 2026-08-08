@@ -42,7 +42,8 @@ export async function getAgingReport(opts: { projectId?: string } = {}): Promise
     select: { id: true, projectId: true, projectName: true, grandTotalCents: true, dueDate: true },
   });
 
-  // Issued credit notes reduce the outstanding balance per invoice.
+  // Issued credit notes and recorded payments both reduce the outstanding
+  // balance per invoice.
   const credits = await prisma.creditNote.findMany({
     where: { status: "ISSUED" },
     select: { billId: true, amountCents: true },
@@ -50,11 +51,19 @@ export async function getAgingReport(opts: { projectId?: string } = {}): Promise
   const creditMap = new Map<string, number>();
   for (const c of credits) creditMap.set(c.billId, (creditMap.get(c.billId) || 0) + c.amountCents);
 
+  const payments = await prisma.payment.groupBy({
+    by: ["billId"],
+    _sum: { amountCents: true },
+    where: { bill: { status: { in: ["ISSUED", "OVERDUE"] }, ...(opts.projectId ? { projectId: opts.projectId } : {}) } },
+  });
+  const paidMap = new Map<string, number>();
+  for (const p of payments) paidMap.set(p.billId, p._sum.amountCents ?? 0);
+
   const siteMap = new Map<string, SiteAging>();
   const empty = (id: string, name: string): SiteAging => ({ projectId: id, name, count: 0, current: 0, d1_30: 0, d31_60: 0, d60plus: 0, totalOutstanding: 0 });
 
   for (const b of bills) {
-    const outstanding = b.grandTotalCents - (creditMap.get(b.id) || 0);
+    const outstanding = b.grandTotalCents - (creditMap.get(b.id) || 0) - (paidMap.get(b.id) || 0);
     if (outstanding <= 0) continue;
 
     const key = b.projectId || "__unassigned__";

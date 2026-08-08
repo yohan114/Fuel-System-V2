@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { buildSiteStatements, totalStatement } from "@/lib/billing/statement";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest) {
@@ -33,19 +34,36 @@ export async function GET(request: NextRequest) {
     return new NextResponse(`No bills found for ${periodKey}${siteCode ? ` at site ${siteCode}` : ""}`, { status: 404 });
   }
 
+  // Statement of account: credit notes + payments booked against these bills.
+  const billIds = bills.map((b) => b.id);
+  const [creditRows, paymentRows] = await Promise.all([
+    prisma.creditNote.findMany({ where: { billId: { in: billIds } } }),
+    prisma.payment.findMany({ where: { billId: { in: billIds } }, orderBy: { paidDate: "asc" } }),
+  ]);
+  const statements = buildSiteStatements(
+    bills.map((b) => ({
+      billId: b.id, projectId: b.projectId, projectName: b.projectName, projectCode: b.projectCode,
+      assetCode: b.assetCode, invoiceNumber: b.invoiceNumber, status: b.status, grandTotalCents: b.grandTotalCents,
+    })),
+    creditRows.map((c) => ({ billId: c.billId, number: c.number, reason: c.reason, amountCents: c.amountCents, status: c.status })),
+    paymentRows.map((p) => ({ billId: p.billId, amountCents: p.amountCents, paidDate: p.paidDate, method: p.method, reference: p.reference })),
+  );
+  const stmtTotals = totalStatement(statements);
+
   const lkr = (cents: number) => cents / 100;
   const sumBills = (list: typeof bills) =>
     list.reduce(
       (a, b) => {
         a.rental += b.rentalAmountCents;
         a.fuel += b.fuelCostCents;
+        a.litres += b.fuelLitres || 0;
         a.subtotal += b.subtotalCents;
         a.sscl += b.ssclCents;
         a.vat += b.vatCents;
         a.grand += b.grandTotalCents;
         return a;
       },
-      { rental: 0, fuel: 0, subtotal: 0, sscl: 0, vat: 0, grand: 0 }
+      { rental: 0, fuel: 0, litres: 0, subtotal: 0, sscl: 0, vat: 0, grand: 0 }
     );
 
   // Group bills by site
@@ -61,12 +79,19 @@ export async function GET(request: NextRequest) {
     const wb = XLSX.utils.book_new();
 
     const header = [
-      "E&C No", "Vehicle", "Reg No", "Mode", "Basis",
-      "Billable Units", "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)",
+      "E&C No", "Vehicle", "Reg No", "Driver", "Mode", "Basis",
+      "Fuel (L)", "Actual Meter", "Billable Units",
+      "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)",
       "SSCL (LKR)", "VAT (LKR)", "Grand Total (LKR)", "Status", "Invoice No",
-      "Actual Meter", "Recommended (fuel)",
+      "Recommended (fuel)",
     ];
     const round1 = (n: number) => Math.round(n * 10) / 10;
+    const basisLabel = (b: string) => (b === "d" ? "Dry" : b === "fw" ? "Fully Wet" : "Wet");
+    // Basis label that also states whether fuel is billed — Dry excludes fuel,
+    // Wet/Fully-Wet include it.
+    const basisWithFuel = (b: string) =>
+      b === "d" ? "Dry (no fuel)" : b === "fw" ? "Fully Wet (+fuel)" : "Wet (+fuel)";
+    const isDry = (b: string) => b === "d";
     const tot = sumBills(bills);
 
     // Sheet 1: site-wise consolidated (section per site)
@@ -79,24 +104,29 @@ export async function GET(request: NextRequest) {
       sheet1.push([`SITE: ${g.name}  (${g.bills.length} vehicles)`]);
       sheet1.push(header);
       for (const b of g.bills) {
+        const fuelOnly = b.rentalAmountCents === 0 && b.fuelCostCents > 0;
         sheet1.push([
-          b.assetCode, b.assetLabel || "", b.assetRegNo || "",
-          b.billingMode, b.rateBasis,
-          b.billableUnits, lkr(b.rentalAmountCents), lkr(b.fuelCostCents), lkr(b.subtotalCents),
+          b.assetCode, b.assetLabel || "", b.assetRegNo || "", b.driverName || "",
+          fuelOnly ? "Fuel only" : b.billingMode, fuelOnly ? "Fuel only" : basisWithFuel(b.rateBasis),
+          round1(b.fuelLitres || 0),
+          fuelOnly ? "" : (b.actualMeterUnits != null ? round1(b.actualMeterUnits) : ""),
+          fuelOnly ? "" : round1(b.billableUnits),
+          lkr(b.rentalAmountCents), lkr(b.fuelCostCents), lkr(b.subtotalCents),
           lkr(b.ssclCents), lkr(b.vatCents), lkr(b.grandTotalCents), b.status, b.invoiceNumber || "",
-          b.actualMeterUnits != null ? round1(b.actualMeterUnits) : "",
           b.derivedStandardUnits != null ? round1(b.derivedStandardUnits) : "",
         ]);
       }
       sheet1.push([
         "SITE TOTAL", "", "", "", "", "",
-        lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "", "", "",
+        round1(st.litres), "", "",
+        lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "", "",
       ]);
       sheet1.push([]);
     }
     sheet1.push([
       "GRAND TOTAL (ALL SITES)", "", "", "", "", "",
-      lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "", "", "",
+      round1(tot.litres), "", "",
+      lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "", "",
     ]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet1), "By Site");
 
@@ -114,7 +144,78 @@ export async function GET(request: NextRequest) {
       siteSummary.push([g.name, g.bills.length, lkr(st.rental), lkr(st.fuel), lkr(st.sscl), lkr(st.vat), lkr(st.grand)]);
     }
     siteSummary.push(["GRAND TOTAL", bills.length, lkr(tot.rental), lkr(tot.fuel), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand)]);
+
+    // Dry vs Wet split — per site and overall.
+    const dryBills = bills.filter((b) => isDry(b.rateBasis));
+    const wetBills = bills.filter((b) => !isDry(b.rateBasis));
+    siteSummary.push([], ["DRY vs WET SPLIT"], ["Basis", "Vehicles", "Rental (LKR)", "Fuel (LKR)", "Grand Total (LKR)"]);
+    for (const g of siteGroups) {
+      const d = g.bills.filter((b: any) => isDry(b.rateBasis));
+      const w = g.bills.filter((b: any) => !isDry(b.rateBasis));
+      const sd = sumBills(d), sw = sumBills(w);
+      if (d.length) siteSummary.push([`${g.name} — Dry`, d.length, lkr(sd.rental), lkr(sd.fuel), lkr(sd.grand)]);
+      if (w.length) siteSummary.push([`${g.name} — Wet`, w.length, lkr(sw.rental), lkr(sw.fuel), lkr(sw.grand)]);
+    }
+    const sdAll = sumBills(dryBills), swAll = sumBills(wetBills);
+    siteSummary.push(
+      ["ALL SITES — Dry", dryBills.length, lkr(sdAll.rental), lkr(sdAll.fuel), lkr(sdAll.grand)],
+      ["ALL SITES — Wet", wetBills.length, lkr(swAll.rental), lkr(swAll.fuel), lkr(swAll.grand)],
+    );
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(siteSummary), "Site Summary");
+
+    // Sheet 3: statement-of-account summary — invoiced / credited / paid /
+    // outstanding per site (the reconciled closing balance).
+    const stmtSummary: any[][] = [
+      [`STATEMENT OF ACCOUNT — ${monthLabel}`],
+      [],
+      ["Site", "Invoices", "Invoiced (LKR)", "Credits (LKR)", "Paid (LKR)", "Outstanding (LKR)"],
+    ];
+    for (const s of statements) {
+      stmtSummary.push([
+        s.projectName, s.invoices.length,
+        lkr(s.invoicedCents), lkr(s.creditedCents), lkr(s.paidCents), lkr(s.outstandingCents),
+      ]);
+    }
+    stmtSummary.push([
+      "GRAND TOTAL", "",
+      lkr(stmtTotals.invoicedCents), lkr(stmtTotals.creditedCents), lkr(stmtTotals.paidCents), lkr(stmtTotals.outstandingCents),
+    ]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stmtSummary), "Statement");
+
+    // Sheet 4: statement detail — every invoice, credit note and payment per
+    // site, closing with the outstanding balance.
+    const stmtDetail: any[][] = [[`STATEMENT OF ACCOUNT (DETAIL) — ${monthLabel}`], []];
+    for (const s of statements) {
+      stmtDetail.push([`SITE: ${s.projectName}${s.projectCode ? `  (${s.projectCode})` : ""}`]);
+      stmtDetail.push(["Invoices", "Vehicle", "Status", "Amount (LKR)"]);
+      for (const inv of s.invoices) {
+        stmtDetail.push([inv.invoiceNumber || "(unissued)", inv.assetCode, inv.status, lkr(inv.grandTotalCents)]);
+      }
+      stmtDetail.push(["", "", "Invoiced", lkr(s.invoicedCents)]);
+      if (s.creditNotes.length > 0) {
+        stmtDetail.push([]);
+        stmtDetail.push(["Credit Notes", "Reason", "Status", "Amount (LKR)"]);
+        for (const c of s.creditNotes) {
+          stmtDetail.push([c.number || "(draft)", c.reason, c.status, lkr(c.amountCents)]);
+        }
+        stmtDetail.push(["", "", "Credited (issued)", lkr(s.creditedCents)]);
+      }
+      if (s.payments.length > 0) {
+        stmtDetail.push([]);
+        stmtDetail.push(["Payments", "Method", "Reference", "Amount (LKR)"]);
+        for (const p of s.payments) {
+          stmtDetail.push([
+            new Date(p.paidDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }),
+            p.method || "—", p.reference || "—", lkr(p.amountCents),
+          ]);
+        }
+        stmtDetail.push(["", "", "Paid", lkr(s.paidCents)]);
+      }
+      stmtDetail.push(["", "", "OUTSTANDING", lkr(s.outstandingCents)]);
+      stmtDetail.push([]);
+    }
+    stmtDetail.push(["GRAND OUTSTANDING (ALL SITES)", "", "", lkr(stmtTotals.outstandingCents)]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(stmtDetail), "Statement Detail");
 
     const fileSuffix = siteCode ? `${siteCode}_${periodKey}` : periodKey;
     const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });

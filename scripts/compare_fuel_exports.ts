@@ -1,0 +1,155 @@
+import * as fs from "fs";
+
+// Compare two fuel exports before merging them, and say whether merging would
+// double-count. READ-ONLY — touches no database.
+//
+// Two instances that were seeded from overlapping paperwork can hold the same
+// physical refuel under different spellings: a different source label, a date
+// shifted by a timezone, a monthly total on one side against daily rows on the
+// other. An additive merge cannot tell those apart from genuinely new fuel, so
+// it silently inflates the totals — which is exactly what Galagedara turned out
+// to be, where one set of refuels appeared twice under two labels.
+//
+// Exact natural-key matching answers "is this literally the same row". It does
+// not answer "is this the same fuel", so this also compares litres per vehicle
+// per month: a month where both sides hold fuel for one vehicle but the rows do
+// not match is the shape that needs a human look before any merge.
+//
+//   npx tsx scripts/compare_fuel_exports.ts data/fuel-data-export.json /path/vps-live.json
+
+const [fileA, fileB] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+if (!fileA || !fileB) { console.error("usage: compare_fuel_exports.ts <a.json> <b.json>"); process.exit(1); }
+
+const load = (f: string) => {
+  if (!fs.existsSync(f)) { console.error(`not found: ${f}`); process.exit(1); }
+  const p = JSON.parse(fs.readFileSync(f, "utf8"));
+  if (!/^fuel-(data|issues)-export$/.test(p.kind)) { console.error(`not a fuel export: ${f}`); process.exit(1); }
+  return p;
+};
+
+const nameOf = (f: string) => f.split("/").pop() || f;
+const alnum = (s: string) => String(s).replace(/[^a-z0-9]/gi, "").toUpperCase();
+const key = (i: any, r: (c: string, g?: string) => string) =>
+  `${r(i.asset, i.regNo)}|${i.date}|${i.litres}|${i.pricePerLitre}`;   // source deliberately excluded: the same refuel is labelled differently on each side
+const ym = (iso: string) => iso.slice(0, 7);
+const L = (n: number) => n.toFixed(0).padStart(7);
+
+function counted<T>(rows: T[], k: (r: T) => string) {
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(k(r), (m.get(k(r)) || 0) + 1);
+  return m;
+}
+// how many of A's rows are not covered by B's, counting duplicates properly
+function surplus(a: Map<string, number>, b: Map<string, number>) {
+  let n = 0;
+  for (const [k, c] of a) n += Math.max(0, c - (b.get(k) || 0));
+  return n;
+}
+
+const A = load(fileA), B = load(fileB);
+const nA = nameOf(fileA), nB = nameOf(fileB);
+
+// The two instances name the same vehicle differently — one by fleet code, the
+// other by number plate (BM-01 here is 48-4849 there). Comparing the raw labels
+// counts one machine as two and understates the overlap, which is the number the
+// merge decision rests on. Fold both sides onto A's code wherever a plate or code
+// matches, exactly as the importer resolves them.
+const canon = new Map<string, string>();
+for (const a of A.assets || []) {
+  canon.set(alnum(a.code), a.code);
+  if (a.regNo) canon.set(alnum(a.regNo), a.code);
+}
+const aliased: string[] = [];
+for (const b of B.assets || []) {
+  const hit = canon.get(alnum(b.code)) || (b.regNo ? canon.get(alnum(b.regNo)) : undefined);
+  if (hit && hit !== b.code) { canon.set(alnum(b.code), hit); aliased.push(`${b.code} = ${hit}`); }
+  else if (!hit) canon.set(alnum(b.code), b.code);
+}
+const resolve = (code: string, regNo?: string) =>
+  canon.get(alnum(code)) || (regNo ? canon.get(alnum(regNo)) : undefined) || code;
+if (aliased.length)
+  console.log(`\n  note: ${aliased.length} vehicle(s) appear under different names on each side` +
+    ` — folded together for this comparison\n         ${aliased.slice(0, 6).join(" · ")}${aliased.length > 6 ? " …" : ""}`);
+
+console.log(`\n=== Comparing fuel exports ===`);
+console.log(`  A = ${nA}   (exported ${A.exportedAt})`);
+console.log(`  B = ${nB}   (exported ${B.exportedAt})\n`);
+
+const rows: [string, number, number][] = [
+  ["fuel issues", A.issues?.length || 0, B.issues?.length || 0],
+  ["tanks", A.tanks?.length || 0, B.tanks?.length || 0],
+  ["replenishments", A.bulkRequests?.length || 0, B.bulkRequests?.length || 0],
+  ["meter readings", A.meterReadings?.length || 0, B.meterReadings?.length || 0],
+  ["site allocations", A.assignments?.length || 0, B.assignments?.length || 0],
+  ["assets", A.assets?.length || 0, B.assets?.length || 0],
+];
+console.log(`  ${"".padEnd(18)}${"A".padStart(9)}${"B".padStart(11)}`);
+for (const [l, a, b] of rows) console.log(`  ${l.padEnd(18)}${String(a).padStart(9)}${String(b).padStart(11)}`);
+
+// ------------------------------------------------------------- exact matching
+const kA = counted<any>(A.issues || [], (i) => key(i, resolve));
+const kB = counted<any>(B.issues || [], (i) => key(i, resolve));
+const onlyA = surplus(kA, kB), onlyB = surplus(kB, kA);
+const shared = (A.issues?.length || 0) - onlyA;
+console.log(`\n--- fuel issues, exact row match ---`);
+console.log(`  identical on both sides : ${shared}`);
+console.log(`  only in A               : ${onlyA}`);
+console.log(`  only in B               : ${onlyB}`);
+
+// ---------------------------------------------- same fuel recorded differently
+const vmA = new Map<string, number>(), vmB = new Map<string, number>();
+for (const i of A.issues || []) { const k = `${resolve(i.asset, i.regNo)}|${ym(i.date)}`; vmA.set(k, (vmA.get(k) || 0) + i.litres); }
+for (const i of B.issues || []) { const k = `${resolve(i.asset, i.regNo)}|${ym(i.date)}`; vmB.set(k, (vmB.get(k) || 0) + i.litres); }
+
+const both = [...vmA.keys()].filter((k) => vmB.has(k));
+// A vehicle-month whose litres AGREE across two files that share no exact row is
+// the double-count signal: the same refuels, written down twice under different
+// labels. Differing totals are the ordinary case — a vehicle can legitimately
+// draw at its site and again at the workshop in the same month.
+const identical = both.filter((k) => Math.abs((vmA.get(k) || 0) - (vmB.get(k) || 0)) < 0.5);
+const differing = both.filter((k) => !identical.includes(k));
+console.log(`\n--- overlap risk: vehicle-months present on BOTH sides ---`);
+console.log(`  vehicle-months in A: ${vmA.size} · in B: ${vmB.size} · in both: ${both.length}`);
+if (!both.length) {
+  console.log(`  none — the two sets never describe the same vehicle in the same month,`);
+  console.log(`  so an additive merge cannot double-count.`);
+} else {
+  console.log(`  matching litres: ${identical.length}   ·   differing: ${differing.length}`);
+
+  if (identical.length) {
+    console.log(`\n  SAME LITRES ON BOTH SIDES — the same refuels recorded twice. Merging`);
+    console.log(`  these would double them. Every one is listed:\n`);
+    console.log(`  ${"vehicle-month".padEnd(24)}${"A litres".padStart(9)}${"B litres".padStart(10)}`);
+    for (const k of identical.sort()) console.log(`  ${k.padEnd(24)}${L(vmA.get(k) || 0)}${L(vmB.get(k) || 0)}`);
+  } else {
+    console.log(`\n  No vehicle-month carries the same litres on both sides. Nothing here looks`);
+    console.log(`  like the same fuel written down twice, so a merge should be additive.`);
+  }
+
+  if (differing.length) {
+    console.log(`\n  Differing totals (${differing.length}) — ordinarily fine: one vehicle can fuel at its`);
+    console.log(`  site and again at the workshop in the same month. First 15:\n`);
+    for (const k of differing.sort().slice(0, 15))
+      console.log(`  ${k.padEnd(24)}${L(vmA.get(k) || 0)}${L(vmB.get(k) || 0)}`);
+  }
+}
+
+// ------------------------------------------------------------- other datasets
+const mrA = counted<any>(A.meterReadings || [], (m) => `${resolve(m.asset)}|${m.readingDate}|${m.value}`);
+const mrB = counted<any>(B.meterReadings || [], (m) => `${resolve(m.asset)}|${m.readingDate}|${m.value}`);
+const asA = counted<any>(A.assignments || [], (x) => `${x.asset}|${x.project}|${x.startDate}`);
+const asB = counted<any>(B.assignments || [], (x) => `${x.asset}|${x.project}|${x.startDate}`);
+const rqA = counted<any>(A.bulkRequests || [], (r) => `${r.tank}|${r.litres}|${r.createdAt}`);
+const rqB = counted<any>(B.bulkRequests || [], (r) => `${r.tank}|${r.litres}|${r.createdAt}`);
+console.log(`\n--- what each side would contribute ---`);
+console.log(`  meter readings   only in A ${surplus(mrA, mrB)} · only in B ${surplus(mrB, mrA)}`);
+console.log(`  site allocations only in A ${surplus(asA, asB)} · only in B ${surplus(asB, asA)}`);
+console.log(`  replenishments   only in A ${surplus(rqA, rqB)} · only in B ${surplus(rqB, rqA)}`);
+
+const codesA = new Set((A.assets || []).map((a: any) => resolve(a.code, a.regNo)));
+const codesB = new Set((B.assets || []).map((a: any) => resolve(a.code, a.regNo)));
+const missB = [...codesA].filter((c) => !codesB.has(c));
+const missA = [...codesB].filter((c) => !codesA.has(c));
+console.log(`  vehicles in A but not B: ${missB.length}${missB.length ? ` (${missB.slice(0, 8).join(", ")}${missB.length > 8 ? " …" : ""})` : ""}`);
+console.log(`  vehicles in B but not A: ${missA.length}${missA.length ? ` (${missA.slice(0, 8).join(", ")}${missA.length > 8 ? " …" : ""})` : ""}`);
+console.log();

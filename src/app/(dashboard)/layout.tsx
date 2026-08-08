@@ -26,6 +26,8 @@ import {
   Target,
   Building2,
   AlertTriangle,
+  ClipboardList,
+  Handshake,
   Filter as FilterIcon
 } from "lucide-react";
 
@@ -54,6 +56,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
   const isAdmin = session.role === "ADMIN";
   const isAllocator = session.role === "ALLOCATOR";
   const isWorkshop = session.role === "WORKSHOP";
+  const isSitePump = session.role === "SITE_PUMP";
  
   let navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -64,16 +67,19 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Allocator Console", href: "/allocator", icon: Car },
       { label: "Workshop Console", href: "/workshop", icon: Database },
       { label: "Fleet Directory", href: "/fleet", icon: Car },
+      { label: "Hire Fleet", href: "/hire", icon: Handshake },
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
+      { label: "Fuel Reports", href: "/fuel/report", icon: FileCheck },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
       { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Filter Database", href: "/filters", icon: FilterIcon },
+      { label: "Lubricants", href: "/lubricants", icon: Droplets },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },
@@ -91,6 +97,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Filter Database", href: "/filters", icon: FilterIcon },
       { label: "Analytics", href: "/analytics", icon: Activity },
@@ -101,10 +108,29 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Workshop Console", href: "/workshop", icon: Database },
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
+      { label: "Fuel Reports", href: "/fuel/report", icon: FileCheck },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Filter Database", href: "/filters", icon: FilterIcon }
+    );
+  } else if (isSitePump) {
+    // SITE_PUMP: a site pump operator — issues fuel + requests from the site's
+    // pump (Site Console), and sees only their own site's data.
+    navItems.push(
+      { label: "Site Console", href: "/site", icon: Database },
+      { label: "Fleet Directory", href: "/fleet", icon: Car },
+      { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
+      { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
+      { label: "Fuel Reports", href: "/fuel/report", icon: FileCheck },
+      { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
+      { label: "Meter Readings", href: "/readings", icon: Gauge },
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else {
     // USER role
@@ -112,11 +138,13 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
+      { label: "Fuel Reports", href: "/fuel/report", icon: FileCheck },
       { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Reports Console", href: "/reports", icon: FileCheck },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Analytics", href: "/analytics", icon: Activity },
       { label: "Billing", href: "/billing", icon: Receipt },

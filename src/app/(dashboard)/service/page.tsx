@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -5,7 +6,7 @@ import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getFleetServiceStatus } from "@/lib/service/fleet";
 import { logServiceAction } from "@/app/actions/service";
-import { Wrench, AlertTriangle, Clock, CheckCircle2, HelpCircle } from "lucide-react";
+import { Wrench, AlertTriangle, Clock, CheckCircle2, HelpCircle, ClipboardList } from "lucide-react";
 
 interface PageProps {
   searchParams: Promise<{ status?: string; logged?: string; logerror?: string }>;
@@ -29,7 +30,7 @@ export default async function ServicePage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
 
-  const projectId = session.role === "USER" ? session.projectId ?? undefined : undefined;
+  const projectId = isSiteUser(session.role) ? session.projectId ?? undefined : undefined;
   const isAdmin = session.role === "ADMIN";
   const sp = await props.searchParams;
   const statusFilter = (sp.status || "").toUpperCase();
@@ -57,13 +58,20 @@ export default async function ServicePage(props: PageProps) {
 
   return (
     <div className="space-y-8">
-      <div className="border-b border-white/5 pb-4">
-        <h1 className="text-xl font-bold text-white tracking-wide flex items-center gap-2">
-          <Wrench className="w-5 h-5 text-indigo-400" /> Service Planner
-        </h1>
-        <p className="text-xs text-gray-400 mt-1">
-          Service is due on the <strong>higher</strong> of recorded meter growth and fuel-derived running since the last service (machinery 500 hr · road 5,000 km, editable).
-        </p>
+      <div className="border-b border-white/5 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-white tracking-wide flex items-center gap-2">
+            <Wrench className="w-5 h-5 text-indigo-400" /> Service Planner
+          </h1>
+          <p className="text-xs text-gray-400 mt-1">
+            Service is due on the <strong>higher</strong> of recorded meter growth and fuel-derived running since the last service (machinery 500 hr · road 5,000 km, editable).
+          </p>
+        </div>
+        {isAdmin && (
+          <Link href="/service/new" className="shrink-0 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold text-xs rounded-xl px-4 py-2.5 flex items-center gap-1.5 self-start">
+            <ClipboardList className="w-4 h-4" /> New Service Sheet
+          </Link>
+        )}
       </div>
 
       {sp.logged && (

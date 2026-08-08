@@ -16,6 +16,10 @@ export interface LineComputation {
   fuelCostCents: number;
   ssclRate: number;
   vatRate: number;
+  // Fuel-only bill: a privately-owned vehicle E&C fuels but does not rent. No
+  // rental is charged (regardless of rate/minimum) and the issued fuel is always
+  // billed, so the subtotal is the fuel alone.
+  fuelOnly?: boolean;
 }
 
 export interface ComputedTotals {
@@ -30,12 +34,15 @@ export interface ComputedTotals {
 
 export function computeTotals(i: LineComputation): ComputedTotals {
   const billableUnits = Math.max(i.actualUnits, i.minimumUnits);
-  const rentalAmountCents = Math.round(billableUnits * i.rateCents);
+  // A fuel-only vehicle is not rented, so no rental is charged whatever the
+  // rate/minimum would otherwise say.
+  const rentalAmountCents = i.fuelOnly ? 0 : Math.round(billableUnits * i.rateCents);
 
   // E&C supplies the fuel whenever a driver is provided (Fully Wet or Wet), so
   // the vehicle's monthly fuel total — issued at any site/pump — is billed on
   // top of the rental. On the Dry basis the customer self-fuels, so it is not.
-  const fuelChargedCents = i.rateBasis === "fw" || i.rateBasis === "w" ? i.fuelCostCents : 0;
+  // A fuel-only vehicle is always billed its issued fuel (that is the point).
+  const fuelChargedCents = i.fuelOnly || i.rateBasis === "fw" || i.rateBasis === "w" ? i.fuelCostCents : 0;
 
   const subtotalCents = rentalAmountCents + fuelChargedCents;
   const ssclCents = Math.round(subtotalCents * i.ssclRate);

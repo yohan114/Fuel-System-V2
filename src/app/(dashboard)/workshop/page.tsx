@@ -3,11 +3,50 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import WorkshopConsole from "./WorkshopConsole";
+import PumpOverview, { PumpCard } from "./PumpOverview";
 
 export default async function WorkshopPage() {
   const session = await getSession();
   if (!session || (session.role !== "ADMIN" && session.role !== "WORKSHOP")) {
     redirect("/");
+  }
+
+  // An operator is posted to one pump and wants to work it. An admin owns all of
+  // them and wants the estate: which are dry, which hold stock, where today's
+  // fuel went. Showing an admin a single arbitrary tank — whichever came back
+  // first — answered a question nobody asked.
+  if (session.role === "ADMIN" && !session.bulkTankId) {
+    const tanks = await prisma.bulkTank.findMany({
+      include: { project: { select: { code: true, name: true } } },
+      orderBy: { name: "asc" },
+    });
+
+    // "Today" is the operator's day in Colombo, not the server's in UTC.
+    const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
+    const dayStart = new Date(`${todayStr}T00:00:00+05:30`);
+    const dayEnd = new Date(`${todayStr}T23:59:59.999+05:30`);
+    const issuedToday = await prisma.fuelIssue.groupBy({
+      by: ["bulkTankId"],
+      where: { voided: false, issueDate: { gte: dayStart, lte: dayEnd } },
+      _sum: { litres: true },
+    });
+    const byTank = new Map(issuedToday.map((r) => [r.bulkTankId, r._sum.litres || 0]));
+
+    const pumps: PumpCard[] = tanks.map((t) => ({
+      id: t.id,
+      name: t.name,
+      fuelKind: t.fuelKind,
+      capacity: t.capacity,
+      balance: t.balance,
+      projectCode: t.project?.code ?? null,
+      projectName: t.project?.name ?? null,
+      issuedToday: byTank.get(t.id) || 0,
+      // The workshop pump is the one that may fuel anything, wherever it sits;
+      // every other pump is bound to its own site's vehicles.
+      isWorkshop: /workshop/i.test(t.project?.name ?? t.name),
+    }));
+
+    return <PumpOverview pumps={pumps} />;
   }
 
   // Find the workshop user's assigned tank
@@ -67,19 +106,9 @@ export default async function WorkshopPage() {
   const colomboTodayStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
   const [colomboYear, colomboMonth, colomboDay] = colomboTodayStr.split("-").map(Number);
   
-  const colomboHour = parseInt(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Colombo",
-      hour: "numeric",
-      hour12: false,
-    }).format(now),
-    10
-  );
-  
-  const isLocked = colomboHour < 8 || colomboHour >= 17;
-  const lockMessage = isLocked
-    ? (colomboHour < 8 ? "Closed (Opens at 08:00 AM)" : "Closed (Locked at 17:00 PM)")
-    : "Open (Locks at 17:00 PM)";
+  // Fuel issuing is allowed 24/7 — the 08:00–17:00 lock has been removed.
+  const isLocked = false;
+  const lockMessage = "Open (24/7)";
     
   const colomboMidnight = new Date(colomboYear, colomboMonth - 1, colomboDay);
   const minDate = new Date(colomboMidnight.getTime() - 14 * 24 * 60 * 60 * 1000);

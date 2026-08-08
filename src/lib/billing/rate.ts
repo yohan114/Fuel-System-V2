@@ -30,6 +30,30 @@ export function getWetRateCents(rate: RentalRate, mode: BillingMode): number | n
   return pickRateCents(rate, mode, "w");
 }
 
+const VALID_BASES = new Set(["fw", "w", "d"]);
+function asBasis(b: unknown): RateBasis | null {
+  return typeof b === "string" && VALID_BASES.has(b) ? (b as RateBasis) : null;
+}
+
+// Precedence for the hire basis of a bill: an explicit choice already on the
+// draft wins (an admin set it, or a bulk re-cost), else the vehicle's configured
+// default (a dry-hired machine bills dry automatically), else Wet.
+export function resolveRateBasis(
+  existingBasis: string | null | undefined,
+  defaultBasis: string | null | undefined,
+): RateBasis {
+  return asBasis(existingBasis) ?? asBasis(defaultBasis) ?? "w";
+}
+
+// Maps an allocation's Dry/Wet hire type to a rate basis: a WET allocation bills
+// the wet rate (fuel included), a DRY allocation the dry rate (fuel excluded).
+// Returns undefined when the allocation carries no explicit type, so the caller
+// falls back to the vehicle's own rate-card default. This is what lets a site
+// that is not using the system be allocated and billed Dry or Wet by hand.
+export function basisFromBillingType(billingType: string | null | undefined): RateBasis | undefined {
+  return billingType === "WET" ? "w" : billingType === "DRY" ? "d" : undefined;
+}
+
 // Default billing mode for an asset: portables are day-hire; HOURS-metered
 // machines bill hourly; KM-metered vehicles bill per-km.
 export function defaultModeForAsset(

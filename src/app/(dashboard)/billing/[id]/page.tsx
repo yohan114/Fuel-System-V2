@@ -1,3 +1,5 @@
+import { isSiteUser } from "@/lib/roles";
+import { fuelDateGB } from "@/lib/colombo-date";
 import React from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
@@ -7,6 +9,8 @@ import { ArrowLeft, Download, FileSpreadsheet, Building2, Calendar } from "lucid
 import { unitLabel, basisLabel, modeLabel, type BillingMode, type RateBasis } from "@/lib/billing/calc";
 import { formatVariancePct } from "@/lib/reports/recommended";
 import { getWetRateCents } from "@/lib/billing/rate";
+import { buildBillSnapshot, parseBillSnapshot, summarizeRevisionDiff } from "@/lib/billing/revisions";
+import { computeSiteSplit, effectiveMinimumUnits, assignedDaysFromLines } from "@/lib/billing/site-split";
 import BillActions from "./BillActions";
 import BillingRunningChart from "../components/BillingRunningChart";
 import { createCreditNoteAction, issueCreditNoteAction } from "@/app/actions/finance";
@@ -38,7 +42,11 @@ export default async function BillDetailPage(props: PageProps) {
 
   const bill = await prisma.bill.findUnique({
     where: { id },
-    include: { lineItems: true },
+    include: {
+      lineItems: true,
+      payments: { orderBy: { paidDate: "asc" } },
+      revisions: { orderBy: { revision: "asc" } },
+    },
   });
   if (!bill) notFound();
 
@@ -51,8 +59,13 @@ export default async function BillDetailPage(props: PageProps) {
     ? getWetRateCents(assetWithRate.rentalRate, bill.billingMode as BillingMode)
     : null;
 
+  // A fuel-only bill (private vehicle E&C fuels but does not rent) carries no
+  // RENTAL line item, so the rental/usage breakdown is replaced with a simple
+  // fuel-charge summary.
+  const isFuelOnly = !bill.lineItems.some((l) => l.kind === "RENTAL");
+
   // USER scope: only their own project's bills.
-  if (session.role === "USER" && session.projectId && bill.projectId !== session.projectId) {
+  if (isSiteUser(session.role) && session.projectId && bill.projectId !== session.projectId) {
     notFound();
   }
 
@@ -71,7 +84,7 @@ export default async function BillDetailPage(props: PageProps) {
   });
 
   const fuelData = fuelIssues.map((f) => ({
-    date: new Date(f.issueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }),
+    date: fuelDateGB(f.issueDate),
     litres: f.litres,
   }));
 
@@ -79,13 +92,47 @@ export default async function BillDetailPage(props: PageProps) {
   const fuelConsEcon = bill.fuelConsEconSnapshot ?? assetWithRate?.rentalRate?.fuelConsEcon ?? null;
   const fuelConsTyp = bill.fuelConsTypSnapshot ?? assetWithRate?.rentalRate?.fuelConsTyp ?? null;
 
+  // Per-site split for months the vehicle worked several sites — rebuilt from
+  // the stored line items so it always matches what was actually billed.
+  const siteSplit = computeSiteSplit(bill.lineItems, bill.minimumUnits);
+
+  // Availability proration: a vehicle posted for only part of the month owes a
+  // prorated share of the guaranteed minimum. Re-derive the days-on-site and the
+  // effective (prorated) minimum from the bill's own line items for display.
+  const daysInBillMonth = new Date(bill.year, bill.month, 0).getDate();
+  const daysOnSite = assignedDaysFromLines(bill.lineItems);
+  const effMinimumUnits = effectiveMinimumUnits(bill.lineItems, bill.minimumUnits, daysInBillMonth);
+  const isProrated = daysOnSite > 0 && daysOnSite < daysInBillMonth;
+
+  // Revision history: each stored revision is a prior version of this invoice,
+  // captured just before a regenerate replaced it. Diff every revision against
+  // whatever superseded it (the next revision, or — for the newest — the live
+  // bill) so the reader sees exactly what each regenerate changed. Newest first.
+  const liveSnapshot = buildBillSnapshot(bill, bill.lineItems);
+  const revisionRows = bill.revisions
+    .map((rev, i) => {
+      const prevSnap = parseBillSnapshot(rev.snapshotJson);
+      const nextSnap =
+        i < bill.revisions.length - 1
+          ? parseBillSnapshot(bill.revisions[i + 1].snapshotJson)
+          : liveSnapshot;
+      return {
+        revision: rev.revision,
+        createdAt: rev.createdAt,
+        reason: rev.reason,
+        grandTotalCents: rev.grandTotalCents,
+        diff: prevSnap && nextSnap ? summarizeRevisionDiff(prevSnap, nextSnap) : [],
+      };
+    })
+    .reverse();
+
   // Build running curves
   let runningFuelLitres = 0;
   const fuelIssuesWithRunning = fuelIssues.map((f) => {
     runningFuelLitres += f.litres;
     return {
       date: f.issueDate,
-      dateStr: new Date(f.issueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }),
+      dateStr: fuelDateGB(f.issueDate),
       runningStandard: fuelConsTyp && fuelConsTyp > 0 ? (runningFuelLitres / fuelConsTyp) : 0,
       runningEcon: fuelConsEcon && fuelConsEcon > 0 ? (runningFuelLitres / fuelConsEcon) : 0,
     };
@@ -207,11 +254,16 @@ export default async function BillDetailPage(props: PageProps) {
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Vehicle</p>
             <p className="text-sm font-bold text-white mt-1">{bill.assetCode}</p>
             <p className="text-xs text-gray-500">{bill.assetLabel}</p>
+            {bill.driverName && <p className="text-xs text-gray-500 mt-0.5">Driver: <span className="text-gray-300">{bill.driverName}</span></p>}
           </div>
           <div>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Billing</p>
-            <p className="text-sm font-bold text-white mt-1">{modeLabel(bill.billingMode as BillingMode)}</p>
-            <p className="text-xs text-gray-500">{basisLabel(bill.rateBasis as RateBasis)}</p>
+            <p className="text-sm font-bold text-white mt-1">{isFuelOnly ? "Fuel only" : modeLabel(bill.billingMode as BillingMode)}</p>
+            <p className="text-xs text-gray-500">
+              {isFuelOnly
+                ? "No rental"
+                : `${basisLabel(bill.rateBasis as RateBasis)} · fuel ${bill.rateBasis === "w" || bill.rateBasis === "fw" ? "included" : "excluded"}`}
+            </p>
           </div>
           <div>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Grand Total</p>
@@ -235,7 +287,18 @@ export default async function BillDetailPage(props: PageProps) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Rental / usage breakdown */}
         <div className="bg-[#121420] border border-white/5 rounded-2xl p-6">
-          <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">Rental & Usage</h3>
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4">{isFuelOnly ? "Fuel Charge" : "Rental & Usage"}</h3>
+          {isFuelOnly ? (
+            <dl className="space-y-2.5 text-xs">
+              <Row label="Vehicle" value="Private property — fuel only" strong />
+              <Row label={`Fuel issued — monthly total, all sites (${bill.fuelLitres.toLocaleString("en-LK", { maximumFractionDigits: 1 })} L)`} value={rs(bill.fuelCostCents)} strong />
+              <div className="rounded-xl bg-indigo-500/5 border border-indigo-500/10 px-3 py-2 mt-1">
+                <p className="text-[11px] text-indigo-200/90">
+                  E&amp;C issues diesel to this privately-owned vehicle and recharges the fuel cost only — no machine rental is billed.
+                </p>
+              </div>
+            </dl>
+          ) : (
           <dl className="space-y-2.5 text-xs">
             {/* Standard comparison lines if hourly or perkm mode */}
             {(bill.billingMode === "hourly" || bill.billingMode === "perkm") ? (
@@ -264,6 +327,27 @@ export default async function BillDetailPage(props: PageProps) {
                   }
                   active={bill.derivedFromFuel && bill.derivedEconUnits != null && Math.abs(bill.actualUnits - bill.derivedEconUnits) < 0.1}
                 />
+                {(() => {
+                  // Heavy-work upper bound of the fuel-derived bracket, from the
+                  // snapshotted heavy consumption rate (litres ÷ heavy L/unit).
+                  const heavyRate = bill.fuelConsHeavySnapshot ?? assetWithRate?.rentalRate?.fuelConsHeavy ?? null;
+                  if (heavyRate == null || heavyRate <= 0 || bill.fuelLitres <= 0) return null;
+                  const heavyUnits = bill.fuelLitres / heavyRate;
+                  return (
+                    <Row
+                      label={`Actual heavy ${unit} (fuel-derived)`}
+                      value={heavyUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })}
+                      active={bill.derivedFromFuel && Math.abs(bill.actualUnits - heavyUnits) < 0.1}
+                    />
+                  );
+                })()}
+                {bill.derivedFromFuel && fuelConsEcon != null && fuelConsTyp != null && (
+                  <div className="rounded-xl bg-indigo-500/5 border border-indigo-500/10 px-3 py-2 mt-1">
+                    <p className="text-[11px] text-indigo-200/90">
+                      Fuel-derived range: <strong>{(bill.fuelLitres / (bill.fuelConsHeavySnapshot ?? assetWithRate?.rentalRate?.fuelConsHeavy ?? fuelConsTyp)).toFixed(0)}</strong>–<strong>{(bill.fuelLitres / fuelConsEcon).toFixed(0)} {unit}</strong> for {bill.fuelLitres.toFixed(0)} L. Billed on the typical rate ({bill.derivedStandardUnits != null ? bill.derivedStandardUnits.toFixed(0) : "—"} {unit}) — the defensible mid-point of the econ→heavy band.
+                    </p>
+                  </div>
+                )}
                 {variancePct != null && (
                   <div className="flex items-center justify-between">
                     <dt className="text-gray-400">Meter vs recommended variance</dt>
@@ -280,7 +364,10 @@ export default async function BillDetailPage(props: PageProps) {
                 value={bill.actualUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })}
               />
             )}
-            <Row label={`Minimum guaranteed ${unit}`} value={bill.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })} />
+            <Row
+              label={isProrated ? `Minimum guaranteed ${unit} (${effMinimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })} of ${bill.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 0 })} — ${daysOnSite} of ${daysInBillMonth} days on site)` : `Minimum guaranteed ${unit}`}
+              value={effMinimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })}
+            />
             <Row label={`Billable ${unit}`} value={bill.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 2 })} strong />
             {bill.openingMeter != null && (
               <Row label="Opening → Closing meter" value={`${bill.openingMeter.toLocaleString()} → ${bill.closingMeter?.toLocaleString() ?? "—"}`} />
@@ -299,6 +386,7 @@ export default async function BillDetailPage(props: PageProps) {
             )}
             <Row label={`Fuel — monthly total, all sites (${bill.fuelLitres.toLocaleString("en-LK", { maximumFractionDigits: 1 })} L)`} value={(bill.rateBasis === "fw" || bill.rateBasis === "w") && bill.fuelCostCents > 0 ? rs(bill.fuelCostCents) : `Not billed (${basisLabel(bill.rateBasis as RateBasis)})`} />
           </dl>
+          )}
         </div>
 
         {/* Tax breakdown */}
@@ -341,6 +429,64 @@ export default async function BillDetailPage(props: PageProps) {
         </table>
       </div>
 
+      {/* Multi-site split — the per-site hire calculation, prorated by allocated days */}
+      {siteSplit && (
+        <div className="bg-[#121420] border border-indigo-500/10 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-indigo-400" /> Site Split — {siteSplit.rows.length} sites in this month
+            </h3>
+            <span className="text-[11px] text-gray-500">
+              Minimum {siteSplit.minimumUnits.toLocaleString("en-LK")} {unit} ÷ {siteSplit.totalDays} allocated days, shared by days on site
+            </span>
+          </div>
+          <div className="overflow-x-auto mt-3">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-gray-500 border-b border-white/5">
+                  <th className="px-3 py-2 font-semibold">Site</th>
+                  <th className="px-3 py-2 font-semibold text-right">Days</th>
+                  <th className="px-3 py-2 font-semibold text-right">Min share ({unit})</th>
+                  <th className="px-3 py-2 font-semibold text-right">Billed ({unit})</th>
+                  <th className="px-3 py-2 font-semibold text-right">Rental</th>
+                  <th className="px-3 py-2 font-semibold text-right">Fuel</th>
+                  <th className="px-3 py-2 font-semibold text-right">Site total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {siteSplit.rows.map((r) => (
+                  <tr key={r.projectKey} className="border-b border-white/5">
+                    <td className="px-3 py-2 text-white font-medium">{r.projectName}</td>
+                    <td className="px-3 py-2 text-right text-gray-300 font-mono">{r.days}</td>
+                    <td className="px-3 py-2 text-right text-gray-400 font-mono">{r.minShareUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      <span className="text-gray-200">{r.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</span>
+                      {r.atMinimum && <span className="ml-1.5 text-[9px] uppercase tracking-wider text-amber-400/80 bg-amber-500/10 rounded px-1 py-0.5">min</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right text-gray-200 font-mono">{rs(r.rentalCents)}</td>
+                    <td className="px-3 py-2 text-right text-gray-300 font-mono">{r.fuelCents > 0 ? <>{rs(r.fuelCents)} <span className="text-gray-600">({r.fuelLitres.toLocaleString("en-LK")} L)</span></> : "—"}</td>
+                    <td className="px-3 py-2 text-right text-white font-semibold font-mono">{rs(r.totalCents)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td className="px-3 py-2 text-gray-400 font-semibold uppercase tracking-wider text-[10px]">All sites</td>
+                  <td className="px-3 py-2 text-right text-gray-300 font-mono">{siteSplit.totalDays}</td>
+                  <td className="px-3 py-2 text-right text-gray-400 font-mono">{siteSplit.minimumUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}</td>
+                  <td className="px-3 py-2 text-right text-gray-200 font-mono">{siteSplit.rows.reduce((s, r) => s + r.billableUnits, 0).toLocaleString("en-LK", { maximumFractionDigits: 1 })}</td>
+                  <td className="px-3 py-2 text-right text-gray-200 font-mono">{rs(siteSplit.rows.reduce((s, r) => s + r.rentalCents, 0))}</td>
+                  <td className="px-3 py-2 text-right text-gray-300 font-mono">{rs(siteSplit.rows.reduce((s, r) => s + r.fuelCents, 0))}</td>
+                  <td className="px-3 py-2 text-right text-indigo-300 font-bold font-mono">{rs(siteSplit.rows.reduce((s, r) => s + r.totalCents, 0))}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-2">
+            Each site is billed the higher of its recorded usage and its share of the monthly minimum
+            ({siteSplit.minimumUnits.toLocaleString("en-LK")} {unit} × days on site ÷ {siteSplit.totalDays} days). Fuel is charged to the site where it was issued.
+          </p>
+        </div>
+      )}
+
       {bill.derivedFromFuel && (
         <div className="bg-amber-500/5 border border-amber-500/15 rounded-2xl p-4 text-xs text-amber-300 flex items-start gap-3">
           <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] shrink-0 mt-0.5">Notice</span>
@@ -354,6 +500,48 @@ export default async function BillDetailPage(props: PageProps) {
         <div className="bg-[#121420] border border-white/5 rounded-2xl p-5 text-xs text-gray-400">
           <span className="text-gray-500 font-semibold uppercase tracking-wider text-[10px]">Notes</span>
           <p className="mt-2">{bill.notes}</p>
+        </div>
+      )}
+
+      {/* Revision history — prior versions of this invoice, captured on each regenerate */}
+      {revisionRows.length > 0 && (
+        <div className="bg-[#121420] border border-white/5 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Revision History</h3>
+            <span className="text-xs text-gray-500">
+              {revisionRows.length} prior version{revisionRows.length !== 1 ? "s" : ""} · regenerated in place
+            </span>
+          </div>
+          <div className="space-y-2">
+            {revisionRows.map((r) => (
+              <div key={r.revision} className="rounded-xl bg-white/[0.02] border border-white/5 px-4 py-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 bg-white/5 rounded-md px-2 py-0.5">
+                      Rev {r.revision}
+                    </span>
+                    <span className="text-xs text-gray-400">was {rs(r.grandTotalCents)}</span>
+                    {r.reason && <span className="text-xs text-gray-500 italic">— {r.reason}</span>}
+                  </div>
+                  <span className="text-[11px] text-gray-600">
+                    {new Date(r.createdAt).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+                {r.diff.length > 0 ? (
+                  <ul className="mt-2 space-y-0.5">
+                    {r.diff.map((d, di) => (
+                      <li key={di} className="text-[11px] text-gray-400 flex gap-2">
+                        <span className="text-indigo-400/60 shrink-0">→</span>
+                        <span>{d}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-[11px] text-gray-600">No financial change from this regenerate.</p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -441,6 +629,12 @@ export default async function BillDetailPage(props: PageProps) {
         minimumUnits: bill.minimumUnits,
         notes: bill.notes,
         grandTotalCents: bill.grandTotalCents,
+        payments: bill.payments.map((p) => ({
+          amountCents: p.amountCents,
+          paidDate: p.paidDate.toISOString(),
+          method: p.method,
+          reference: p.reference,
+        })),
       }} />}
     </div>
   );

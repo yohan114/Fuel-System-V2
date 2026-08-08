@@ -2,6 +2,8 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
+import { isPumpOperator, isSiteUser } from "@/lib/roles";
+import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
 import { getPriceForDate } from "@/lib/pricing";
 import { extractFileField } from "@/lib/upload";
@@ -41,6 +43,21 @@ export async function createBulkTankAction(formData: FormData) {
     });
     if (existing) {
       return { error: `Tank name "${name}" is already in use` };
+    }
+
+    // A unique NAME does not stop a site getting a second pump record: "CEP-03 E
+    // Package" and "CEP-03 E Package Tank" are different strings and the same
+    // pump. When that happens the site's history splits across two tanks and
+    // neither balance is the real stock. Sites with genuinely two pumps tick the
+    // box; everyone else gets told what already exists.
+    if (projectId) {
+      const already = await prisma.bulkTank.findFirst({
+        where: { projectId },
+        select: { name: true },
+      });
+      if (already && formData.get("allowSecondTank")?.toString() !== "on") {
+        return { error: `This site already has a pump: "${already.name}". If this is a second physical pump, tick "site has more than one pump" — otherwise use the existing one.` };
+      }
     }
 
     const tank = await prisma.bulkTank.create({
@@ -143,23 +160,12 @@ export async function submitBulkRequestAction(formData: FormData) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (colomboHour < 8 || colomboHour >= 17) {
-      return { error: "Fuel operations are only allowed between 08:00 AM and 17:00 PM." };
-    }
-  }
+  // Fuel operations are allowed 24/7 — the 08:00–17:00 time window was removed.
 
   const bulkTankId = formData.get("bulkTankId")?.toString();
   const requestedLitresStr = formData.get("requestedLitres")?.toString();
+  const sourceType = formData.get("sourceType")?.toString() === "SITE" ? "SITE" : "OUTSIDE";
+  const sourceTankId = formData.get("sourceTankId")?.toString() || null;
 
   if (!bulkTankId || !requestedLitresStr) {
     return { error: "Please fill in all required fields" };
@@ -178,6 +184,20 @@ export async function submitBulkRequestAction(formData: FormData) {
       return { error: "Storage tank not found" };
     }
 
+    // When fuel is drawn from another site, validate the source tank now (the
+    // balance is re-checked at approval time, since it can change meanwhile).
+    let sourceTank = null;
+    if (sourceType === "SITE") {
+      if (!sourceTankId) return { error: "Choose the site to draw fuel from." };
+      if (sourceTankId === bulkTankId) return { error: "Source and destination tanks must be different." };
+      sourceTank = await prisma.bulkTank.findUnique({ where: { id: sourceTankId } });
+      if (!sourceTank) return { error: "Source site tank not found." };
+      if (sourceTank.fuelKind !== tank.fuelKind) return { error: "That site holds a different fuel type." };
+      if (sourceTank.balance < requestedLitres) {
+        return { error: `${sourceTank.name} only has ${sourceTank.balance.toFixed(1)}L available.` };
+      }
+    }
+
     const req = await prisma.bulkRequest.create({
       data: {
         bulkTankId: tank.id,
@@ -185,16 +205,19 @@ export async function submitBulkRequestAction(formData: FormData) {
         requestedLitres,
         requestedById: user.id,
         status: "PENDING",
+        sourceType,
+        sourceTankId: sourceType === "SITE" ? sourceTankId : null,
       },
     });
 
+    const sourceLabel = sourceType === "SITE" ? `from site "${sourceTank!.name}"` : "by outside purchase";
     await prisma.auditLog.create({
       data: {
         actorId: user.id,
         action: "CREATE",
         entity: "BulkRequest",
         entityId: req.id,
-        summary: `Requested replenishment of ${requestedLitres}L of ${tank.fuelKind} for ${tank.name}`,
+        summary: `Requested replenishment of ${requestedLitres}L of ${tank.fuelKind} for ${tank.name} ${sourceLabel}`,
       },
     });
 
@@ -203,6 +226,99 @@ export async function submitBulkRequestAction(formData: FormData) {
   } catch (err: any) {
     console.error("Submit bulk request error:", err);
     return { error: err.message || "Failed to submit request" };
+  }
+}
+
+// 2b. Record a bulk refuel — applied to stock immediately, no approval step.
+//
+// A pump operator knows what the supplier just poured into their tank; making
+// them wait for an admin to confirm it left the console showing stock the site
+// did not have, and every issue after that was measured against a wrong figure.
+// So the delivery lands on the tank the moment it is recorded.
+//
+// The trade for that immediacy is that it is final: recorded against the
+// operator's name and never editable, so a wrong figure is corrected by a
+// visible counter-entry rather than by quietly rewriting history. The console
+// confirms the number before submitting, because there is no undo.
+export async function recordBulkRefuelAction(formData: FormData) {
+  let user;
+  try {
+    user = await assertCan("create");
+  } catch {
+    return { error: "You are not authorized to perform this action" };
+  }
+
+  const bulkTankId = formData.get("bulkTankId")?.toString();
+  const litresStr = formData.get("requestedLitres")?.toString();
+  const sourceType = formData.get("sourceType")?.toString() === "SITE" ? "SITE" : "OUTSIDE";
+  const sourceTankId = formData.get("sourceTankId")?.toString() || null;
+
+  if (!bulkTankId || !litresStr) return { error: "Please fill in all required fields" };
+  const litres = parseFloat(litresStr);
+  if (isNaN(litres) || litres <= 0) return { error: "Quantity must be greater than zero" };
+
+  try {
+    const tank = await prisma.bulkTank.findUnique({ where: { id: bulkTankId } });
+    if (!tank) return { error: "Storage tank not found" };
+
+    let sourceTank = null;
+    if (sourceType === "SITE") {
+      if (!sourceTankId) return { error: "Choose the site to draw fuel from." };
+      if (sourceTankId === bulkTankId) return { error: "Source and destination tanks must be different." };
+      sourceTank = await prisma.bulkTank.findUnique({ where: { id: sourceTankId } });
+      if (!sourceTank) return { error: "Source site tank not found." };
+      if (sourceTank.fuelKind !== tank.fuelKind) return { error: "That site holds a different fuel type." };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (sourceType === "SITE" && sourceTankId) {
+        // Re-read inside the transaction: the source balance can move between
+        // the check above and here, and a transfer must not overdraw it.
+        const source = await tx.bulkTank.findUnique({ where: { id: sourceTankId } });
+        if (!source) throw new Error("The source site tank no longer exists.");
+        if (source.balance < litres) {
+          throw new Error(`${source.name} only has ${source.balance.toFixed(1)}L available.`);
+        }
+        await tx.bulkTank.update({ where: { id: source.id }, data: { balance: { decrement: litres } } });
+      }
+
+      await tx.bulkTank.update({ where: { id: tank.id }, data: { balance: { increment: litres } } });
+
+      // Logged as an already-settled record: recorded and applied by the same
+      // person, in the same moment, so the history reads as it happened.
+      const rec = await tx.bulkRequest.create({
+        data: {
+          bulkTankId: tank.id,
+          fuelKind: tank.fuelKind,
+          requestedLitres: litres,
+          requestedById: user.id,
+          status: "APPROVED",
+          reviewedById: user.id,
+          reviewedAt: new Date(),
+          reviewNote: "Recorded at the pump and added to stock immediately",
+          sourceType,
+          sourceTankId: sourceType === "SITE" ? sourceTankId : null,
+        },
+      });
+
+      const where = sourceType === "SITE" ? `from site "${sourceTank!.name}"` : "by outside purchase";
+      await tx.auditLog.create({
+        data: {
+          actorId: user.id,
+          action: "CREATE",
+          entity: "BulkRequest",
+          entityId: rec.id,
+          summary: `Recorded ${litres}L of ${tank.fuelKind} into "${tank.name}" ${where} — added to stock immediately`,
+        },
+      });
+    });
+
+    revalidatePath("/site");
+    revalidatePath("/workshop");
+    return { success: true };
+  } catch (err: any) {
+    console.error("Record bulk refuel error:", err);
+    return { error: err.message || "Failed to record the refuel" };
   }
 }
 
@@ -218,7 +334,7 @@ export async function approveBulkRequestAction(requestId: string, reviewNote: st
   try {
     const req = await prisma.bulkRequest.findUnique({
       where: { id: requestId },
-      include: { bulkTank: true },
+      include: { bulkTank: true, sourceTank: true },
     });
 
     if (!req) {
@@ -241,74 +357,46 @@ export async function approveBulkRequestAction(requestId: string, reviewNote: st
         },
       });
 
-      // Check if target is the main pump (Badalgama Main pump)
-      const isMainPump = req.bulkTank.name.toLowerCase().includes("badalgama") && 
-                         req.bulkTank.name.toLowerCase().includes("main");
-
-      if (isMainPump) {
-        // Direct refuel for main pump
+      if (req.sourceType === "SITE" && req.sourceTankId) {
+        // Inter-site transfer: draw the fuel from the chosen source site tank
+        // and add it to the target tank. Re-check the balance at approval time.
+        const source = req.sourceTank ?? (await tx.bulkTank.findUnique({ where: { id: req.sourceTankId } }));
+        if (!source) {
+          throw new Error("The source site tank no longer exists.");
+        }
+        if (source.balance < req.requestedLitres) {
+          throw new Error(`Insufficient fuel at source "${source.name}". Available: ${source.balance.toFixed(1)}L, requested: ${req.requestedLitres}L.`);
+        }
+        await tx.bulkTank.update({
+          where: { id: source.id },
+          data: { balance: { decrement: req.requestedLitres } },
+        });
         await tx.bulkTank.update({
           where: { id: req.bulkTankId },
-          data: {
-            balance: {
-              increment: req.requestedLitres,
-            },
-          },
+          data: { balance: { increment: req.requestedLitres } },
         });
-
         await tx.auditLog.create({
           data: {
             actorId: admin.id,
             action: "APPROVE",
             entity: "BulkRequest",
             entityId: requestId,
-            summary: `Approved bulk delivery of ${req.requestedLitres}L to Main Pump "${req.bulkTank.name}"`,
+            summary: `Approved fuel transfer of ${req.requestedLitres}L from site "${source.name}" to "${req.bulkTank.name}"`,
           },
         });
       } else {
-        // Site tank refuel: draw from the Badalgama Main pump for the same fuel kind
-        const allTanks = await tx.bulkTank.findMany();
-        const mainPump = allTanks.find(t => 
-          t.name.toLowerCase().includes("badalgama") && 
-          t.name.toLowerCase().includes("main") && 
-          t.fuelKind === req.fuelKind
-        );
-
-        if (!mainPump) {
-          throw new Error(`Main source pump in Badalgama for ${req.fuelKind.replace("_", " ")} was not found.`);
-        }
-
-        if (mainPump.balance < req.requestedLitres) {
-          throw new Error(`Insufficient fuel in Badalgama Main Pump (${mainPump.name}). Available: ${mainPump.balance.toFixed(1)}L, requested: ${req.requestedLitres}L.`);
-        }
-
-        // Deduct from Main Pump
-        await tx.bulkTank.update({
-          where: { id: mainPump.id },
-          data: {
-            balance: {
-              decrement: req.requestedLitres,
-            },
-          },
-        });
-
-        // Increment target tank balance
+        // Outside purchase: a supplier delivery straight into the target tank.
         await tx.bulkTank.update({
           where: { id: req.bulkTankId },
-          data: {
-            balance: {
-              increment: req.requestedLitres,
-            },
-          },
+          data: { balance: { increment: req.requestedLitres } },
         });
-
         await tx.auditLog.create({
           data: {
             actorId: admin.id,
             action: "APPROVE",
             entity: "BulkRequest",
             entityId: requestId,
-            summary: `Approved bulk fuel transfer of ${req.requestedLitres}L from "${mainPump.name}" to "${req.bulkTank.name}"`,
+            summary: `Approved outside-purchase delivery of ${req.requestedLitres}L to "${req.bulkTank.name}"`,
           },
         });
       }
@@ -387,8 +475,8 @@ export async function workshopIssueFuelAction(formData: FormData) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  if (user.role !== "WORKSHOP" || !user.bulkTankId) {
-    return { error: "Only accounts with a linked workshop pump can issue fuel from bulk." };
+  if (!isPumpOperator(user.role) || !user.bulkTankId) {
+    return { error: "Only accounts with a linked pump (workshop or site) can issue fuel from bulk." };
   }
 
   const assetId = formData.get("assetId")?.toString();
@@ -398,22 +486,9 @@ export async function workshopIssueFuelAction(formData: FormData) {
   const projectId = formData.get("projectId")?.toString() || null;
   const issueDateStr = formData.get("issueDate")?.toString() || null;
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (colomboHour < 8 || colomboHour >= 17) {
-      if (reason !== "Vehicle Breakdown" && reason !== "Active Night Work") {
-        return { error: "During locked hours (17:00 PM - 08:00 AM), fuel issues are only allowed for 'Vehicle Breakdown' or 'Active Night Work'. Please select a valid reason." };
-      }
-    }
-  }
+  // Fuel issuing is allowed 24/7 — the after-hours reason gate was removed; any
+  // reason may be used at any time. Date/time, user, site, vehicle and person
+  // are still recorded for audit.
 
   if (!assetId || !litresStr) {
     return { error: "Asset Code and Litres are required." };
@@ -442,9 +517,7 @@ export async function workshopIssueFuelAction(formData: FormData) {
     if (diffDays < 0) {
       return { error: "Selected date cannot be in the future." };
     }
-    if (diffDays > 14) {
-      return { error: "Backdated dispatches are only allowed up to 14 days in the past." };
-    }
+    // Fuel may be issued for any past date (the 14-day backdate cap was removed).
 
     // Preserve hour/minute/second of submission
     issueDate = new Date(
@@ -512,6 +585,15 @@ export async function workshopIssueFuelAction(formData: FormData) {
       });
     }
 
+    // A site pump operator may only fuel vehicles allocated to their own site
+    // (the workshop pump is intentionally unscoped and may fuel any vehicle).
+    if (isSiteUser(user.role)) {
+      const allowed = await canUserAccessAsset(user, asset.id, issueDate);
+      if (!allowed) {
+        return { error: "This vehicle is not allocated to your site." };
+      }
+    }
+
     if (meterReading !== null) {
       if (isNaN(meterReading) || meterReading < 0) {
         return { error: "Odometer/Hour reading must be a positive number." };
@@ -552,6 +634,7 @@ export async function workshopIssueFuelAction(formData: FormData) {
           source: tank.name,
           issueDate,
           issuedById: user.id,
+          issuePerson: user.name,
           fuelPriceId: resolvedPrice.id,
           bulkTankId: tank.id,
           ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),

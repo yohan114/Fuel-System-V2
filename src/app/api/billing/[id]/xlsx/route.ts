@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -11,7 +12,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   const bill = await prisma.bill.findUnique({ where: { id }, include: { lineItems: true } });
   if (!bill) return new NextResponse("Not found", { status: 404 });
 
-  if (session.role === "USER" && session.projectId && bill.projectId !== session.projectId) {
+  if (isSiteUser(session.role) && session.projectId && bill.projectId !== session.projectId) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 

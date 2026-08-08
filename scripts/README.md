@@ -34,6 +34,62 @@ run directly: `npx tsx scripts/<name>.ts`.
 | `import_service_record_db` | `service-record-data.db` (repo) | Merges the E&C Service Record System: filter database + cross-references + prices, machine↔filter links, and the full service-job history (idempotent via sourceRef; manual records untouched). |
 | `merge_duplicate_assets` | — | Duplicate-vehicle merge; dry-run by default, `--apply` to execute. |
 
+## Moving fuel data between instances
+
+`deploy-to-vps.sh` restores the server's own database over the repo's copy on
+purpose, so operators never lose what they typed. The consequence is that fuel
+imported on a workstation **does not travel with the code** — it has to be
+carried as data:
+
+```bash
+# on the instance that HAS the data
+npx tsx scripts/export_fuel_data.ts            # → data/fuel-data-export.json
+
+# on the instance that NEEDS it (deploy-to-vps.sh does this for you)
+npx tsx scripts/import_fuel_data.ts            # dry run: what would be added
+npx tsx scripts/import_fuel_data.ts --apply
+```
+
+Direction is whichever way the data needs to go — export from the instance that
+has it, import into the one that does not.
+
+**The sync only ever adds.** That keeps it safe on a live server, but it means a
+site whose fuel was *replaced* here cannot be fixed by the sync alone — the
+server's superseded rows would survive and the site would double-count. Galagedara
+is exactly that case, which is why `deploy-to-vps.sh` runs
+`import_galagedara_stock_book` on the server *before* the sync: the importer
+retires the old rows, and the sync then finds the book's rows already present and
+adds nothing.
+
+| Script | Notes |
+|---|---|
+| `export_fuel_data` | Dumps fuel issues, replenishment requests, meter readings, site allocations and tank stock by natural key (UUIDs do not survive across databases). Foreign keys travel as names: project code, username, price date. Also carries the referenced vehicles and tanks so the importer can rebuild a missing referent. |
+| `import_fuel_data` | Replays that file into the current database. Purely additive — never edits or deletes an existing row, so operator-entered records and rows absent from the export are untouched. Idempotent: issues are reconciled by natural-key **count**, so genuine twice-in-a-day refuels survive while a re-run adds nothing. |
+
+A pump's stock level is meaningless without the deliveries that filled it, which
+is why replenishments travel with the issues rather than separately. Site
+allocations travel for the same reason: they decide which site a vehicle's cost
+lands on and from what date, so without them a vehicle's arrival date does not
+survive the trip.
+
+Duplicate checks compare dates **in memory**, never through a `where` filter on a
+date column. This database does not store DateTime text in one single
+representation, so an equality filter can miss rows that are identical — a row
+can fail to find itself — and a sync relying on one would re-insert everything it
+had already sent.
+
+**Tank stock is the exception to "additive".** A balance is a single current
+number, not a history, so it cannot be merged — adopting the export's figure
+overwrites whatever the target has pumped since. Differences are therefore
+reported and left alone unless you pass `--adopt-balances`
+(`FUEL_ADOPT_BALANCES=1` for the deploy script), which you should only do when
+the export is genuinely the authority on stock levels.
+
+Vehicles missing on the target are skipped and listed rather than guessed at;
+re-run with `--create-missing-assets` (or `FUEL_CREATE_ASSETS=1` for the deploy
+script) to create them from the export. A category is never invented — it drives
+PM schedules, so an unknown one is reported instead.
+
 ## Where files are looked up
 
 - **Repo-root importers** read from `process.cwd()` — keep the workbooks next to

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { normalizePN } from "@/lib/filters/normalize";
 import { Filter as FilterIcon, Search, Fuel, Coins, Link2 } from "lucide-react";
+import FilterEditor from "./FilterEditor";
 
 // Filter cross-reference engine, merged from the E&C Service Record System:
 // type any part number (OEM, HIFI, Fleetguard, Donaldson, Baldwin, Sakura,
@@ -21,6 +22,7 @@ function rs(cents: number | null) {
 export default async function FiltersPage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
+  const isAdmin = session.role === "ADMIN";
 
   const sp = await props.searchParams;
   const q = (sp.q || "").trim();
@@ -85,15 +87,18 @@ export default async function FiltersPage(props: PageProps) {
             Type any part number — OEM, HIFI, Fleetguard, Donaldson, Baldwin, Sakura, VIC — to find the filter, every equivalent, its price and the machines that use it.
           </p>
         </div>
-        <form method="GET" action="/filters" className="flex items-end gap-2">
-          <div>
-            <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Part number or description</label>
-            <input type="text" name="q" defaultValue={q} placeholder="e.g. LF9028 / SO 10058 / oil filter" className="bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2 text-white text-xs w-64" />
-          </div>
-          <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl px-4 py-2.5 flex items-center gap-1.5">
-            <Search className="w-3.5 h-3.5" /> Search
-          </button>
-        </form>
+        <div className="flex items-end gap-2">
+          <form method="GET" action="/filters" className="flex items-end gap-2">
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Part number or description</label>
+              <input type="text" name="q" defaultValue={q} placeholder="e.g. LF9028 / SO 10058 / oil filter" className="bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2 text-white text-xs w-64" />
+            </div>
+            <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl px-4 py-2.5 flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5" /> Search
+            </button>
+          </form>
+          {isAdmin && <FilterEditor mode="add" />}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -141,9 +146,14 @@ export default async function FiltersPage(props: PageProps) {
                     </div>
                     {f.description && <p className="text-xs text-gray-400 mt-1">{f.description}</p>}
                   </div>
-                  <div className="text-right">
-                    <span className={`text-sm font-bold ${f.priceCents != null ? "text-emerald-400" : "text-gray-600"}`}>{rs(f.priceCents)}</span>
-                    {f.priceNote && <span className="block text-[10px] text-gray-500">{f.priceNote}</span>}
+                  <div className="text-right flex items-start gap-2">
+                    <div>
+                      <span className={`text-sm font-bold ${f.priceCents != null ? "text-emerald-400" : "text-gray-600"}`}>{rs(f.priceCents)}</span>
+                      {f.priceNote && <span className="block text-[10px] text-gray-500">{f.priceNote}</span>}
+                    </div>
+                    {isAdmin && (
+                      <FilterEditor mode="edit" filter={{ id: f.id, category: f.category, hifiPartNo: f.hifiPartNo, oemPartNo: f.oemPartNo, description: f.description, priceCents: f.priceCents, priceNote: f.priceNote }} />
+                    )}
                   </div>
                 </div>
 

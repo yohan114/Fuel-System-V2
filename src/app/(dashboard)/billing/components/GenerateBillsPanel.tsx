@@ -10,7 +10,7 @@ interface Props {
   defaultMonth: number;
 }
 
-type AssetStatus = "created" | "regenerated" | "skipped-existing" | "skipped-finalized" | "no-rate" | "error";
+type AssetStatus = "created" | "regenerated" | "skipped-existing" | "skipped-finalized" | "skipped-not-here" | "no-rate" | "error";
 
 interface AssetOutcome {
   assetId: string;
@@ -26,6 +26,7 @@ const STATUS_META: Record<AssetStatus, { icon: React.ReactNode; label: string; c
   regenerated:       { icon: <CheckCircle2 className="w-3.5 h-3.5" />, label: "Regenerated", cls: "text-indigo-400" },
   "skipped-existing":   { icon: <SkipForward className="w-3.5 h-3.5" />,   label: "Existing",   cls: "text-gray-400" },
   "skipped-finalized":  { icon: <Lock className="w-3.5 h-3.5" />,          label: "Locked",     cls: "text-amber-400" },
+  "skipped-not-here":   { icon: <SkipForward className="w-3.5 h-3.5" />,   label: "Not on site", cls: "text-gray-400" },
   "no-rate":         { icon: <AlertTriangle className="w-3.5 h-3.5" />, label: "No rate",  cls: "text-orange-400" },
   error:             { icon: <XCircle className="w-3.5 h-3.5" />,       label: "Error",    cls: "text-red-400" },
 };
@@ -36,6 +37,7 @@ export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props)
   const [year, setYear] = useState(defaultYear);
   const [month, setMonth] = useState(defaultMonth);
   const [regenerate, setRegenerate] = useState(false);
+  const [basis, setBasis] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [assets, setAssets] = useState<AssetOutcome[] | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
@@ -48,6 +50,7 @@ export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props)
     fd.set("year", String(year));
     fd.set("month", String(month));
     if (regenerate) fd.set("regenerate", "true");
+    if (basis) fd.set("basis", basis);
     startTransition(async () => {
       const res = await generateBillsForMonthAction(fd);
       if ((res as any).error) {
@@ -67,7 +70,7 @@ export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props)
         <Sparkles className="w-4 h-4 text-indigo-400" />
         Generate Monthly Bills
       </h3>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 items-end">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 items-end">
         <div>
           <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Year</label>
           <input
@@ -89,6 +92,19 @@ export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props)
                 {new Date(2000, m - 1, 1).toLocaleString("en-US", { month: "long" })}
               </option>
             ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Hire basis</label>
+          <select
+            value={basis}
+            onChange={(e) => setBasis(e.target.value)}
+            className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
+          >
+            <option value="">Per-vehicle default</option>
+            <option value="d">Dry — whole month</option>
+            <option value="w">Wet — whole month</option>
+            <option value="fw">Fully Wet — whole month</option>
           </select>
         </div>
         <label className="flex items-center gap-2 text-xs text-gray-300 select-none pb-2.5">
@@ -146,6 +162,7 @@ export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props)
 
       <p className="text-[10px] text-gray-500">
         Regenerate refreshes <span className="text-gray-400">draft</span> bills only — issued / paid invoices are locked.
+        Choosing a <span className="text-gray-400">Hire basis</span> forces the whole month onto Dry / Wet (re-costing existing drafts); leave it on “Per-vehicle default” to respect each vehicle&apos;s setting. Switch a month between Dry and Wet by generating again with the other basis.
       </p>
     </div>
   );

@@ -1,3 +1,4 @@
+import { isScopedSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
@@ -27,7 +28,7 @@ export default async function BreakdownsPage(props: PageProps) {
   const ym = sp.ym && YM_RE.test(sp.ym) ? sp.ym : currentMonthPeriod().periodKey;
   const period = resolvePeriod(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)));
 
-  const isSiteUser = session.role === "USER" && !!session.projectId;
+  const isSiteUser = isScopedSiteUser(session);
   const projects = isSiteUser ? [] : await prisma.project.findMany({ orderBy: { name: "asc" } });
   const siteFilter = isSiteUser
     ? session.projectId!

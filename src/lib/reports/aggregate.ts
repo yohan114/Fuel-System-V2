@@ -1,5 +1,7 @@
 import { prisma } from "../db";
+import { FUEL_KIND_CODES } from "../fuel-kinds";
 import { recommendedUnits, varianceFlag } from "./recommended";
+import { colomboDayKey } from "../colombo-date";
 
 export interface ReportFilter {
   from: Date;
@@ -55,10 +57,9 @@ export async function aggregateFuelData(filter: ReportFilter) {
   const categoryTotals: Record<string, { name: string; code: string; litres: number; costCents: number }> = {};
   const assetTotals: Record<string, { code: string; brand: string | null; typeLabel: string | null; litres: number; costCents: number; meterType: string; assetId: string; fuelConsTyp: number | null; categoryName: string; projectName: string | null; projectCode: string | null; issueCount: number }> = {};
   const trendTotals: Record<string, { date: string; litres: number; costCents: number }> = {};
-  const fuelKindTotals: Record<string, { litres: number; costCents: number }> = {
-    AUTO_DIESEL: { litres: 0, costCents: 0 },
-    SUPER_DIESEL: { litres: 0, costCents: 0 },
-  };
+  const fuelKindTotals: Record<string, { litres: number; costCents: number }> = Object.fromEntries(
+    FUEL_KIND_CODES.map((code) => [code, { litres: 0, costCents: 0 }]),
+  );
 
   interface SiteTotalPoint {
     id: string;
@@ -146,8 +147,10 @@ export async function aggregateFuelData(filter: ReportFilter) {
     assetTotals[aId].costCents += issue.totalCost;
     assetTotals[aId].issueCount += 1;
 
-    // Daily trend totals
-    const dayKey = issue.issueDate.toISOString().split("T")[0];
+    // Daily trend totals, bucketed by the attendant's Colombo day. An
+    // imported row sits at Colombo midnight = 18:30Z the day before, so a UTC
+    // key files the whole of one day's fuel under the previous date.
+    const dayKey = colomboDayKey(issue.issueDate);
     if (!trendTotals[dayKey]) {
       trendTotals[dayKey] = { date: dayKey, litres: 0, costCents: 0 };
     }

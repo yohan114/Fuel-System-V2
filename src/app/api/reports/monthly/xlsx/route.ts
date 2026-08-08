@@ -1,8 +1,10 @@
+import { isSiteUser } from "@/lib/roles";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { aggregateFuelData } from "@/lib/reports/aggregate";
 import { resolvePeriod, currentMonthPeriod } from "@/lib/billing/period";
+import { colomboDayKey } from "@/lib/colombo-date";
 import * as XLSX from "xlsx";
 
 // Monthly site-wise fuel-operations report: per-site vehicle counts + daily
@@ -25,7 +27,7 @@ export async function GET(request: NextRequest) {
   // A site PM (USER) only ever sees their own project; admins/allocators may
   // optionally scope with ?projectId=.
   const projectId =
-    session.role === "USER"
+    isSiteUser(session.role)
       ? session.projectId ?? undefined
       : searchParams.get("projectId") ?? undefined;
 
@@ -128,7 +130,7 @@ export async function GET(request: NextRequest) {
     const siteNames = data.siteBreakdown.map((s) => s.name);
     const pivot = new Map<string, Map<string, number>>(); // day -> site -> litres
     for (const it of dailyIssues) {
-      const day = it.issueDate.toISOString().split("T")[0];
+      const day = colomboDayKey(it.issueDate);
       const site = it.asset.project?.name || "Unassigned / Global Pool";
       if (!pivot.has(day)) pivot.set(day, new Map());
       const row = pivot.get(day)!;

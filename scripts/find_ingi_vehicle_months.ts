@@ -2,7 +2,7 @@ import XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
 
-const FILE = path.join(process.cwd(), "Inginimitiya Vehicle, Machinery summary.xlsx");
+const FILE = path.join(process.cwd(), "data/source-sheets", "Inginimitiya Vehicle, Machinery summary.xlsx");
 
 function main() {
   if (!fs.existsSync(FILE)) return;

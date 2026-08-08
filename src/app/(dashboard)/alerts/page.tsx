@@ -1,3 +1,4 @@
+import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
@@ -24,7 +25,7 @@ export default async function AlertsPage() {
   if (!session) return null;
 
   const isAdmin = session.role === "ADMIN";
-  const projectId = session.role === "USER" ? session.projectId ?? undefined : undefined;
+  const projectId = isSiteUser(session.role) ? session.projectId ?? undefined : undefined;
   const alerts = await collectAlerts({ projectId, isAdmin });
 
   return (

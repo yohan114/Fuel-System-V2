@@ -5,6 +5,8 @@ import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { getBillingConfig } from "@/lib/billing/config";
 import { resolvePeriod } from "@/lib/billing/period";
+import { billClarifyReasons } from "@/lib/billing/clarify";
+import { nextInvoiceNumber } from "@/lib/billing/invoice-number";
 import {
   generateBillsForMonth,
   generateBillForAsset,
@@ -13,10 +15,6 @@ import {
 
 const MODES = ["hourly", "perkm", "perday"];
 const BASES = ["fw", "w", "d"];
-
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
 
 // Generate (or regenerate) all bills for a month.
 export async function generateBillsForMonthAction(formData: FormData) {
@@ -30,13 +28,18 @@ export async function generateBillsForMonthAction(formData: FormData) {
   const year = parseInt(formData.get("year")?.toString() || "", 10);
   const month = parseInt(formData.get("month")?.toString() || "", 10);
   const regenerate = formData.get("regenerate") === "true" || formData.get("regenerate") === "on";
+  // Optional whole-month hire basis: force every bill in the run onto Dry / Wet
+  // / Fully Wet. Empty = respect each vehicle's default. Forcing implies a
+  // regenerate so existing drafts are re-costed onto the chosen basis.
+  const basisRaw = formData.get("basis")?.toString() || "";
+  const basis = BASES.includes(basisRaw) ? (basisRaw as "fw" | "w" | "d") : undefined;
 
   if (!year || !month || month < 1 || month > 12) {
     return { error: "A valid year and month are required" };
   }
 
   try {
-    const result = await generateBillsForMonth({ year, month, regenerate, actorId: admin.id });
+    const result = await generateBillsForMonth({ year, month, regenerate: regenerate || !!basis, actorId: admin.id, basis });
     revalidatePath("/billing");
     return { success: true, result };
   } catch (err: any) {
@@ -114,8 +117,78 @@ export async function updateBillDraftAction(billId: string, formData: FormData) 
   }
 }
 
+// Set a vehicle's default hire basis (Fully Wet / Wet / Dry). Optionally
+// re-cost every open DRAFT for the vehicle at the new basis so the change is
+// reflected immediately, not just on the next generation run.
+export async function setVehicleBasisAction(assetId: string, basis: string, applyToDrafts: boolean) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to set hire basis" };
+  }
+  if (!BASES.includes(basis)) return { error: "Invalid hire basis" };
+  try {
+    const rate = await prisma.rentalRate.findUnique({ where: { assetId }, include: { asset: { select: { code: true } } } });
+    if (!rate) return { error: "This vehicle has no rate card to configure" };
+    await prisma.rentalRate.update({ where: { assetId }, data: { defaultBasis: basis } });
+
+    let regenerated = 0;
+    if (applyToDrafts) {
+      const drafts = await prisma.bill.findMany({ where: { assetId, status: "DRAFT" }, select: { id: true, year: true, month: true } });
+      for (const d of drafts) {
+        await prisma.bill.update({ where: { id: d.id }, data: { rateBasis: basis } });
+        await generateBillForAsset(assetId, resolvePeriod(d.year, d.month), { regenerate: true, actorId: admin.id });
+        regenerated++;
+      }
+    }
+    await prisma.auditLog.create({
+      data: { actorId: admin.id, action: "UPDATE", entity: "RentalRate", entityId: assetId, summary: `Set default hire basis for ${rate.asset.code} to ${basis.toUpperCase()}${applyToDrafts ? ` (re-costed ${regenerated} draft${regenerated !== 1 ? "s" : ""})` : ""}` },
+    });
+    revalidatePath(`/fleet/${rate.asset.code}`);
+    revalidatePath("/billing");
+    return { success: true, regenerated };
+  } catch (err: any) {
+    console.error("Set vehicle basis error:", err);
+    return { error: err.message || "Failed to set hire basis" };
+  }
+}
+
+// Bulk re-cost selected DRAFT bills at a chosen hire basis (Fully Wet / Wet /
+// Dry). Skips non-drafts. Used for site-wide / many-vehicle dry-hire changes.
+export async function bulkSetBillBasisAction(billIds: string[], basis: string) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to change bills" };
+  }
+  if (!BASES.includes(basis)) return { error: "Invalid hire basis" };
+  if (!Array.isArray(billIds) || billIds.length === 0) return { error: "No bills selected" };
+
+  let updated = 0;
+  let skipped = 0;
+  const errors: { billId: string; message: string }[] = [];
+  for (const billId of billIds) {
+    try {
+      const bill = await prisma.bill.findUnique({ where: { id: billId }, select: { id: true, assetId: true, year: true, month: true, status: true } });
+      if (!bill || bill.status !== "DRAFT") { skipped++; continue; }
+      await prisma.bill.update({ where: { id: billId }, data: { rateBasis: basis } });
+      await generateBillForAsset(bill.assetId, resolvePeriod(bill.year, bill.month), { regenerate: true, actorId: admin.id });
+      updated++;
+    } catch (err: any) {
+      errors.push({ billId, message: err.message || "error" });
+    }
+  }
+  await prisma.auditLog.create({
+    data: { actorId: admin.id, action: "UPDATE", entity: "Bill", summary: `Bulk set ${updated} draft bill(s) to ${basis.toUpperCase()} basis${skipped ? ` (skipped ${skipped})` : ""}` },
+  });
+  revalidatePath("/billing");
+  return { success: true, updated, skipped, errors };
+}
+
 // Finalize a DRAFT into an ISSUED invoice with a unique invoice number + due date.
-export async function finalizeBillAction(billId: string) {
+export async function finalizeBillAction(billId: string, overrideReason?: string | null) {
   let admin;
   try {
     admin = await assertCan("manage");
@@ -125,23 +198,37 @@ export async function finalizeBillAction(billId: string) {
 
   try {
     const cfg = await getBillingConfig();
+
+    // Gate: a bill that needs clarification (meter vs fuel, or unpriced fuel)
+    // cannot be issued unless the admin supplies an override reason, which is
+    // recorded on the invoice and in the audit log.
+    const draft = await prisma.bill.findUnique({ where: { id: billId } });
+    if (!draft) return { error: "Bill not found" };
+    if (draft.status !== "DRAFT") return { error: "Only draft bills can be issued" };
+    const reasons = billClarifyReasons(draft);
+    const reason = overrideReason?.trim();
+    if (reasons.length > 0 && !reason) {
+      return { blocked: true as const, reasons };
+    }
+
     const invoiceNumber = await prisma.$transaction(async (tx) => {
       const bill = await tx.bill.findUnique({ where: { id: billId } });
       if (!bill) throw new Error("Bill not found");
       if (bill.status !== "DRAFT") throw new Error("Only draft bills can be issued");
 
-      const issuedCount = await tx.bill.count({
-        where: { year: bill.year, month: bill.month, invoiceNumber: { not: null } },
-      });
-      const seq = String(issuedCount + 1).padStart(4, "0");
-      const number = `${cfg.invoicePrefix}-${bill.year}-${pad2(bill.month)}-${seq}`;
+      const number = await nextInvoiceNumber(tx, cfg.invoicePrefix, bill.year);
 
       const issuedDate = new Date();
       const dueDate = new Date(issuedDate.getTime() + cfg.dueDays * 24 * 60 * 60 * 1000);
 
+      const overrideNote =
+        reasons.length > 0 && reason
+          ? `${bill.notes ? bill.notes + " · " : ""}Issued with override: ${reason}`
+          : bill.notes;
+
       await tx.bill.update({
         where: { id: billId },
-        data: { status: "ISSUED", invoiceNumber: number, issuedDate, dueDate },
+        data: { status: "ISSUED", invoiceNumber: number, issuedDate, dueDate, notes: overrideNote },
       });
 
       await tx.auditLog.create({
@@ -150,22 +237,37 @@ export async function finalizeBillAction(billId: string) {
           action: "UPDATE",
           entity: "Bill",
           entityId: billId,
-          summary: `Issued invoice ${number} for ${bill.assetCode} (${bill.periodKey})`,
+          summary:
+            reasons.length > 0 && reason
+              ? `Issued invoice ${number} for ${bill.assetCode} (${bill.periodKey}) — OVERRIDE despite ${reasons.length} clarification flag(s): ${reason}`
+              : `Issued invoice ${number} for ${bill.assetCode} (${bill.periodKey})`,
         },
       });
       return number;
     });
 
+    // Optional: auto-email the freshly issued invoice to the site contact.
+    // Best-effort — a mail hiccup must never undo a successful issue, so we
+    // swallow anything the delivery reports and just surface who it reached.
+    let emailedTo: string | undefined;
+    if (cfg.autoEmailOnIssue) {
+      const mail = await deliverInvoiceEmail(billId, admin.id);
+      if (mail.sentTo) emailedTo = mail.sentTo;
+    }
+
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
-    return { success: true, invoiceNumber };
+    return { success: true, invoiceNumber, emailedTo };
   } catch (err: any) {
     console.error("Finalize bill error:", err);
     return { error: err.message || "Failed to issue invoice" };
   }
 }
 
-// Record payment against an ISSUED / OVERDUE invoice.
+// Record a (possibly partial) payment against an ISSUED / OVERDUE invoice. The
+// invoice flips to PAID only once the ledger covers the grand total; otherwise
+// it keeps its outstanding balance. Bill.paidAmountCents/paidDate mirror the
+// running total for display and backward compatibility.
 export async function markBillPaidAction(billId: string, formData: FormData) {
   let admin;
   try {
@@ -176,45 +278,61 @@ export async function markBillPaidAction(billId: string, formData: FormData) {
 
   const paidLkrStr = formData.get("paidLkr")?.toString() || "";
   const paymentRef = formData.get("paymentRef")?.toString().trim() || null;
+  const method = formData.get("method")?.toString().trim() || null;
   const paymentNote = formData.get("paymentNote")?.toString().trim() || null;
   const paidDateStr = formData.get("paidDate")?.toString() || "";
 
   try {
-    const bill = await prisma.bill.findUnique({ where: { id: billId } });
-    if (!bill) return { error: "Bill not found" };
-    if (bill.status !== "ISSUED" && bill.status !== "OVERDUE") {
-      return { error: "Only issued invoices can be marked as paid" };
-    }
+    const result = await prisma.$transaction(async (tx) => {
+      const bill = await tx.bill.findUnique({ where: { id: billId }, include: { payments: true } });
+      if (!bill) throw new Error("Bill not found");
+      if (bill.status !== "ISSUED" && bill.status !== "OVERDUE") {
+        throw new Error("Only issued invoices can take a payment");
+      }
 
-    // Default the paid amount to the grand total when not supplied.
-    const paidAmountCents = paidLkrStr
-      ? Math.round(parseFloat(paidLkrStr) * 100)
-      : bill.grandTotalCents;
-    if (isNaN(paidAmountCents) || paidAmountCents < 0) {
-      return { error: "Paid amount must be a valid number" };
-    }
-    const paidDate = paidDateStr ? new Date(paidDateStr) : new Date();
+      const priorPaid = bill.payments.reduce((s, p) => s + p.amountCents, 0);
+      const outstanding = Math.max(bill.grandTotalCents - priorPaid, 0);
+      // Default the amount to the remaining balance, not the whole invoice.
+      const amountCents = paidLkrStr ? Math.round(parseFloat(paidLkrStr) * 100) : outstanding;
+      if (isNaN(amountCents) || amountCents <= 0) {
+        throw new Error("Payment amount must be greater than zero");
+      }
+      const paidDate = paidDateStr ? new Date(paidDateStr) : new Date();
 
-    await prisma.bill.update({
-      where: { id: billId },
-      data: { status: "PAID", paidDate, paidAmountCents, paymentRef, paymentNote },
-    });
+      await tx.payment.create({
+        data: { billId, amountCents, paidDate, method, reference: paymentRef, note: paymentNote, createdById: admin.id },
+      });
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: admin.id,
-        action: "UPDATE",
-        entity: "Bill",
-        entityId: billId,
-        summary: `Recorded payment for ${bill.invoiceNumber || bill.assetCode}: Rs. ${(paidAmountCents / 100).toLocaleString("en-LK")}`,
-      },
+      const paidCents = priorPaid + amountCents;
+      const fullyPaid = paidCents >= bill.grandTotalCents;
+      await tx.bill.update({
+        where: { id: billId },
+        data: {
+          paidAmountCents: paidCents,
+          paidDate,
+          paymentRef,
+          paymentNote,
+          ...(fullyPaid ? { status: "PAID" } : {}),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: admin.id,
+          action: "UPDATE",
+          entity: "Bill",
+          entityId: billId,
+          summary: `${fullyPaid ? "Settled" : "Part-paid"} ${bill.invoiceNumber || bill.assetCode}: Rs. ${(amountCents / 100).toLocaleString("en-LK")} (paid Rs. ${(paidCents / 100).toLocaleString("en-LK")} of ${(bill.grandTotalCents / 100).toLocaleString("en-LK")})`,
+        },
+      });
+      return { fullyPaid };
     });
 
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
-    return { success: true };
+    return { success: true, fullyPaid: result.fullyPaid };
   } catch (err: any) {
-    console.error("Mark bill paid error:", err);
+    console.error("Record payment error:", err);
     return { error: err.message || "Failed to record payment" };
   }
 }
@@ -235,6 +353,7 @@ export async function bulkFinalizeBillsAction(billIds: string[]) {
   const cfg = await getBillingConfig();
   let finalized = 0;
   let skipped = 0;
+  let needsClarify = 0;
   const errors: { billId: string; message: string }[] = [];
 
   for (const billId of billIds) {
@@ -246,11 +365,13 @@ export async function bulkFinalizeBillsAction(billIds: string[]) {
           skipped++;
           return;
         }
-        const issuedCount = await tx.bill.count({
-          where: { year: bill.year, month: bill.month, invoiceNumber: { not: null } },
-        });
-        const seq = String(issuedCount + 1).padStart(4, "0");
-        const number = `${cfg.invoicePrefix}-${bill.year}-${pad2(bill.month)}-${seq}`;
+        // Bulk never force-overrides: bills needing clarification are left as
+        // drafts to be reviewed and issued individually.
+        if (billClarifyReasons(bill).length > 0) {
+          needsClarify++;
+          return;
+        }
+        const number = await nextInvoiceNumber(tx, cfg.invoicePrefix, bill.year);
         const issuedDate = new Date();
         const dueDate = new Date(issuedDate.getTime() + cfg.dueDays * 24 * 60 * 60 * 1000);
 
@@ -275,7 +396,7 @@ export async function bulkFinalizeBillsAction(billIds: string[]) {
   }
 
   revalidatePath("/billing");
-  return { success: true, finalized, skipped, errors };
+  return { success: true, finalized, skipped, needsClarify, errors };
 }
 
 // Bulk-record full payment against many ISSUED / OVERDUE invoices. Each is
@@ -303,18 +424,30 @@ export async function bulkMarkPaidAction(billIds: string[]) {
         skipped++;
         continue;
       }
-      await prisma.bill.update({
-        where: { id: billId },
-        data: { status: "PAID", paidDate: new Date(), paidAmountCents: bill.grandTotalCents },
-      });
-      await prisma.auditLog.create({
-        data: {
-          actorId: admin.id,
-          action: "UPDATE",
-          entity: "Bill",
-          entityId: billId,
-          summary: `Recorded full payment for ${bill.invoiceNumber || bill.assetCode}: Rs. ${(bill.grandTotalCents / 100).toLocaleString("en-LK")} [bulk]`,
-        },
+      // Settle the remaining balance in full: one payment for the outstanding.
+      const priorPaid = await prisma.payment.aggregate({ where: { billId }, _sum: { amountCents: true } });
+      const outstanding = Math.max(bill.grandTotalCents - (priorPaid._sum.amountCents ?? 0), 0);
+      if (outstanding <= 0) {
+        skipped++;
+        continue;
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.payment.create({
+          data: { billId, amountCents: outstanding, paidDate: new Date(), method: null, reference: null, note: "Bulk settle", createdById: admin.id },
+        });
+        await tx.bill.update({
+          where: { id: billId },
+          data: { status: "PAID", paidDate: new Date(), paidAmountCents: bill.grandTotalCents },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorId: admin.id,
+            action: "UPDATE",
+            entity: "Bill",
+            entityId: billId,
+            summary: `Settled ${bill.invoiceNumber || bill.assetCode}: Rs. ${(outstanding / 100).toLocaleString("en-LK")} [bulk]`,
+          },
+        });
       });
       paid++;
     } catch (err: any) {
@@ -326,26 +459,26 @@ export async function bulkMarkPaidAction(billIds: string[]) {
   return { success: true, paid, skipped, errors };
 }
 
-// Email an invoice PDF to the bill's project/site contact email.
-export async function emailInvoiceAction(billId: string) {
-  let admin;
-  try {
-    admin = await assertCan("manage");
-  } catch {
-    return { error: "You are not authorized to send invoices" };
-  }
-
+// Render and send an invoice PDF to the bill's site contact. Shared by the
+// manual "Email invoice" action and the auto-email-on-issue path. Returns a
+// discriminated result — { sentTo } on success, { skipped } when it can't send
+// for a benign reason (email off, no contact, still a draft), { error } on an
+// actual send failure — so callers decide how loudly to surface it.
+async function deliverInvoiceEmail(
+  billId: string,
+  actorId: string | null,
+): Promise<{ sentTo?: string; skipped?: string; error?: string }> {
   const { isMailConfigured, sendMail } = await import("@/lib/mail");
   const { renderInvoicePdfBuffer, COMPANY } = await import("@/lib/billing/invoice-document");
 
   if (!isMailConfigured()) {
-    return { error: "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM in the environment." };
+    return { skipped: "Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM in the environment." };
   }
 
   try {
     const bill = await prisma.bill.findUnique({ where: { id: billId }, include: { lineItems: true } });
     if (!bill) return { error: "Bill not found" };
-    if (bill.status === "DRAFT") return { error: "Issue the invoice before emailing it" };
+    if (bill.status === "DRAFT") return { skipped: "Issue the invoice before emailing it" };
 
     // Resolve the recipient from the project contact.
     let toEmail: string | null = null;
@@ -356,7 +489,7 @@ export async function emailInvoiceAction(billId: string) {
       contactName = project?.contactName || null;
     }
     if (!toEmail) {
-      return { error: "No contact email on file for this site. Add one on the project before sending." };
+      return { skipped: "No contact email on file for this site. Add one on the project before sending." };
     }
 
     const monthLabel = new Date(bill.year, bill.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
@@ -396,7 +529,7 @@ export async function emailInvoiceAction(billId: string) {
 
     await prisma.auditLog.create({
       data: {
-        actorId: admin.id,
+        actorId,
         action: "UPDATE",
         entity: "Bill",
         entityId: billId,
@@ -404,12 +537,27 @@ export async function emailInvoiceAction(billId: string) {
       },
     });
 
-    revalidatePath(`/billing/${billId}`);
-    return { success: true, sentTo: toEmail };
+    return { sentTo: toEmail };
   } catch (err: any) {
     console.error("Email invoice error:", err);
     return { error: err.message || "Failed to email invoice" };
   }
+}
+
+// Email an invoice PDF to the bill's project/site contact email.
+export async function emailInvoiceAction(billId: string) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to send invoices" };
+  }
+
+  const r = await deliverInvoiceEmail(billId, admin.id);
+  if (r.error) return { error: r.error };
+  if (r.skipped) return { error: r.skipped };
+  revalidatePath(`/billing/${billId}`);
+  return { success: true, sentTo: r.sentTo };
 }
 
 // Sweep ISSUED bills past their due date to OVERDUE.
@@ -500,6 +648,7 @@ export async function updateBillingSettingsAction(formData: FormData) {
   const vatPct = formData.get("vatPct")?.toString().trim();
   const dueDays = formData.get("dueDays")?.toString().trim() || "30";
   const invoicePrefix = formData.get("invoicePrefix")?.toString().trim() || "EC-INV";
+  const autoEmailOnIssue = formData.get("autoEmailOnIssue") === "true" || formData.get("autoEmailOnIssue") === "on" ? "true" : "false";
 
   // Tax fields are entered as percentages in the UI; stored as fractions.
   const ssclRate = ssclPct ? (parseFloat(ssclPct) / 100).toString() : "0.025";
@@ -515,6 +664,7 @@ export async function updateBillingSettingsAction(formData: FormData) {
     { key: "billing.vatRate", value: vatRate },
     { key: "billing.dueDays", value: dueDays },
     { key: "billing.invoicePrefix", value: invoicePrefix },
+    { key: "billing.autoEmailOnIssue", value: autoEmailOnIssue },
   ];
 
   try {

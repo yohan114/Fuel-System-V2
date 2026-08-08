@@ -3,6 +3,153 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { computeServiceCost, lineAmountCents, type CostItem } from "@/lib/service/cost";
+import { getServiceConfig } from "@/lib/service/config";
+
+interface SheetLine {
+  slot?: string;
+  label?: string;
+  partNo?: string;
+  action?: string;
+  qty?: number;
+  unitPriceCents?: number;
+}
+
+function parseLines(raw: FormDataEntryValue | null): SheetLine[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw.toString());
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+// Log a full service sheet: header + itemised oil / filter / manpower lines +
+// scanned attachments, with parts / labour / sundry / total costed from the
+// lines. Mirrors the paper "Vehicle/Machinery Service Details" form.
+export async function logServiceSheetAction(formData: FormData) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to log services" };
+  }
+
+  const assetRef = formData.get("assetId")?.toString().trim();
+  const serviceDateStr = formData.get("serviceDate")?.toString();
+  if (!assetRef || !serviceDateStr) return { error: "Vehicle and service date are required" };
+  const serviceDate = new Date(serviceDateStr);
+  if (isNaN(serviceDate.getTime())) return { error: "Invalid service date" };
+
+  const meterStr = formData.get("meterAtService")?.toString().trim();
+  const nextStr = formData.get("nextServiceMeter")?.toString().trim();
+  const meterAtService = meterStr ? parseFloat(meterStr) : null;
+  const nextServiceMeter = nextStr ? parseFloat(nextStr) : null;
+  if (meterAtService != null && (isNaN(meterAtService) || meterAtService < 0)) return { error: "Meter must be zero or greater" };
+
+  const serviceType = formData.get("serviceType")?.toString().trim() || null;
+  const jobNo = formData.get("jobNo")?.toString().trim() || null;
+  const location = formData.get("location")?.toString().trim() || null;
+  const condition = formData.get("condition")?.toString().trim() || null;
+  const note = formData.get("note")?.toString().trim() || null;
+
+  const oilLines = parseLines(formData.get("oilLines"));
+  const filterLines = parseLines(formData.get("filterLines"));
+  const manpowerLines = parseLines(formData.get("manpowerLines"));
+
+  try {
+    const asset = await prisma.asset.findFirst({
+      where: { OR: [{ id: assetRef }, { code: assetRef.toUpperCase() }] },
+      select: { id: true, code: true, meterType: true },
+    });
+    if (!asset) return { error: "Vehicle not found" };
+
+    // Build the persisted line items with server-computed amounts.
+    const items: { kind: string; description: string; partNo: string | null; action: string | null; qty: number; unitPriceCents: number | null; amountCents: number | null }[] = [];
+    const costItems: CostItem[] = [];
+
+    for (const l of oilLines) {
+      const qty = Number(l.qty) || 0;
+      const unit = l.unitPriceCents != null ? Math.round(Number(l.unitPriceCents)) : null;
+      // Chart rows always carry a slot — a row is real only once a grade, an
+      // action (C/V) or a quantity was entered on it.
+      if (!l.label && !l.action && qty === 0) continue;
+      const amount = lineAmountCents(qty, unit);
+      items.push({ kind: "OIL", description: [l.slot, l.label].filter(Boolean).join(" — ") || "Oil", partNo: l.label || null, action: l.action || null, qty, unitPriceCents: unit, amountCents: amount });
+      costItems.push({ kind: "OIL", amountCents: amount });
+    }
+    for (const l of filterLines) {
+      const qty = Number(l.qty) || 1;
+      const unit = l.unitPriceCents != null ? Math.round(Number(l.unitPriceCents)) : null;
+      // Real once a part number, an action (X/E) or a price was entered — a
+      // cleaned filter (E) with no part no is still a recorded event.
+      if (!l.partNo && !l.action && !(unit && unit > 0)) continue;
+      const amount = lineAmountCents(qty, unit);
+      items.push({ kind: "FILTER", description: l.slot || "Filter", partNo: l.partNo || null, action: l.action || null, qty, unitPriceCents: unit, amountCents: amount });
+      costItems.push({ kind: "FILTER", amountCents: amount });
+    }
+    for (const l of manpowerLines) {
+      const qty = Number(l.qty) || 1;
+      const unit = l.unitPriceCents != null ? Math.round(Number(l.unitPriceCents)) : null;
+      if (!l.label && (unit == null || unit === 0)) continue;
+      const amount = lineAmountCents(qty, unit);
+      items.push({ kind: "MANPOWER", description: l.label || "Labour / other", partNo: null, action: null, qty, unitPriceCents: unit, amountCents: amount });
+      costItems.push({ kind: "MANPOWER", amountCents: amount });
+    }
+
+    const cfg = await getServiceConfig();
+    const cost = computeServiceCost(costItems, { labourPct: cfg.labourPct, sundryPct: cfg.sundryPct });
+
+    // Read attachments before the transaction (File → Buffer).
+    const files = formData.getAll("attachments").filter((f): f is File => f instanceof File && f.size > 0);
+    const attachments = await Promise.all(
+      files.map(async (f) => ({
+        fileName: f.name || "attachment",
+        mimeType: f.type || "application/octet-stream",
+        data: Buffer.from(await f.arrayBuffer()),
+        uploadedById: admin.id,
+      })),
+    );
+
+    const rec = await prisma.serviceRecord.create({
+      data: {
+        assetId: asset.id,
+        serviceDate,
+        meterAtService,
+        meterType: asset.meterType,
+        serviceType,
+        jobNo,
+        location,
+        nextServiceMeter,
+        condition,
+        note,
+        partsCents: cost.partsCents,
+        manpowerCents: cost.manpowerCents,
+        labourCents: cost.labourCents,
+        sundryCents: cost.sundryCents,
+        costCents: cost.totalCents,
+        recordedById: admin.id,
+        items: { create: items },
+        attachments: attachments.length ? { create: attachments } : undefined,
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: admin.id, action: "CREATE", entity: "ServiceRecord", entityId: rec.id,
+        summary: `Logged service sheet for ${asset.code} on ${serviceDate.toLocaleDateString("en-GB")}${meterAtService != null ? ` @ ${meterAtService} ${asset.meterType}` : ""} — total Rs. ${(cost.totalCents / 100).toLocaleString("en-LK")} (${items.length} lines, ${attachments.length} file(s))`,
+      },
+    });
+
+    revalidatePath("/service");
+    revalidatePath(`/fleet/${asset.code}`);
+    return { success: true, id: rec.id };
+  } catch (err: any) {
+    console.error("Log service sheet error:", err);
+    return { error: err.message || "Failed to log service" };
+  }
+}
 
 // Log a completed service. The countdown to the next service resets at this
 // record's date (and meterAtService when supplied — compute.ts reads it
