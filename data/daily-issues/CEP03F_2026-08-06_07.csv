@@ -1,0 +1,51 @@
+# CEP-03 F (Galagedara) daily issue sheet — 6 and 7 August 2026, as handed over.
+# date, month & year, vehicle no, qty, meter reading
+#
+# Two plates are written the way the storekeeper reads them. Both machines
+# already fuel at this pump, and no other machine in the 754-strong fleet
+# carries either digit string, so the intended machine is not in doubt:
+alias: ZA-1980 -> LB-21     # book spelling of ZB-1980, 20 issues here to 5 Aug
+alias: 59-3421 -> DC-08     # book spelling of 59-5421, 34 issues here to 5 Aug
+06/08/2026, Aug 2026, ZA-1980 ,25 ,2,341
+06/08/2026 ,Aug 2026, LA-1359,	30, 100,971
+06/08/2026 ,Aug 2026 ,LP-1574 ,20 ,101,730
+06/08/2026 ,Aug 2026 ,HEX-42 ,80 ,5,420
+06/08/2026 ,Aug 2026 ,LP-1713 ,10 ,103,981
+06/08/2026 ,Aug 2026 ,LO-4925,  25, 93,357
+06/08/2026 ,Aug 2026 ,MG-07 ,50 ,10,314
+06/08/2026 ,Aug 2026 ,DAG-4969 ,20, 149,430
+06/08/2026 ,Aug 2026 ,ZB-4606 ,20 ,1,226
+06/08/2026 ,Aug 2026 ,325-1030 ,20, 263,944
+06/08/2026 ,Aug 2026 ,HEX-26 ,80 ,10,439
+06/08/2026 ,Aug 2026 ,HEX-37 ,100, 7,402
+06/08/2026 ,Aug 2026 ,LO-7181 ,20
+06/08/2026 ,Aug 2026 ,HEX-01 ,40, 2,807
+06/08/2026 ,Aug 2026 ,HEX-33 ,80, 8,999
+06/08/2026 ,Aug 2026 ,SR-13 ,40, 2,739
+06/08/2026 ,Aug 2026 ,D4D-02 ,40, 5,270
+# PJ-6376 (HCC-09) reads 3,009,750 here and 309,938 the next day — one digit too
+# many on the 6th. The fuel is kept; the reading is left out rather than guessed
+# at 309,750, and the 7th's genuine reading opens the machine's timeline.
+06/08/2026 ,Aug 2026 ,PJ-6376 ,19,
+06/08/2026 ,Aug 2026 ,ZA-8033 ,30
+06/08/2026 ,Aug 2026 ,ZB-0050 ,25
+06/08/2026 ,Aug 2026 ,ZA-7810 ,30
+06/08/2026 ,Aug 2026 ,PE-3723 ,30, 198,888
+06/08/2026 ,Aug 2026 ,ZA-8511 ,25
+07/08/2026 ,Aug 2026 ,HEX-42 ,90, 5,427
+07/08/2026 ,Aug 2026 ,LO-4925 ,15, 9,336
+07/08/2026 ,Aug 2026 ,ZB-4606 ,25, 1,231
+07/08/2026 ,Aug 2026 ,LP-1713 ,22 , 104,100
+07/08/2026 ,Aug 2026 ,LO-8350 ,20, 66,592
+07/08/2026 ,Aug 2026 ,HEX-26 ,80, 10,446
+07/08/2026 ,Aug 2026 ,HEX-37 ,100, 7,409
+07/08/2026 ,Aug 2026 ,LP-1572 ,20, 93,336
+07/08/2026 ,Aug 2026 ,HEX-33 ,80, 9,003
+07/08/2026 ,Aug 2026 ,MG-07 ,80, 10,821
+07/08/2026 ,Aug 2026 ,SR-13 ,30, 2,742
+07/08/2026 ,Aug 2026 ,D4D-02 ,40, 5,275
+07/08/2026 ,Aug 2026 ,ZA-7810 ,30
+07/08/2026 ,Aug 2026 ,59-3421 ,14, 247,878
+07/08/2026 ,Aug 2026 ,LL-0920 ,10,
+07/08/2026 ,Aug 2026 ,PJ-6376 ,22, 309,938
+07/08/2026 ,Aug 2026 ,PC-1094 ,56, 293,453

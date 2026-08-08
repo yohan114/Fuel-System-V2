@@ -25,9 +25,24 @@ import path from "path";
 // Reconciled on (day, vehicle) count, so re-running adds nothing and a machine
 // that genuinely fuelled twice in a day still gets both rows.
 //
+// Sheets carry different columns — one adds "Aug 2026" between the date and the
+// vehicle. --columns names them in order, and anything not date/vehicle/litres/
+// meter is skipped, so a paste goes in as it came off the sheet.
+//
+// A book writes a plate the way the storekeeper reads it, and an unknown plate
+// stops the batch rather than registering a machine. Where the intended machine
+// is beyond doubt, say so once, in the file, next to the rows it corrects:
+//
+//   alias: ZA-1980 -> LB-21     # the book's spelling of ZB-1980
+//
+// The file then stays a faithful copy of the sheet AND re-runs to the same
+// result, which a hand-edited plate would not.
+//
 //   npx tsx scripts/add_fuel_issues.ts --site=CEP-03W --file=rows.csv
 //   npx tsx scripts/add_fuel_issues.ts --site=CEP-03W --file=rows.csv --apply
 //   npx tsx scripts/add_fuel_issues.ts --site=CEP-03W --row="07/08/2026,ZA-7810,30"
+//   npx tsx scripts/add_fuel_issues.ts --site=CEP-03F --file=rows.csv --columns=date,month,vehicle,litres,meter
+//   npx tsx scripts/add_fuel_issues.ts --site=CEP-03F --file=rows.csv --alias=59-3421=DC-08
 
 const APPLY = process.argv.includes("--apply");
 const arg = (n: string) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
@@ -35,6 +50,11 @@ const SITE = arg("site");
 const FILE = arg("file");
 const SOURCE = arg("source");
 const ROWS = process.argv.filter((a) => a.startsWith("--row=")).map((a) => a.slice(6));
+const COLUMNS = (arg("columns") || "date,vehicle,litres,meter").split(",").map((c) => c.trim().toLowerCase());
+for (const need of ["date", "vehicle", "litres"]) {
+  if (!COLUMNS.includes(need)) throw new Error(`--columns must include "${need}" — got ${COLUMNS.join(",")}`);
+}
+const ALIASES = new Map<string, string>();
 
 const alnum = (s: string) => s.replace(/[^a-z0-9]/gi, "").toUpperCase();
 const rs = (c: number) => "Rs " + (c / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -70,22 +90,41 @@ function parseMeter(raw: string | undefined): number | null {
 
 type Row = { day: string; label: string; litres: number; meter: number | null };
 
+function readAlias(line: string): boolean {
+  // "alias: ZA-1980 -> LB-21", with or without a leading # and a trailing note.
+  // Plates are full of hyphens, so the arrow is the only reliable separator.
+  const m = line.replace(/^#\s*/, "").match(/^alias:\s*(.+?)\s*->\s*([^\s#,]+)/i);
+  if (!m) return false;
+  ALIASES.set(alnum(m[1]), m[2].trim());
+  return true;
+}
+
 function readRows(): Row[] {
+  for (const a of process.argv.filter((x) => x.startsWith("--alias="))) {
+    const [book, fleet] = a.slice(8).split("=");
+    if (!book || !fleet) throw new Error(`--alias wants BOOK=FLEET, got "${a.slice(8)}"`);
+    ALIASES.set(alnum(book), fleet);
+  }
   const lines: string[] = [...ROWS];
   if (FILE) lines.push(...fs.readFileSync(FILE, "utf8").split(/\r?\n/));
   const out: Row[] = [];
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
+    if (!line) continue;
+    if (readAlias(line)) continue;
+    if (line.startsWith("#")) continue;
     if (/^date\b/i.test(line)) continue;                       // a heading row
-    // Meters carry commas, so the split has to keep the last field whole.
     const parts = line.split(",").map((x) => x.trim());
-    if (parts.length < 3) throw new Error(`not enough fields: "${line}"`);
-    const day = parseDate(parts[0]);
-    const label = parts[1];
-    const litres = Number(parts[2].replace(/,/g, ""));
+    if (parts.length < COLUMNS.length - 1) throw new Error(`not enough fields: "${line}"`);
+    const at = (name: string) => parts[COLUMNS.indexOf(name)];
+    const day = parseDate(at("date"));
+    const label = at("vehicle");
+    const litres = Number(String(at("litres")).replace(/,/g, ""));
     if (!Number.isFinite(litres) || litres <= 0) throw new Error(`bad litres in "${line}"`);
-    const meter = parseMeter(parts.slice(3).join(""));          // rejoin 69,370.0
+    // The meter is last and keeps its thousand separators, so everything from
+    // its column onward rejoins: "3,009,750" arrived as three fields.
+    const mi = COLUMNS.indexOf("meter");
+    const meter = mi === -1 ? null : parseMeter(parts.slice(mi).join(""));
     out.push({ day, label, litres, meter });
   }
   return out;
@@ -110,14 +149,32 @@ async function main() {
   const assets = await prisma.asset.findMany({ select: { id: true, code: true, regNo: true, meterType: true } });
   const byCode = new Map(assets.map((a) => [alnum(a.code), a]));
   const byReg = new Map(assets.filter((a) => a.regNo).map((a) => [alnum(a.regNo!), a]));
-  const resolve = (v: string) => byCode.get(alnum(v)) ?? byReg.get(alnum(v));
+  const look = (v: string) => byCode.get(alnum(v)) ?? byReg.get(alnum(v));
+  const resolve = (v: string) => {
+    const a = ALIASES.get(alnum(v));
+    return a ? look(a) : look(v);
+  };
+
+  // An alias that names a machine the fleet does not hold is a typo in the
+  // correction itself, and would read as an unknown plate three lines down.
+  const badAlias = [...ALIASES].filter(([, fleet]) => !look(fleet));
+  if (badAlias.length) throw new Error(`alias points at no machine: ${badAlias.map(([b, f]) => `${b} -> ${f}`).join(", ")}`);
+  const used = [...ALIASES].filter(([book]) => rows.some((r) => alnum(r.label) === book));
+  if (used.length) {
+    console.log(`\n  book spellings corrected:`);
+    for (const [book, fleet] of used) {
+      const a = look(fleet)!;
+      console.log(`      ${book.padEnd(10)} -> ${a.code}${a.regNo ? ` (${a.regNo})` : ""}`);
+    }
+  }
 
   // Refuse the whole batch on an unknown plate. Registering a machine from one
   // line of a paste is how the fleet grew 88 duplicates.
   const unknown = [...new Set(rows.map((r) => r.label))].filter((l) => !resolve(l));
   if (unknown.length) {
     console.log(`\n  these are not in the fleet: ${unknown.join(", ")}`);
-    console.log(`  add them first with upsert_assets.ts, or correct the spelling — nothing was written.\n`);
+    console.log(`  add them first with upsert_assets.ts, correct the spelling, or — if the`);
+    console.log(`  machine is beyond doubt — name it with an alias. Nothing was written.\n`);
     throw new Error(`${unknown.length} unknown vehicle(s)`);
   }
 
@@ -142,6 +199,28 @@ async function main() {
     emitted.set(k, done + 1);
     if (done < already) { skipped++; continue; }
     fresh.push(r);
+  }
+
+  // The reconciliation above only sees this pump, so a fill written into two
+  // sites' books passes it twice. That is how 853 L of pure double-count got in
+  // last time. Same machine, same day, same litres, another pump is not proof —
+  // a machine can genuinely draw twice — but it is never a coincidence worth
+  // ignoring, so it is named here and the operator decides.
+  const elsewhere = await prisma.fuelIssue.findMany({
+    where: { voided: false, bulkTankId: { not: tank.id },
+      assetId: { in: [...new Set(fresh.map((r) => resolve(r.label)!.id))] },
+      issueDate: { gte: colombo(days[0]), lt: new Date(colombo(days[days.length - 1]).getTime() + 86400000) } },
+    select: { assetId: true, issueDate: true, litres: true, bulkTank: { select: { name: true } } } });
+  const clash = fresh.flatMap((r) => {
+    const id = resolve(r.label)!.id;
+    return elsewhere
+      .filter((e) => e.assetId === id && dayOf(e.issueDate) === r.day && e.litres === r.litres)
+      .map((e) => `${r.day}  ${r.label.padEnd(10)} ${String(r.litres).padStart(4)} L is already recorded at "${e.bulkTank?.name ?? "another pump"}"`);
+  });
+  if (clash.length) {
+    console.log(`\n  ! the same fill appears in another site's book (${clash.length}):`);
+    for (const c of [...new Set(clash)]) console.log(`      ${c}`);
+    console.log(`      These go in as written. If a book double-recorded, void the wrong side after.`);
   }
 
   const prices = await prisma.fuelPrice.findMany({
