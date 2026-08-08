@@ -61,6 +61,10 @@ export interface SiteSummary {
   fuelLitres: number;
   fuelCostCents: number;
   subtotalCents: number;
+  /** Effective price per litre for the fuel counted here. */
+  fuelRateCents: number | null;
+  /** True when the counted issues were not all at one price, so the rate is an average. */
+  fuelRateBlended: boolean;
   ssclRate: number;
   ssclCents: number;
   vatRate: number;
@@ -113,6 +117,7 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
 
   const lines: SiteSummaryLine[] = [];
   const unrated: string[] = [];
+  const prices = new Set<number>();
 
   for (const a of assets) {
     const segs = await getMonthSegments(a.id, period.start, period.end);
@@ -131,9 +136,10 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     const fuel = await prisma.fuelIssue.findMany({
       where: { assetId: a.id, voided: false, bulkTankId: { in: tankIds },
         issueDate: { gte: period.start, lte: period.end } },
-      select: { litres: true, totalCost: true, issueDate: true } });
+      select: { litres: true, totalCost: true, issueDate: true, pricePerLitre: true } });
     const onHereDays = fuel.filter((f) =>
       here.some((s) => f.issueDate >= s.start && f.issueDate <= s.end));
+    for (const f of onHereDays) prices.add(f.pricePerLitre);
     const fuelLitres = onHereDays.reduce((n, f) => n + f.litres, 0);
     const fuelCostCents = onHereDays.reduce((n, f) => n + f.totalCost, 0);
 
@@ -186,6 +192,10 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     monthLabel: period.start.toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "Asia/Colombo" }),
     daysInMonth, lines,
     rentalCents, fuelLitres, fuelCostCents, subtotalCents,
+    // Derived from the money actually charged, not from a price table, so it
+    // always reconciles with the line above it.
+    fuelRateCents: fuelLitres > 0 ? Math.round(fuelCostCents / fuelLitres) : null,
+    fuelRateBlended: prices.size > 1,
     ssclRate: cfg.ssclRate, ssclCents, vatRate: cfg.vatRate, vatCents,
     grandTotalCents: subtotalCents + ssclCents + vatCents,
     unrated,

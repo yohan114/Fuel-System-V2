@@ -145,19 +145,18 @@ export function SiteSummaryDocument({ summary, generatedAt }: { summary: SiteSum
           </View>
           {summary.lines.map((l) => <Row key={l.assetId} l={l} />)}
 
-          <Text style={s.note}>
-            Actual (cons ref) is the work the fuel supports at the machine&apos;s economic consumption rate;
-            Actual (meter) is the movement of its own meter over the days here. Billable is the guaranteed
-            minimum prorated to those days
-            ({summary.lines[0] ? `${summary.lines[0].minimumFull} ${summary.lines[0].unit}` : "the monthly minimum"} x days here / {summary.daysInMonth} days in the month),
-            or the measured work where that is higher. Fuel is what this site&apos;s own pumps issued to these
-            machines in the month, priced as issued. No other site&apos;s register is counted.
-          </Text>
-
           <View style={s.totalsWrap}>
             <View style={s.totals}>
               <View style={s.totRow}><Text style={s.totLabel}>Machine rental</Text><Text style={s.totVal}>{rs(summary.rentalCents)}</Text></View>
-              <View style={s.totRow}><Text style={s.totLabel}>Fuel issued at this site ({n1(summary.fuelLitres)} L)</Text><Text style={s.totVal}>{rs(summary.fuelCostCents)}</Text></View>
+              <View style={s.totRow}>
+                <Text style={s.totLabel}>
+                  Fuel issued at this site ({n1(summary.fuelLitres)} L
+                  {summary.fuelRateCents != null
+                    ? ` @ ${rs(summary.fuelRateCents)}/L${summary.fuelRateBlended ? " avg" : ""}`
+                    : ""})
+                </Text>
+                <Text style={s.totVal}>{rs(summary.fuelCostCents)}</Text>
+              </View>
               <View style={s.totRow}><Text style={s.totLabel}>Subtotal</Text><Text style={s.totVal}>{rs(summary.subtotalCents)}</Text></View>
               <View style={s.totRow}><Text style={s.totLabel}>SSCL ({pct(summary.ssclRate)}%)</Text><Text style={s.totVal}>{rs(summary.ssclCents)}</Text></View>
               <View style={s.totRow}><Text style={s.totLabel}>Value liable to VAT</Text><Text style={s.totVal}>{rs(summary.subtotalCents + summary.ssclCents)}</Text></View>
