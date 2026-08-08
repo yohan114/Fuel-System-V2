@@ -50,9 +50,14 @@ async function main() {
       select: { litres: true },
     });
     const l = rows.reduce((s, r) => s + r.litres, 0);
+    // The expected counts come from the workstation copy. A server legitimately
+    // holds rows that copy never had — operator entries made on the day — so MORE
+    // than expected is not a fault and must not read like one. FEWER means rows
+    // were skipped, usually because a vehicle was missing when the sync ran.
     const state = rows.length === 0 ? "MISSING — this step has not run"
       : rows.length === e.rows ? "complete"
-      : `partial (expected ${e.rows} rows / ${e.litres} L)`;
+      : rows.length > e.rows ? `complete, plus ${rows.length - e.rows} row(s) this server has and the workstation does not`
+      : `SHORT by ${e.rows - rows.length} row(s) — rows were skipped, re-run the import`;
     console.log(`  ${e.label.padEnd(30)} ${String(rows.length).padStart(4)} rows ${String(Math.round(l)).padStart(7)} L   ${state}`);
   }
 

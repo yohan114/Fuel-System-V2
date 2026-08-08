@@ -48,12 +48,21 @@ function announceDatabase() {
 
 async function find(needle: string) {
   const all = await prisma.bulkTank.findMany({ include: { project: { select: { code: true, name: true } } } });
-  const exact = all.filter((t) => t.id === needle || norm(t.name) === norm(needle));
+  // The RAW name first: two tanks that need merging often differ only in spacing,
+  // and a normalised match would find both and name neither.
+  const raw = all.filter((t) => t.id === needle || t.name === needle);
+  if (raw.length === 1) return raw[0];
+  const exact = all.filter((t) => norm(t.name) === norm(needle));
   if (exact.length === 1) return exact[0];
+  if (exact.length > 1) {
+    throw new Error(`"${needle}" matches ${exact.length} tanks once punctuation is ignored: ` +
+      exact.map((t) => `"${t.name}"`).join("  |  ") +
+      `\n  Pass the name EXACTLY as stored, spacing and all.`);
+  }
   const loose = all.filter((t) => norm(t.name).includes(norm(needle)));
   if (loose.length === 1) return loose[0];
   if (loose.length === 0) throw new Error(`no tank matches "${needle}"`);
-  throw new Error(`"${needle}" matches ${loose.length} tanks: ${loose.map((t) => t.name).join(" | ")}`);
+  throw new Error(`"${needle}" matches ${loose.length} tanks: ${loose.map((t) => `"${t.name}"`).join("  |  ")}`);
 }
 
 async function census(id: string) {

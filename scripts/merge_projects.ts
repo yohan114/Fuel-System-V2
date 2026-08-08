@@ -52,12 +52,23 @@ function announceDatabase() {
 
 async function find(needle: string) {
   const all = await prisma.project.findMany();
-  const exact = all.filter((p) => p.id === needle || norm(p.code) === norm(needle) || norm(p.name) === norm(needle));
+  // The RAW code first, before any normalising. The whole reason two sites need
+  // merging is that they normalise to one string — "CEP-03 E" and "CEP-03E" both
+  // reduce to cep03e — so a normalised match finds both and can name neither.
+  // Typed exactly as it is stored, each is unambiguous.
+  const raw = all.filter((p) => p.id === needle || p.code === needle || p.name === needle);
+  if (raw.length === 1) return raw[0];
+  const exact = all.filter((p) => norm(p.code) === norm(needle) || norm(p.name) === norm(needle));
   if (exact.length === 1) return exact[0];
+  if (exact.length > 1) {
+    throw new Error(`"${needle}" matches ${exact.length} sites once punctuation is ignored: ` +
+      exact.map((p) => `code "${p.code}" (${p.name})`).join("  |  ") +
+      `\n  Pass the code EXACTLY as stored, spacing and all — that is what tells them apart.`);
+  }
   const loose = all.filter((p) => norm(p.code).includes(norm(needle)) || norm(p.name).includes(norm(needle)));
   if (loose.length === 1) return loose[0];
   if (loose.length === 0) throw new Error(`no site matches "${needle}"`);
-  throw new Error(`"${needle}" matches ${loose.length} sites: ${loose.map((p) => `${p.code} (${p.name})`).join(" | ")}`);
+  throw new Error(`"${needle}" matches ${loose.length} sites: ${loose.map((p) => `code "${p.code}" (${p.name})`).join("  |  ")}`);
 }
 
 async function census(id: string) {
