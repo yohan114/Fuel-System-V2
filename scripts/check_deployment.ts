@@ -25,6 +25,8 @@ const EXPECTED: { label: string; source: string; rows: number; litres: number }[
   { label: "Karaitivu stock book", source: "Karaitivu diesel stock book", rows: 360, litres: 13120 },
   { label: "Pallanoya stock book", source: "Pallanoya diesel stock book", rows: 26, litres: 1385 },
   { label: "Lot-02 August sheets", source: "Lot-02 daily fuel issuing sheet", rows: 60, litres: 835 },
+  { label: "CEP-03 W 7 Aug day sheet", source: "CEP-03 Wadakada daily issue sheet", rows: 12, litres: 315 },
+  { label: "CEP-03 F 6-7 Aug day sheet", source: "CEP-03 F (Galagedara) daily issue sheet", rows: 40, litres: 1593 },
 ];
 
 const dayOf = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
