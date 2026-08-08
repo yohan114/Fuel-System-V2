@@ -205,8 +205,12 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
             : "fuel")
         : "minimum";
     const rentalCents = rateCents == null ? 0 : Math.round(billableUnits * rateCents);
-    const chargesFuel = basis !== "d";
-    const fuelChargedCents = chargesFuel ? fuelCostCents : 0;
+    // Fuel this site's own tank issued is charged whatever the hire basis. Dry
+    // hire means the RATE excludes fuel — the client provides it — not that E&C
+    // gives away diesel it physically pumped. Excluding it here wrote off every
+    // litre a dry-hired machine drew: WG-13's 10 L simply vanished, and 25 rate
+    // cards and 187 postings carry the same DRY marking.
+    const fuelChargedCents = fuelCostCents;
 
     lines.push({
       assetId: a.id, code: a.code, regNo: a.regNo, typeLabel: a.typeLabel,
