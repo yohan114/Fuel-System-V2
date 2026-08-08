@@ -185,8 +185,15 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     // where it exceeds the guarantee it is evidence of work done, not an
     // estimate to set aside.
     const billableUnits = Math.max(actualUnits ?? 0, consRefUnits ?? 0, minimumProrated);
-    const billedOn = billableUnits === (actualUnits ?? -1) ? "meter"
-      : consRefUnits != null && billableUnits === consRefUnits ? "fuel" : "minimum";
+    // The guarantee is what the contract owes regardless, so it is what a line
+    // is billed on unless something BEAT it. Comparing the winner by equality
+    // instead let a coincidence rewrite the reason: HCC-09's June fuel implied
+    // 1,100 km and its guarantee was also 1,100 km, and the line claimed to be
+    // billed on fuel when nothing about the fuel had changed what was charged.
+    const billedOn: "meter" | "fuel" | "minimum" =
+      billableUnits > minimumProrated
+        ? (actualUnits != null && billableUnits === actualUnits ? "meter" : "fuel")
+        : "minimum";
     const rentalCents = rateCents == null ? 0 : Math.round(billableUnits * rateCents);
     const chargesFuel = basis !== "d";
     const fuelChargedCents = chargesFuel ? fuelCostCents : 0;
