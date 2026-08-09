@@ -25,8 +25,10 @@ const EXPECTED: { label: string; source: string; rows: number; litres: number }[
   { label: "Karaitivu stock book", source: "Karaitivu diesel stock book", rows: 360, litres: 13120 },
   { label: "Pallanoya stock book", source: "Pallanoya diesel stock book", rows: 26, litres: 1385 },
   { label: "Lot-02 August sheets", source: "Lot-02 daily fuel issuing sheet", rows: 60, litres: 835 },
-  { label: "CEP-03 W 7 Aug day sheet", source: "CEP-03 Wadakada daily issue sheet", rows: 12, litres: 315 },
   { label: "CEP-03 F 6-7 Aug day sheet", source: "CEP-03 F (Galagedara) daily issue sheet", rows: 40, litres: 1593 },
+  // The Wadakada day sheets share one source label, so they are checked together:
+  // 12 rows / 315 L on 7 Aug plus 8 rows / 331 L on 8 Aug.
+  { label: "CEP-03 W 7-8 Aug day sheets", source: "CEP-03 Wadakada daily issue sheet", rows: 20, litres: 646 },
 ];
 
 const dayOf = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });

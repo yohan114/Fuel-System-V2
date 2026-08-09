@@ -24,6 +24,7 @@ import path from "path";
 //   npx tsx scripts/set_rental_rate.ts --code=PE-3723 --mode=hourly --w=2400
 //   npx tsx scripts/set_rental_rate.ts --code=DAG-4969 --mode=perkm --fw=110 --w=70 --d=45 --apply
 //   npx tsx scripts/set_rental_rate.ts --code=WG-13 --mode=portable --w=9500 --d=6500 --basis=d --apply
+//   npx tsx scripts/set_rental_rate.ts --code=LB-25 --mode=hourly --w=2800 --cons-econ=5 --cons-typ=7 --replace --apply
 //   npx tsx scripts/set_rental_rate.ts --file=rates.csv --apply
 //
 // The CSV wants a header and one machine per line — blanks mean "no such tier":
@@ -37,6 +38,13 @@ const REPLACE = process.argv.includes("--replace");
 const arg = (n: string) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
 const BASIS = arg("basis");
 if (BASIS && !["fw", "w", "d"].includes(BASIS)) throw new Error(`--basis must be fw, w or d — got "${BASIS}"`);
+// The consumption band is what turns litres into hours or km, so a machine
+// without it shows no fuel-implied work and can only ever bill its guarantee.
+const num = (n: string) => { const v = arg(n); if (v == null) return undefined;
+  const x = Number(v); if (!Number.isFinite(x) || x <= 0) throw new Error(`--${n} must be a positive number — got "${v}"`); return x; };
+const CONS_ECON = num("cons-econ");
+const CONS_TYP = num("cons-typ");
+const CONS_BASIS = arg("cons-basis");
 
 type Row = { code: string; mode: string; fw: number | null; w: number | null; d: number | null };
 
@@ -82,6 +90,15 @@ function columnsFor(mode: string, r: Row) {
   return { dyFwCents: r.fw, dyWCents: r.w, dyDCents: r.d };
 }
 
+function consCols(mode: string) {
+  const basis = CONS_BASIS ?? (mode === "perkm" ? "km" : "hr");
+  return {
+    ...(CONS_ECON !== undefined ? { fuelConsEcon: CONS_ECON } : {}),
+    ...(CONS_TYP !== undefined ? { fuelConsTyp: CONS_TYP } : {}),
+    ...(CONS_ECON !== undefined || CONS_TYP !== undefined ? { fuelConsBasis: basis } : {}),
+  };
+}
+
 const expectedMeter = (mode: string) => (mode === "hourly" ? "HOURS" : mode === "perkm" ? "KM" : null);
 
 async function main() {
@@ -117,6 +134,7 @@ async function main() {
     console.log(`  ${a.code.padEnd(12)}${(a.category?.name ?? "—").padEnd(28)}${r.mode.padEnd(10)}` +
       `fw ${rs(r.fw).padEnd(12)}w ${rs(r.w).padEnd(12)}d ${rs(r.d)}` +
       `${BASIS ? `   bills on ${BASIS === "d" ? "DRY — no fuel charged" : BASIS.toUpperCase()}` : ""}` +
+      `${CONS_TYP !== undefined || CONS_ECON !== undefined ? `   cons econ/typ ${CONS_ECON ?? "—"}/${CONS_TYP ?? "—"}` : ""}` +
       `${a.rentalRate ? "   (replacing)" : ""}${warn}`);
     if (!APPLY) continue;
     const cols = columnsFor(r.mode, r);
@@ -124,8 +142,8 @@ async function main() {
       where: { assetId: a.id },
       create: { assetId: a.id, equipType: r.mode === "portable" ? "PORTABLE" : "FLEET",
         category: a.category?.name ?? null, sourceLabel: "set by hand from the rate card",
-        ...(BASIS ? { defaultBasis: BASIS } : {}), ...cols },
-      update: { ...(BASIS ? { defaultBasis: BASIS } : {}), ...cols } });
+        ...(BASIS ? { defaultBasis: BASIS } : {}), ...consCols(r.mode), ...cols },
+      update: { ...(BASIS ? { defaultBasis: BASIS } : {}), ...consCols(r.mode), ...cols } });
     set++;
   }
 
