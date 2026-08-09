@@ -66,3 +66,6 @@ data/app.db.*-test
 data/app.db.live.*
 data/app.db-shm
 data/app.db-wal
+
+# Generated invoices — the bill lives in the database, not in the repo.
+out/

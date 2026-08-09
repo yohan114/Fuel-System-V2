@@ -15,10 +15,20 @@ function pad2(n: number): string {
 }
 
 // Builds a period for an explicit year + 1-based month.
+//
+// The boundaries are Colombo instants, not the server's. This used to build them
+// from local date parts, which is the same thing only on a Colombo-time host. On
+// a UTC server the whole billing month slid by a day: fuel is stored at Colombo
+// midnight (18:30Z the day before), so the 1st of the month fell BEFORE
+// period.start and was billed to nobody, while the 1st of the NEXT month fell
+// inside period.end and was billed to the month just closed. Every bill covered
+// the wrong 31 days — and the callers below were already careful to resolve the
+// Colombo year and month before calling in here, so the intent was always this.
 export function resolvePeriod(year: number, month: number): BillingPeriod {
-  const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
-  const end = new Date(year, month, 1, 0, 0, 0, 0);
-  end.setMilliseconds(end.getMilliseconds() - 1);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const start = new Date(`${year}-${pad2(month)}-01T00:00:00+05:30`);
+  const end = new Date(new Date(`${nextYear}-${pad2(nextMonth)}-01T00:00:00+05:30`).getTime() - 1);
   return {
     year,
     month,

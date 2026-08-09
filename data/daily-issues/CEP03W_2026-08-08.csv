@@ -1,0 +1,26 @@
+# CEP-03 Wadakada daily issue sheet — 8 August 2026, as handed over.
+# date, vehicle no, diesel qty (L), current meter
+# Sheet's own sub-total: 381 L over 10 issue lines.
+#
+# TWO ROWS ARE HELD BACK — 50 L of the sheet's 381 L. Neither plate is in the
+# fleet and neither can be resolved without someone who was there:
+#
+#   LP-1586  20 L, meter 28,518.0 — no such plate, and FIVE are one digit away:
+#            LP-1581 (DT-61), LP-1576 (DT-64), LP-1582 (DT-66), LP-1580 (DT-72),
+#            LP-1566 (DT-75). LP-1577 and LP-1575 also fuel at this pump.
+#   LM-5219  30 L — only LM-5719 (DT-32) is one digit away, and LM-5719 is
+#            already its own line on this same sheet.
+#
+# Add an alias line once each is known and re-run; the eight below are already
+# in and will not double.
+# 08/08/2026, LP-1586, 20, 28,518.0
+# 08/08/2026, LM-5219, 30,
+#
+08/08/2026, LD-09, 30, 66.0
+08/08/2026, LO-7183, 20, 151,655.0
+08/08/2026, 51-8083, 20,
+08/08/2026, LM-7951, 30, 32,294.0
+08/08/2026, LM-5720, 30, 119,448.0
+08/08/2026, GE-01, 150, 5,196.3
+08/08/2026, 51-8083, 50,
+08/08/2026, LM-5719, 1,
