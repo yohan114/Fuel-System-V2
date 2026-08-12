@@ -181,6 +181,12 @@ export async function generateBillForAsset(
   // minimum and invents revenue against a site with no customer to invoice.
   // Dropping the segments here (rather than the whole bill) means a vehicle that
   // spent part of the month at a real site is still billed for that part.
+  //
+  // Note the side effect: persistSegmentedBill sums fuel per surviving segment,
+  // so litres dated inside a dropped stretch never enter the pot and are billed
+  // to nobody. That is the intended reading of "not rented to anyone" for the
+  // rental line, but it silently writes off the diesel too — see the caveat on
+  // excludeSiteCodes in ./config.
   const segments = (await getMonthSegments(asset.id, period.start, period.end)).filter(
     (s) => !cfg.excludeSiteCodes.includes((s.projectCode ?? "").toUpperCase())
   );
