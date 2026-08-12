@@ -210,6 +210,9 @@ export function explodeBillsBySite(bills: any[], codeById?: Map<string, string>)
       out.push({
         ...b,
         id: `${b.id}__${r.p.projectId || r.p.projectName}`,
+        // The bill this slice came from, so credit notes and payments recorded
+        // against the real invoice still reconcile after the split.
+        originBillId: b.id,
         projectId: r.p.projectId,
         projectName: r.p.projectName,
         projectCode: (r.p.projectId && codeById?.get(r.p.projectId)) || b.projectCode,
@@ -238,7 +241,10 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
 
   const groups = new Map<string, { name: string; bills: any[] }>();
   for (const b of bills) {
-    const key = b.projectId || "__unassigned__";
+    // Keyed on the site CODE first: a bill can carry the right projectCode with
+    // a null projectId, and keying on the id alone produced a second group for a
+    // site already listed, splitting its vehicles and money across two rows.
+    const key = b.projectCode || b.projectId || (b.projectName ? `name:${b.projectName}` : "__unassigned__");
     if (!groups.has(key)) groups.set(key, { name: b.projectName || "Unassigned", bills: [] });
     groups.get(key)!.bills.push(b);
   }
