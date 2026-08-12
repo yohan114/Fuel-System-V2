@@ -1,5 +1,6 @@
 import { prisma } from "../db";
 import { computeWindowDelta } from "../billing/usage";
+import { colomboDateString } from "../colombo-date";
 import { recommendedUnits, formatVariancePct } from "../reports/recommended";
 
 // Fuel-integrity rule engine. Signed fuel-issue records are hard to fake, so
@@ -35,8 +36,12 @@ export interface AnomalyScan {
 const SPIKE_RATIO_MED = 1.3; // burning ≥30% more L/unit than typical
 const SPIKE_RATIO_HIGH = 1.5;
 
+// issueDate / readingDate / logDate are all stored at Colombo midnight, so
+// toISOString() reported the previous day. Cross-rule matching still worked
+// (both sides shifted equally), but the `date` on every finding shown to the
+// operator was a day early.
 function dayKey(d: Date): string {
-  return d.toISOString().split("T")[0];
+  return colomboDateString(d);
 }
 
 export async function detectAnomalies(opts: {

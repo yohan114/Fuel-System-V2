@@ -1,10 +1,12 @@
 import { prisma } from "../db";
 import { resolvePeriod } from "../billing/period";
+import { colomboMonthKey } from "../colombo-date";
 
 // Per-site monthly fuel rollup for the /sites overview. Attribution follows the
 // /reports convention: an issue belongs to its asset's *current* project (the
 // same rule aggregateFuelData uses), so the two screens always agree. Trend
-// keys use the UTC month of issueDate, mirroring aggregate's dayKey idiom.
+// keys use the Colombo month of issueDate, so they line up with
+// BillingPeriod.periodKey.
 
 export interface SiteMonthOverview {
   projectId: string; // "unassigned" pseudo-id for assets without a project
@@ -40,8 +42,14 @@ export interface SiteOverviewResult {
 const TREND_MONTHS = 6;
 const UNASSIGNED = { id: "unassigned", name: "Unassigned / Global Pool", code: "GLOBAL" };
 
-function monthKeyUTC(d: Date): string {
-  return d.toISOString().slice(0, 7);
+// issueDate is stored at the first instant of the Colombo day, so the UTC month
+// of a business date falling on the 1st is the PREVIOUS month (business
+// 2026-07-01 is stored 2026-06-30T18:30:00.000Z). Bucketing by UTC month pushed
+// the 1st of every month into the prior month — 254 rows / Rs. 3,188,490 across
+// the current production data. Compare in the Colombo calendar instead, which
+// also makes this directly comparable to BillingPeriod.periodKey.
+function monthKey(d: Date): string {
+  return colomboMonthKey(d);
 }
 
 function shiftMonth(year: number, month: number, delta: number): { year: number; month: number } {
@@ -125,7 +133,7 @@ export async function getSiteOverview(opts: {
       a = ensure(UNASSIGNED.id, UNASSIGNED.name, UNASSIGNED.code);
     }
 
-    const key = monthKeyUTC(issue.issueDate);
+    const key = monthKey(issue.issueDate);
     a.trend.set(key, (a.trend.get(key) || 0) + issue.litres);
 
     if (key !== period.periodKey) continue; // older months only feed the trend

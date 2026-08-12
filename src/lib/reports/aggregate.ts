@@ -1,5 +1,6 @@
 import { prisma } from "../db";
 import { FUEL_KIND_CODES } from "../fuel-kinds";
+import { colomboDateString } from "../colombo-date";
 import { recommendedUnits, varianceFlag } from "./recommended";
 
 export interface ReportFilter {
@@ -146,8 +147,11 @@ export async function aggregateFuelData(filter: ReportFilter) {
     assetTotals[aId].costCents += issue.totalCost;
     assetTotals[aId].issueCount += 1;
 
-    // Daily trend totals
-    const dayKey = issue.issueDate.toISOString().split("T")[0];
+    // Daily trend totals. This key is surfaced to users (the /sites bar-chart
+    // tooltips and the "Daily Trend" sheet of the Excel export), so it has to be
+    // the Colombo business date — issueDate is stored at Colombo midnight, and
+    // toISOString() would label every row with the previous day.
+    const dayKey = colomboDateString(issue.issueDate);
     if (!trendTotals[dayKey]) {
       trendTotals[dayKey] = { date: dayKey, litres: 0, costCents: 0 };
     }

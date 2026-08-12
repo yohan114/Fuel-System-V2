@@ -9,9 +9,26 @@ export default async function AdminUsersPage() {
   const session = await getSession();
   if (!session) return null;
 
-  // 1. Fetch all system users, projects, and bulk tanks
+  // 1. Fetch all system users, projects, and bulk tanks.
+  //
+  // These rows go straight to ManageUsersClient ("use client"), so every field
+  // selected here is serialized into the RSC payload and is readable in page
+  // source. `include` returns all User scalars — which meant every account's
+  // bcrypt passwordHash was being shipped to the browser. Select exactly the
+  // fields UserProp declares and nothing more.
   const users = await prisma.user.findMany({
-    include: { project: true, bulkTank: true },
+    select: {
+      id: true,
+      username: true,
+      name: true,
+      email: true,
+      role: true,
+      active: true,
+      projectId: true,
+      bulkTankId: true,
+      project: { select: { id: true, name: true, code: true } },
+      bulkTank: { select: { id: true, name: true, fuelKind: true } },
+    },
     orderBy: {
       username: "asc",
     },

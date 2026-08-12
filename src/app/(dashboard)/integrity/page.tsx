@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { detectAnomalies, type AnomalyFinding } from "@/lib/integrity/anomalies";
 import { resolvePeriod, currentMonthPeriod } from "@/lib/billing/period";
+import { colomboDateString, colomboDayEnd, colomboDayStart } from "@/lib/colombo-date";
 import { ShieldAlert, AlertTriangle, Fuel, Gauge } from "lucide-react";
 
 interface PageProps {
@@ -31,13 +32,13 @@ export default async function IntegrityPage(props: PageProps) {
 
   const sp = await props.searchParams;
   const now = new Date();
-  const defFrom = currentMonthPeriod(now).start.toISOString().split("T")[0];
-  const defTo = currentMonthPeriod(now).end.toISOString().split("T")[0];
+  const defFrom = colomboDateString(currentMonthPeriod(now).start);
+  const defTo = colomboDateString(currentMonthPeriod(now).end);
   const fromStr = sp.from || defFrom;
   const toStr = sp.to || defTo;
 
-  const from = new Date(`${fromStr}T00:00:00`);
-  const to = new Date(`${toStr}T23:59:59`);
+  const from = colomboDayStart(fromStr);
+  const to = colomboDayEnd(toStr);
   const scan = await detectAnomalies({ from, to });
 
   return (
