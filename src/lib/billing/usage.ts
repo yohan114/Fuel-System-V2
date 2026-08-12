@@ -240,34 +240,20 @@ export interface FuelSummary {
   count: number;
 }
 
-// Total fuel issued + cost for the asset in the period. costCents comes straight
-// from the priced FuelIssue snapshots, so no re-pricing is required.
-export async function sumFuelForMonth(
-  assetId: string,
-  start: Date,
-  end: Date,
-  projectCode?: string | null
-): Promise<FuelSummary> {
-  const asset = await prisma.asset.findUnique({
-    where: { id: assetId },
-    include: { project: true }
-  });
-  const projectCodeVal = projectCode || asset?.project?.code;
-  const fuelSource = projectCodeVal === "BADAL" ? "BADALGAMA" : projectCodeVal;
-
-  const agg = await prisma.fuelIssue.aggregate({
-    where: {
-      assetId,
-      issueDate: { gte: start, lte: end },
-      voided: false,
-      ...(fuelSource ? { source: fuelSource } : {})
-    },
-    _sum: { litres: true, totalCost: true },
-    _count: true,
-  });
-  return {
-    litres: agg._sum.litres ?? 0,
-    costCents: agg._sum.totalCost ?? 0,
-    count: agg._count ?? 0,
-  };
-}
+// sumFuelForMonth used to live here. It duplicated sumFuelForWindow but ANDed
+// `source: <projectCode>` into the aggregate, on the theory that FuelIssue.source
+// identifies a site. It does not: source records where the fuel came from (the
+// bulk-tank name written by workshop.ts, or an importer provenance string like
+// "Consolidated register (Marawila)"). Zero of the 8,226 issues in the live
+// database have a source equal to any of the 33 Project.code values, so the
+// filter matched nothing and the function always returned litres 0 / cost 0.
+//
+// That contradicted both its sibling's documented rule ("fuel follows the
+// vehicle... attributed purely by date") and its own docstring, and it broke the
+// legacy single-site path in generate.ts two ways: wet bills silently lost their
+// entire fuel charge, and the phantom-bill guard's `fuel.litres === 0` test was
+// vacuously true, so assets were skipped and never invoiced at all.
+//
+// Rather than keep two functions that can drift, generate.ts now calls
+// sumFuelForWindow directly for the whole-month window, so both billing paths
+// share one implementation by construction.
