@@ -21,6 +21,7 @@ export type GenerateStatus =
   | "skipped-finalized"
   | "skipped-existing"
   | "skipped-not-here"
+  | "skipped-excluded"
   | "no-rate";
 
 export interface GenerateOptions {
@@ -48,6 +49,7 @@ export interface GenerateResult {
   skippedFinalized: number;
   skippedExisting: number;
   skippedNotHere: number;
+  skippedExcluded: number;
   noRate: number;
   errors: { assetId: string; assetCode?: string; message: string }[];
   assets: AssetOutcome[];
@@ -141,6 +143,10 @@ export async function generateBillForAsset(
     include: { category: true, project: true, rentalRate: true },
   });
   if (!asset) throw new Error("Asset not found");
+
+  // Invoiced to the client outside this system (e.g. rebilled from a hire
+  // company's own invoice) — raising a bill here would charge them twice.
+  if (asset.billExclude) return { status: "skipped-excluded" };
   // A fuel-only vehicle (privately owned, E&C fuels but does not rent) bills its
   // issued fuel without a rate card, so it is allowed through the no-rate gate.
   if (!asset.rentalRate && !asset.billFuelOnly) return { status: "no-rate" };
@@ -670,6 +676,7 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
     skippedFinalized: 0,
     skippedExisting: 0,
     skippedNotHere: 0,
+    skippedExcluded: 0,
     noRate: 0,
     errors: [],
     assets: [],
@@ -740,6 +747,7 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
       else if (r.status === "skipped-finalized") result.skippedFinalized++;
       else if (r.status === "skipped-existing") result.skippedExisting++;
       else if (r.status === "skipped-not-here") result.skippedNotHere++;
+      else if (r.status === "skipped-excluded") result.skippedExcluded++;
       else if (r.status === "no-rate") result.noRate++;
       result.assets.push({ assetId: a.id, assetCode: a.code, assetLabel, status: r.status, billId: r.billId });
     } catch (err: any) {

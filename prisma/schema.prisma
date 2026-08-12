@@ -127,6 +127,13 @@ model Asset {
   // and no rate card required. Kept off by default so the fleet bills as usual.
   billFuelOnly  Boolean        @default(false)
 
+  // Excluded from monthly billing entirely — no rental line, no fuel line, no
+  // bill row at all. For machines invoiced to the client outside this system:
+  // typically a hired-in unit where the client is billed from the hire
+  // company's own invoice, so generating a bill here would double-charge them.
+  // Distinct from billFuelOnly, which still raises a bill for the fuel.
+  billExclude   Boolean        @default(false)
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
