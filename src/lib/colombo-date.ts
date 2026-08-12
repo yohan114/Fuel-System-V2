@@ -44,3 +44,24 @@ export function fuelDateTime(d: Date | string): string {
 export function colomboDayKey(d: Date | string): string {
   return new Date(d).toLocaleDateString("en-CA", { timeZone: COLOMBO });
 }
+
+// "2026-08" — the Colombo month, in the same form as BillingPeriod.periodKey so
+// the two compare directly. Bucketing by the UTC month instead puts the 1st of
+// every month in the previous one, because an imported row for the 1st is stored
+// at 18:30Z on the last day of the month before.
+export function colomboMonthKey(d: Date | string): string {
+  return colomboDayKey(d).slice(0, 7);
+}
+
+// Query bounds for a day key, for `gte` / `lte` on an instant column. These are
+// the key-taking twins of startOfColomboDay / endOfColomboDay in ./assignments,
+// which do the same job from a day index. Writing the offset explicitly is what
+// makes them independent of the host's zone: `${key}T00:00:00` would be the
+// server's midnight and `${key}T00:00:00Z` would be 05:30 into the Colombo day.
+export function colomboDayStart(dayKey: string): Date {
+  return new Date(`${dayKey}T00:00:00+05:30`);
+}
+
+export function colomboDayEnd(dayKey: string): Date {
+  return new Date(`${dayKey}T23:59:59.999+05:30`);
+}

@@ -14,6 +14,8 @@ import {
   Sparkles
 } from "lucide-react";
 import SiteConsumptionCharts from "./SiteConsumptionCharts";
+import { currentMonthPeriod } from "@/lib/billing/period";
+import { colomboDayKey, colomboDayStart, colomboDayEnd } from "@/lib/colombo-date";
 
 interface PageProps {
   searchParams: Promise<{ from?: string; to?: string }>;
@@ -25,16 +27,24 @@ export default async function ReportsPage(props: PageProps) {
 
   const searchParams = await props.searchParams;
 
-  // Defaults to current calendar month
+  // Defaults to the current Colombo month.
+  //
+  // Both halves have to stay in the Colombo calendar. The default used to be
+  // built with toISOString() (a day early, since the month's first instant is
+  // 18:30Z on the last day of the month before) and the range parsed as UTC
+  // midnight (05:30 into the Colombo day). For the untouched default those two
+  // errors cancelled, which is why the figures looked right — but picking an
+  // explicit month in the date fields, which is exactly what you do to produce a
+  // monthly total, left only the second one: 2026-06-01..2026-06-30 dropped all
+  // of business 1 June and pulled in 1 July, Rs. 214,418 light on live data.
   const now = new Date();
-  const defaultFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
-  const defaultTo = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+  const period = currentMonthPeriod(now);
 
-  const fromStr = searchParams.from || defaultFrom;
-  const toStr = searchParams.to || defaultTo;
+  const fromStr = searchParams.from || colomboDayKey(period.start);
+  const toStr = searchParams.to || colomboDayKey(period.end);
 
-  const fromDate = new Date(`${fromStr}T00:00:00Z`);
-  const toDate = new Date(`${toStr}T23:59:59Z`);
+  const fromDate = colomboDayStart(fromStr);
+  const toDate = colomboDayEnd(toStr);
 
   // Run the aggregation service
   const data = await aggregateFuelData({

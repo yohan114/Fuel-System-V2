@@ -77,11 +77,27 @@ export default async function WorkshopPage() {
     orderBy: { code: "asc" },
   });
 
-  // Fetch recent dispatches from this tank
+  // Fetch recent dispatches from this tank. These rows are props for
+  // WorkshopConsole ("use client"), so whatever is selected here is serialized
+  // into the RSC payload and is readable in page source. `include: { issuedBy }`
+  // returns every User scalar, which put each operator's bcrypt passwordHash on
+  // the wire. IssueProp only ever declared `issuedBy: { name }`; structural
+  // typing accepted the wider object without complaint. Select exactly the
+  // declared fields.
   const recentIssues = tank
     ? await prisma.fuelIssue.findMany({
         where: { bulkTankId: tank.id },
-        include: { asset: true, issuedBy: true },
+        select: {
+          id: true,
+          fuelKind: true,
+          litres: true,
+          meterReading: true,
+          readingType: true,
+          totalCost: true,
+          issueDate: true,
+          asset: { select: { code: true, regNo: true } },
+          issuedBy: { select: { name: true } },
+        },
         take: 10,
         orderBy: { issueDate: "desc" },
       })

@@ -240,34 +240,20 @@ export interface FuelSummary {
   count: number;
 }
 
-// Total fuel issued + cost for the asset in the period. costCents comes straight
-// from the priced FuelIssue snapshots, so no re-pricing is required.
-export async function sumFuelForMonth(
-  assetId: string,
-  start: Date,
-  end: Date,
-  projectCode?: string | null
-): Promise<FuelSummary> {
-  const asset = await prisma.asset.findUnique({
-    where: { id: assetId },
-    include: { project: true }
-  });
-  const projectCodeVal = projectCode || asset?.project?.code;
-  const fuelSource = projectCodeVal === "BADAL" ? "BADALGAMA" : projectCodeVal;
-
-  const agg = await prisma.fuelIssue.aggregate({
-    where: {
-      assetId,
-      issueDate: { gte: start, lte: end },
-      voided: false,
-      ...(fuelSource ? { source: fuelSource } : {})
-    },
-    _sum: { litres: true, totalCost: true },
-    _count: true,
-  });
-  return {
-    litres: agg._sum.litres ?? 0,
-    costCents: agg._sum.totalCost ?? 0,
-    count: agg._count ?? 0,
-  };
-}
+// sumFuelForMonth used to live here. It duplicated sumFuelForWindow but ANDed
+// `source: <projectCode>` into the aggregate, on the theory that FuelIssue.source
+// names a site. It does not: source records where the fuel came from — the tank
+// name the pump wrote, or an importer provenance string like "Consolidated
+// register (Marawila)". Zero of the 8,226 issues in the live database carry a
+// source equal to any of the 33 Project.code values, so whenever the asset had a
+// project pin the filter matched nothing and the function returned litres 0.
+//
+// That contradicted sumFuelForWindow's stated rule directly above ("fuel follows
+// the vehicle... attributed purely by date") and broke the legacy single-site
+// path in generate.ts two ways: wet-basis bills silently lost their whole fuel
+// charge, and the phantom-bill guard's `fuel.litres === 0` test was vacuously
+// true, so assets with real fuel but no meter movement were skipped and never
+// invoiced. On current data 4 wet-basis drafts were short by Rs. 275,460.
+//
+// generate.ts now calls sumFuelForWindow for the whole-month window too, so both
+// billing paths share one implementation and cannot drift apart again.
