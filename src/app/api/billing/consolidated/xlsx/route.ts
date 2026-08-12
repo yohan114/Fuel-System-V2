@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { buildSiteStatements, totalStatement } from "@/lib/billing/statement";
+import { explodeBillsBySite } from "@/lib/billing/consolidated-document";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest) {
@@ -22,27 +23,34 @@ export async function GET(request: NextRequest) {
   const monthLabel = new Date(year, month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   const siteCode = searchParams.get("site")?.trim() || null;
 
-  const where: any = { year, month };
-  if (siteCode) where.projectCode = siteCode;
-
-  const bills = await prisma.bill.findMany({
-    where,
+  // Split multi-site vehicles into their per-site portions before filtering —
+  // a bill's projectCode is only its dominant site, so filtering the query by
+  // it silently drops a vehicle from every other site it worked at that month.
+  // (Mirrors the consolidated PDF route.)
+  const raw = await prisma.bill.findMany({
+    where: { year, month },
+    include: { lineItems: true },
     orderBy: [{ projectName: "asc" }, { assetCode: "asc" }],
   });
+
+  const projects = await prisma.project.findMany({ select: { id: true, code: true } });
+  const exploded = explodeBillsBySite(raw, new Map(projects.map((p) => [p.id, p.code])));
+  const bills = siteCode ? exploded.filter((b) => b.projectCode === siteCode) : exploded;
 
   if (bills.length === 0) {
     return new NextResponse(`No bills found for ${periodKey}${siteCode ? ` at site ${siteCode}` : ""}`, { status: 404 });
   }
 
   // Statement of account: credit notes + payments booked against these bills.
-  const billIds = bills.map((b) => b.id);
+  // Credits/payments live on the real invoice, not on a per-site slice.
+  const billIds = [...new Set(bills.map((b) => b.originBillId ?? b.id))];
   const [creditRows, paymentRows] = await Promise.all([
     prisma.creditNote.findMany({ where: { billId: { in: billIds } } }),
     prisma.payment.findMany({ where: { billId: { in: billIds } }, orderBy: { paidDate: "asc" } }),
   ]);
   const statements = buildSiteStatements(
     bills.map((b) => ({
-      billId: b.id, projectId: b.projectId, projectName: b.projectName, projectCode: b.projectCode,
+      billId: b.originBillId ?? b.id, projectId: b.projectId, projectName: b.projectName, projectCode: b.projectCode,
       assetCode: b.assetCode, invoiceNumber: b.invoiceNumber, status: b.status, grandTotalCents: b.grandTotalCents,
     })),
     creditRows.map((c) => ({ billId: c.billId, number: c.number, reason: c.reason, amountCents: c.amountCents, status: c.status })),
@@ -69,7 +77,10 @@ export async function GET(request: NextRequest) {
   // Group bills by site
   const groups = new Map<string, { name: string; bills: typeof bills }>();
   for (const b of bills) {
-    const key = b.projectId || "__unassigned__";
+    // Keyed on the site CODE first: a bill can carry the right projectCode with
+    // a null projectId (DT-79 does), and keying on the id alone listed that site
+    // twice in the summary with its vehicles and money split across both rows.
+    const key = b.projectCode || b.projectId || (b.projectName ? `name:${b.projectName}` : "__unassigned__");
     if (!groups.has(key)) groups.set(key, { name: b.projectName || "Unassigned", bills: [] });
     groups.get(key)!.bills.push(b);
   }
