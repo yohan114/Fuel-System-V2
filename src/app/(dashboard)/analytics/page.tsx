@@ -4,6 +4,7 @@ import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { getFleetUtilization } from "@/lib/analytics/utilization";
 import { resolvePeriod, currentMonthPeriod } from "@/lib/billing/period";
+import { colomboDayKey, colomboDayStart, colomboDayEnd } from "@/lib/colombo-date";
 import { Activity, TrendingDown, Wrench } from "lucide-react";
 
 interface PageProps {
@@ -23,10 +24,10 @@ export default async function AnalyticsPage(props: PageProps) {
   const sp = await props.searchParams;
   const now = new Date();
   const cur = currentMonthPeriod(now);
-  const fromStr = sp.from || cur.start.toISOString().split("T")[0];
-  const toStr = sp.to || cur.end.toISOString().split("T")[0];
-  const from = new Date(`${fromStr}T00:00:00`);
-  const to = new Date(`${toStr}T23:59:59`);
+  const fromStr = sp.from || colomboDayKey(cur.start);
+  const toStr = sp.to || colomboDayKey(cur.end);
+  const from = colomboDayStart(fromStr);
+  const to = colomboDayEnd(toStr);
 
   const rows = await getFleetUtilization({ from, to, projectId });
   const utilization = [...rows].sort((a, b) => a.utilizationPct - b.utilizationPct);

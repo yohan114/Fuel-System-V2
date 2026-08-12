@@ -5,7 +5,6 @@ import { resolvePeriod, type BillingPeriod } from "./period";
 import {
   computeRunningDelta,
   countWorkingDays,
-  sumFuelForMonth,
   computeWindowDelta,
   sumFuelForWindow,
 } from "./usage";
@@ -243,7 +242,10 @@ export async function generateBillForAsset(
     actualUnits = await countWorkingDays(asset.id, period.start, period.end);
   }
 
-  const fuel = await sumFuelForMonth(asset.id, period.start, period.end, projectCode);
+  // Source-agnostic, exactly as the segmented path does below via
+  // sumFuelForWindow: fuel follows the vehicle by date, not by which tank or
+  // import batch the issue happens to be labelled with.
+  const fuel = await sumFuelForWindow(asset.id, period.start, period.end);
 
   // Phantom-bill guard. We are on the legacy single-site path, which means the
   // vehicle had NO assignment overlapping this month, so the project was taken

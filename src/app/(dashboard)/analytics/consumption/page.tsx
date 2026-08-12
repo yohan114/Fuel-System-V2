@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { getFleetConsumptionHealth, type ConsumptionRow, type ConsumptionState } from "@/lib/analytics/consumption";
 import { currentMonthPeriod } from "@/lib/billing/period";
+import { colomboDayKey, colomboDayStart, colomboDayEnd } from "@/lib/colombo-date";
 import { Activity, Droplets, Flame, Gauge, Wrench } from "lucide-react";
 
 interface PageProps {
@@ -31,10 +32,10 @@ export default async function ConsumptionPage(props: PageProps) {
   const isSiteUser = isScopedSiteUser(session);
   const sp = await props.searchParams;
   const cur = currentMonthPeriod();
-  const fromStr = sp.from || cur.start.toISOString().split("T")[0];
-  const toStr = sp.to || cur.end.toISOString().split("T")[0];
-  const from = new Date(`${fromStr}T00:00:00`);
-  const to = new Date(`${toStr}T23:59:59`);
+  const fromStr = sp.from || colomboDayKey(cur.start);
+  const toStr = sp.to || colomboDayKey(cur.end);
+  const from = colomboDayStart(fromStr);
+  const to = colomboDayEnd(toStr);
 
   const projects = isSiteUser ? [] : await prisma.project.findMany({ orderBy: { name: "asc" } });
   const siteFilter = isSiteUser ? session.projectId! : sp.site && projects.some((p) => p.id === sp.site) ? sp.site : undefined;
