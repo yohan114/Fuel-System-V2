@@ -10,7 +10,7 @@ interface Props {
   defaultMonth: number;
 }
 
-type AssetStatus = "created" | "regenerated" | "skipped-existing" | "skipped-finalized" | "skipped-not-here" | "no-rate" | "error";
+type AssetStatus = "created" | "regenerated" | "skipped-existing" | "skipped-finalized" | "skipped-not-here" | "skipped-billed-direct" | "no-rate" | "error";
 
 interface AssetOutcome {
   assetId: string;
@@ -27,9 +27,16 @@ const STATUS_META: Record<AssetStatus, { icon: React.ReactNode; label: string; c
   "skipped-existing":   { icon: <SkipForward className="w-3.5 h-3.5" />,   label: "Existing",   cls: "text-gray-400" },
   "skipped-finalized":  { icon: <Lock className="w-3.5 h-3.5" />,          label: "Locked",     cls: "text-amber-400" },
   "skipped-not-here":   { icon: <SkipForward className="w-3.5 h-3.5" />,   label: "Not on site", cls: "text-gray-400" },
+  "skipped-billed-direct": { icon: <SkipForward className="w-3.5 h-3.5" />, label: "Settled direct", cls: "text-gray-400" },
   "no-rate":         { icon: <AlertTriangle className="w-3.5 h-3.5" />, label: "No rate",  cls: "text-orange-400" },
   error:             { icon: <XCircle className="w-3.5 h-3.5" />,       label: "Error",    cls: "text-red-400" },
 };
+
+// The server owns GenerateStatus and this union has to be kept in step by hand —
+// nothing links them, so a status added there typechecks fine here and only
+// fails when a run actually returns it. Fall back rather than crash the whole
+// results list on an unrecognised value.
+const UNKNOWN_STATUS = { icon: <AlertTriangle className="w-3.5 h-3.5" />, label: "Skipped", cls: "text-gray-400" };
 
 export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props) {
   const router = useRouter();
@@ -58,7 +65,7 @@ export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props)
       } else {
         const r = (res as any).result;
         setAssets(r.assets ?? []);
-        setSummary(`${r.periodKey}: ${r.created} created, ${r.regenerated} regenerated, ${r.skippedExisting} existing, ${r.skippedFinalized} locked, ${r.noRate} no rate${r.errors?.length ? `, ${r.errors.length} errors` : ""}.`);
+        setSummary(`${r.periodKey}: ${r.created} created, ${r.regenerated} regenerated, ${r.skippedExisting} existing, ${r.skippedFinalized} locked, ${r.noRate} no rate${r.skippedBilledDirect ? `, ${r.skippedBilledDirect} settled direct` : ""}${r.errors?.length ? `, ${r.errors.length} errors` : ""}.`);
         router.refresh();
       }
     });
@@ -145,7 +152,7 @@ export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props)
           )}
           <div className="max-h-64 overflow-y-auto rounded-xl border border-white/5 divide-y divide-white/5">
             {assets.map((a) => {
-              const meta = STATUS_META[a.status];
+              const meta = STATUS_META[a.status] ?? UNKNOWN_STATUS;
               return (
                 <div key={a.assetId} className="flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-white/[0.02]">
                   <span className={meta.cls}>{meta.icon}</span>
