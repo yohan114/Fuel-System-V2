@@ -14,6 +14,15 @@ export const BILLING_DEFAULTS = {
   invoicePrefix: "EC-INV",
   fuelRateFallbackCents: 0, // price/L fallback when issues carry no priced total
   autoEmailOnIssue: false, // email the invoice PDF to the site contact on finalize
+  // Site codes that are E&C's own locations rather than client sites, comma
+  // separated (e.g. "BADAL-WS"). Machines sitting at an internal location are
+  // not rented to anyone, so billing them the guaranteed monthly minimum
+  // invents revenue against a site that has no customer to invoice — Badalgama
+  // Workshop alone produced Rs. 24.2M of June drafts, 63 of them for machines
+  // that burned no fuel and moved no meter. Fuel issued at an internal location
+  // is unaffected: it is still attributed to whichever site the vehicle is
+  // allocated to.
+  excludeSiteCodes: "",
 };
 
 export interface BillingConfig {
@@ -28,6 +37,8 @@ export interface BillingConfig {
   invoicePrefix: string;
   fuelRateFallbackCents: number;
   autoEmailOnIssue: boolean;
+  /** Upper-cased site codes that are never billed (E&C's own locations). */
+  excludeSiteCodes: string[];
 }
 
 const KEY = (k: string) => `billing.${k}`;
@@ -60,7 +71,16 @@ export async function getBillingConfig(): Promise<BillingConfig> {
     invoicePrefix: map[KEY("invoicePrefix")] || BILLING_DEFAULTS.invoicePrefix,
     fuelRateFallbackCents: num(map, "fuelRateFallbackCents", BILLING_DEFAULTS.fuelRateFallbackCents),
     autoEmailOnIssue: (map[KEY("autoEmailOnIssue")] ?? String(BILLING_DEFAULTS.autoEmailOnIssue)) === "true",
+    excludeSiteCodes: parseSiteCodes(map[KEY("excludeSiteCodes")] ?? BILLING_DEFAULTS.excludeSiteCodes),
   };
+}
+
+/** "BADAL-WS, hq" -> ["BADAL-WS", "HQ"]. Tolerates spaces, blanks and case. */
+export function parseSiteCodes(raw: string | null | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
 }
 
 // Minimum guaranteed units for a billing mode, from config.

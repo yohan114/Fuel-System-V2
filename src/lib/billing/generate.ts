@@ -174,7 +174,15 @@ export async function generateBillForAsset(
   // split the month into one segment per site and bill each site for its slice.
   // Fetched up front because an allocation can also carry a per-allocation
   // Dry/Wet hire type and a driver, which drive the bill basis below.
-  const segments = await getMonthSegments(asset.id, period.start, period.end);
+  // Internal E&C locations (the Badalgama workshop, head office) are not client
+  // sites. A machine parked at one is not rented to anybody, so its slice of the
+  // month must never be priced — otherwise it collects the guaranteed monthly
+  // minimum and invents revenue against a site with no customer to invoice.
+  // Dropping the segments here (rather than the whole bill) means a vehicle that
+  // spent part of the month at a real site is still billed for that part.
+  const segments = (await getMonthSegments(asset.id, period.start, period.end)).filter(
+    (s) => !cfg.excludeSiteCodes.includes((s.projectCode ?? "").toUpperCase())
+  );
   // The allocation covering the most days in the month sets the hire type and
   // driver (a manually-allocated site is billed exactly as it was allocated).
   const dominant = [...segments].sort((a, b) => b.days - a.days)[0] ?? null;
@@ -223,6 +231,12 @@ export async function generateBillForAsset(
   const projectId = resolvedProject?.id ?? asset.projectId;
   const projectCode = resolvedProject?.code ?? asset.project?.code;
   const projectName = resolvedProject?.name ?? asset.project?.name;
+
+  // Same rule on the legacy single-site path: a vehicle pinned to an internal
+  // E&C location has no client behind it and is not billed.
+  if (projectCode && cfg.excludeSiteCodes.includes(projectCode.toUpperCase())) {
+    return { status: "skipped-not-here", billId: existing?.id };
+  }
 
   // Derive actual usage for the month.
   let openingMeter: number | null = null;
