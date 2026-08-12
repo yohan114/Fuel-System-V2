@@ -18,10 +18,16 @@ export const BILLING_DEFAULTS = {
   // separated (e.g. "BADAL-WS"). Machines sitting at an internal location are
   // not rented to anyone, so billing them the guaranteed monthly minimum
   // invents revenue against a site that has no customer to invoice — Badalgama
-  // Workshop alone produced Rs. 24.2M of June drafts, 63 of them for machines
-  // that burned no fuel and moved no meter. Fuel issued at an internal location
-  // is unaffected: it is still attributed to whichever site the vehicle is
-  // allocated to.
+  // Workshop alone produced Rs. 23.8M of June bills, 83 of them for machines
+  // that burned no fuel and moved no meter.
+  //
+  // CAVEAT — this also drops the FUEL drawn during an excluded stretch. On the
+  // segmented path generate.ts filters the segments before the per-segment fuel
+  // sum, so litres dated inside an excluded window are never added to the pot
+  // and are not re-attributed to any other site: nobody is billed for them. On
+  // the current data that is 132 issues, 13,455.6 L, Rs. 3,866,407. If E&C wants
+  // to recharge diesel drawn at its own yard, the segment needs to be priced at
+  // zero rental rather than removed.
   excludeSiteCodes: "",
 };
 
