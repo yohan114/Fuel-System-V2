@@ -1,5 +1,6 @@
 import React from "react";
 import { aggregateFuelData } from "@/lib/reports/aggregate";
+import { formatVariancePct } from "@/lib/reports/recommended";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
 import { 
@@ -8,11 +9,14 @@ import {
   Calendar, 
   Coins, 
   Fuel, 
-  BarChart4, 
+  BarChart4,
   Gauge,
-  Sparkles
+  Sparkles,
+  MapPin
 } from "lucide-react";
 import SiteConsumptionCharts from "./SiteConsumptionCharts";
+import { currentMonthPeriod } from "@/lib/billing/period";
+import { colomboDayKey, colomboDayStart, colomboDayEnd } from "@/lib/colombo-date";
 
 interface PageProps {
   searchParams: Promise<{ from?: string; to?: string }>;
@@ -24,16 +28,24 @@ export default async function ReportsPage(props: PageProps) {
 
   const searchParams = await props.searchParams;
 
-  // Defaults to current calendar month
+  // Defaults to the current Colombo month.
+  //
+  // Both halves have to stay in the Colombo calendar. The default used to be
+  // built with toISOString() (a day early, since the month's first instant is
+  // 18:30Z on the last day of the month before) and the range parsed as UTC
+  // midnight (05:30 into the Colombo day). For the untouched default those two
+  // errors cancelled, which is why the figures looked right — but picking an
+  // explicit month in the date fields, which is exactly what you do to produce a
+  // monthly total, left only the second one: 2026-06-01..2026-06-30 dropped all
+  // of business 1 June and pulled in 1 July, Rs. 214,418 light on live data.
   const now = new Date();
-  const defaultFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
-  const defaultTo = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+  const period = currentMonthPeriod(now);
 
-  const fromStr = searchParams.from || defaultFrom;
-  const toStr = searchParams.to || defaultTo;
+  const fromStr = searchParams.from || colomboDayKey(period.start);
+  const toStr = searchParams.to || colomboDayKey(period.end);
 
-  const fromDate = new Date(`${fromStr}T00:00:00Z`);
-  const toDate = new Date(`${toStr}T23:59:59Z`);
+  const fromDate = colomboDayStart(fromStr);
+  const toDate = colomboDayEnd(toStr);
 
   // Run the aggregation service
   const data = await aggregateFuelData({
@@ -54,6 +66,20 @@ export default async function ReportsPage(props: PageProps) {
 
         {/* Export triggers */}
         <div className="flex items-center gap-2">
+          <Link
+            href={`/reports/site-fuel?year=${fromStr.slice(0, 4)}&month=${Number(fromStr.slice(5, 7))}`}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <MapPin className="w-4 h-4" />
+            Fuel by Site
+          </Link>
+          <a
+            href={`/api/reports/monthly/xlsx?year=${fromStr.slice(0, 4)}&month=${fromStr.slice(5, 7)}`}
+            className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-indigo-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-indigo-400" />
+            Monthly Site Report
+          </a>
           <a
             href={`/api/reports/export/xlsx?from=${fromStr}&to=${toStr}`}
             className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-emerald-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
@@ -194,7 +220,9 @@ export default async function ReportsPage(props: PageProps) {
                   <th className="py-2.5">Specs</th>
                   <th className="py-2.5">Litres</th>
                   <th className="py-2.5">Total Cost</th>
-                  <th className="py-2.5">Running</th>
+                  <th className="py-2.5">Actual Meter</th>
+                  <th className="py-2.5">Recommended</th>
+                  <th className="py-2.5">Variance</th>
                   <th className="py-2.5 text-right">Economy</th>
                 </tr>
               </thead>
@@ -227,6 +255,35 @@ export default async function ReportsPage(props: PageProps) {
                       </td>
                       <td className="py-3 text-gray-400 font-mono">
                         {asset.runningDelta > 0 ? `${asset.runningDelta.toLocaleString()} ${asset.meterType}` : "—"}
+                      </td>
+                      <td className="py-3 text-gray-300 font-mono">
+                        {asset.recommended != null
+                          ? `${asset.recommended.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${asset.meterType}`
+                          : "—"}
+                      </td>
+                      <td className="py-3 font-semibold">
+                        {asset.variancePct != null ? (
+                          <span
+                            className={
+                              asset.flag === "METER_LOW"
+                                ? "text-red-400"
+                                : asset.flag === "METER_HIGH"
+                                ? "text-amber-400"
+                                : "text-gray-400"
+                            }
+                            title={
+                              asset.flag === "METER_LOW"
+                                ? "Fuel implies more running than the meter shows — possible under-recorded meter"
+                                : asset.flag === "METER_HIGH"
+                                ? "Meter shows more than fuel implies"
+                                : "Within tolerance"
+                            }
+                          >
+                            {formatVariancePct(asset.variancePct)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-600">—</span>
+                        )}
                       </td>
                       <td className="py-3 text-right font-bold text-emerald-400">
                         {formattedEff}

@@ -1,0 +1,168 @@
+// The Rates section's data: every rate card's standard consumption band, the
+// vehicle's measured burn, and how the two compare.
+//
+// The bands come from the 2026 Fleet Rental Prices workbook ("Fuel Rates"
+// sheet). They are CLASS ESTIMATES, not measurements: the sheet sets Typical
+// from the machine's model size class adjusted for age, then derives
+// Econ = 0.72x Typ and Heavy = 1.35x Typ for machinery, and Econ = 1.28x,
+// Heavy = 0.80x best economy for road vehicles. Every Dump Truck in the sheet
+// therefore shares one band. That is fine for spotting an outlier and wrong for
+// settling an argument about one machine, which is why this page shows the
+// measured rate and the interval count next to the verdict rather than the
+// verdict alone.
+
+import { prisma } from "../db";
+import { getConsumptionSeries, type AssetConsumptionSeries } from "../analytics/consumption-series";
+import { type ConsBasis, toDisplay, displayUnit, resolveBand } from "./band";
+import type { ConsumptionState } from "../analytics/consumption";
+
+export interface RateBandRow {
+  assetId: string;
+  code: string;
+  regNo: string | null;
+  typeLabel: string | null;
+  categoryName: string | null;
+  projectName: string | null;
+  status: string;
+  meterType: string;
+  hasRateCard: boolean;
+  /** Storage units (L/hr or L/km). */
+  econ: number | null;
+  typ: number | null;
+  heavy: number | null;
+  basis: ConsBasis | null;
+  /** Display units — km/L for road vehicles, matching the rate sheet. */
+  econDisplay: number | null;
+  typDisplay: number | null;
+  heavyDisplay: number | null;
+  unit: string;
+  comparable: boolean;
+  bandReason: string;
+  /** Measured burn, display units. Null when it cannot be measured. */
+  actualDisplay: number | null;
+  intervals: number;
+  state: ConsumptionState | null;
+  severity: number;
+  totalLitres: number;
+  emptyReason: string | null;
+}
+
+export interface RatesOverview {
+  rows: RateBandRow[];
+  counts: {
+    total: number;
+    withBand: number;
+    withHeavy: number;
+    noRateCard: number;
+    noBand: number;
+    basisConflict: number;
+    measured: number;
+    verdicts: number;
+    over: number;
+    heavy: number;
+    normal: number;
+    belowEcon: number;
+  };
+  /** Litres that sit inside a measurable interval, against all litres issued. */
+  litresMeasured: number;
+  litresTotal: number;
+}
+
+const STATE_RANK: Record<string, number> = {
+  OVER: 0, HEAVY: 1, BELOW_ECON: 2, NORMAL: 3,
+};
+
+export async function getRatesOverview(): Promise<RatesOverview> {
+  const [assets, series] = await Promise.all([
+    prisma.asset.findMany({
+      select: {
+        id: true,
+        code: true,
+        regNo: true,
+        typeLabel: true,
+        status: true,
+        meterType: true,
+        category: { select: { name: true } },
+        project: { select: { name: true } },
+        rentalRate: {
+          select: { fuelConsEcon: true, fuelConsTyp: true, fuelConsHeavy: true, fuelConsBasis: true },
+        },
+      },
+      orderBy: { code: "asc" },
+    }),
+    getConsumptionSeries(),
+  ]);
+
+  const rows: RateBandRow[] = [];
+  let litresMeasured = 0;
+  let litresTotal = 0;
+
+  for (const a of assets) {
+    const s: AssetConsumptionSeries | undefined = series.get(a.id);
+    const band = resolveBand(a.rentalRate, a.meterType);
+    // Display in the unit the band is quoted in, not the meter's — a band the
+    // meter cannot measure is still worth showing on the rate card.
+    const shownBasis: ConsBasis = band.basis ?? (a.meterType === "KM" ? "km" : "hr");
+
+    litresTotal += s?.totalLitres ?? 0;
+    litresMeasured += s?.points.reduce((n, p) => n + p.litres, 0) ?? 0;
+
+    rows.push({
+      assetId: a.id,
+      code: a.code,
+      regNo: a.regNo,
+      typeLabel: a.typeLabel,
+      categoryName: a.category?.name ?? null,
+      projectName: a.project?.name ?? null,
+      status: a.status,
+      meterType: a.meterType,
+      hasRateCard: a.rentalRate != null,
+      econ: band.rawEcon,
+      typ: band.rawTyp,
+      heavy: band.rawHeavy,
+      basis: band.basis,
+      econDisplay: toDisplay(band.rawEcon, shownBasis),
+      typDisplay: toDisplay(band.rawTyp, shownBasis),
+      heavyDisplay: toDisplay(band.rawHeavy, shownBasis),
+      unit: displayUnit(shownBasis),
+      comparable: band.comparable,
+      bandReason: band.reason,
+      actualDisplay: s?.actualRate != null ? toDisplay(s.actualRate, s.basis) : null,
+      intervals: s?.points.length ?? 0,
+      state: s?.state ?? null,
+      severity: s?.severity ?? 0,
+      totalLitres: s?.totalLitres ?? 0,
+      emptyReason: s?.emptyReason ?? null,
+    });
+  }
+
+  // Worst first: a machine burning over its heavy threshold is what this page
+  // exists to surface. Unverdicted rows sort after, by fuel burned.
+  rows.sort((x, y) => {
+    const rx = x.state ? STATE_RANK[x.state] ?? 9 : 9;
+    const ry = y.state ? STATE_RANK[y.state] ?? 9 : 9;
+    return rx - ry || y.severity - x.severity || y.totalLitres - x.totalLitres || x.code.localeCompare(y.code);
+  });
+
+  const counts = {
+    total: rows.length,
+    withBand: rows.filter((r) => r.typ != null && r.typ > 0).length,
+    withHeavy: rows.filter((r) => r.heavy != null).length,
+    noRateCard: rows.filter((r) => r.bandReason === "no-rate-card").length,
+    noBand: rows.filter((r) => r.bandReason === "no-band").length,
+    basisConflict: rows.filter((r) => r.bandReason === "basis-conflict").length,
+    measured: rows.filter((r) => r.intervals > 0).length,
+    verdicts: rows.filter((r) => r.state != null).length,
+    over: rows.filter((r) => r.state === "OVER").length,
+    heavy: rows.filter((r) => r.state === "HEAVY").length,
+    normal: rows.filter((r) => r.state === "NORMAL").length,
+    belowEcon: rows.filter((r) => r.state === "BELOW_ECON").length,
+  };
+
+  return {
+    rows,
+    counts,
+    litresMeasured: Math.round(litresMeasured),
+    litresTotal: Math.round(litresTotal),
+  };
+}

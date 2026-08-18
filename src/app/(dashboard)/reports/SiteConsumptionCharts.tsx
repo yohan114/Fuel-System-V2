@@ -21,6 +21,7 @@ interface SiteDataPoint {
   totalLitres: number;
   costCents: number;
   issueCount: number;
+  vehicleCount?: number;
 }
 
 interface SiteConsumptionChartsProps {
@@ -138,6 +139,9 @@ export default function SiteConsumptionCharts({ siteData }: SiteConsumptionChart
                   <div className="text-right">
                     <span className="font-bold text-white block">{site.totalLitres.toFixed(1)} L</span>
                     <span className="text-[10px] text-gray-500 font-semibold">{formatLkr(site.costCents)}</span>
+                    {site.vehicleCount != null && (
+                      <span className="text-[10px] text-indigo-400 font-semibold block">{site.vehicleCount} vehicles</span>
+                    )}
                   </div>
                 </div>
               ))

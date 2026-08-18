@@ -1,4 +1,7 @@
 import { prisma } from "../db";
+import { FUEL_KIND_CODES } from "../fuel-kinds";
+import { recommendedUnits, varianceFlag } from "./recommended";
+import { colomboDayKey } from "../colombo-date";
 
 export interface ReportFilter {
   from: Date;
@@ -6,13 +9,15 @@ export interface ReportFilter {
   fuelKind?: string;
   categoryId?: string;
   assetId?: string;
+  projectId?: string;
 }
 
 export async function aggregateFuelData(filter: ReportFilter) {
-  const { from, to, fuelKind, categoryId, assetId } = filter;
+  const { from, to, fuelKind, categoryId, assetId, projectId } = filter;
 
-  // Build where clause for FuelIssue
+  // Build where clause for FuelIssue (voided issues are excluded from reports)
   const issueWhere: any = {
+    voided: false,
     issueDate: {
       gte: from,
       lte: to,
@@ -21,20 +26,21 @@ export async function aggregateFuelData(filter: ReportFilter) {
 
   if (fuelKind) issueWhere.fuelKind = fuelKind;
   if (assetId) issueWhere.assetId = assetId;
-  if (categoryId) {
-    issueWhere.asset = {
-      categoryId: categoryId,
-    };
-  }
+  const assetFilter: any = {};
+  if (categoryId) assetFilter.categoryId = categoryId;
+  if (projectId) assetFilter.projectId = projectId;
+  if (Object.keys(assetFilter).length > 0) issueWhere.asset = assetFilter;
 
-  // Fetch all matching issues
+  // Fetch all matching issues (never load the photo BLOB into aggregates).
   const issues = await prisma.fuelIssue.findMany({
     where: issueWhere,
+    omit: { photoData: true },
     include: {
       asset: {
         include: {
           category: true,
           project: true,
+          rentalRate: true,
         },
       },
     },
@@ -49,12 +55,11 @@ export async function aggregateFuelData(filter: ReportFilter) {
   const issueCount = issues.length;
 
   const categoryTotals: Record<string, { name: string; code: string; litres: number; costCents: number }> = {};
-  const assetTotals: Record<string, { code: string; brand: string | null; typeLabel: string | null; litres: number; costCents: number; meterType: string; assetId: string }> = {};
+  const assetTotals: Record<string, { code: string; brand: string | null; typeLabel: string | null; litres: number; costCents: number; meterType: string; assetId: string; fuelConsTyp: number | null; categoryName: string; projectName: string | null; projectCode: string | null; issueCount: number }> = {};
   const trendTotals: Record<string, { date: string; litres: number; costCents: number }> = {};
-  const fuelKindTotals: Record<string, { litres: number; costCents: number }> = {
-    AUTO_DIESEL: { litres: 0, costCents: 0 },
-    SUPER_DIESEL: { litres: 0, costCents: 0 },
-  };
+  const fuelKindTotals: Record<string, { litres: number; costCents: number }> = Object.fromEntries(
+    FUEL_KIND_CODES.map((code) => [code, { litres: 0, costCents: 0 }]),
+  );
 
   interface SiteTotalPoint {
     id: string;
@@ -65,8 +70,11 @@ export async function aggregateFuelData(filter: ReportFilter) {
     totalLitres: number;
     costCents: number;
     issueCount: number;
+    vehicleCount: number;
   }
   const siteTotals: Record<string, SiteTotalPoint> = {};
+  // Distinct assets fueled per site, for the "total site vehicles" count.
+  const siteAssetSets: Record<string, Set<string>> = {};
 
   for (const issue of issues) {
     totalLitres += issue.litres;
@@ -104,8 +112,10 @@ export async function aggregateFuelData(filter: ReportFilter) {
         totalLitres: 0,
         costCents: 0,
         issueCount: 0,
+        vehicleCount: 0,
       };
     }
+    (siteAssetSets[siteId] ||= new Set()).add(issue.asset.id);
     siteTotals[siteId].issueCount++;
     siteTotals[siteId].costCents += issue.totalCost;
     siteTotals[siteId].totalLitres += issue.litres;
@@ -126,13 +136,21 @@ export async function aggregateFuelData(filter: ReportFilter) {
         litres: 0,
         costCents: 0,
         meterType: issue.asset.meterType,
+        fuelConsTyp: issue.asset.rentalRate?.fuelConsTyp ?? null,
+        categoryName: issue.asset.category.name,
+        projectName: issue.asset.project?.name ?? null,
+        projectCode: issue.asset.project?.code ?? null,
+        issueCount: 0,
       };
     }
     assetTotals[aId].litres += issue.litres;
     assetTotals[aId].costCents += issue.totalCost;
+    assetTotals[aId].issueCount += 1;
 
-    // Daily trend totals
-    const dayKey = issue.issueDate.toISOString().split("T")[0];
+    // Daily trend totals, bucketed by the attendant's Colombo day. An
+    // imported row sits at Colombo midnight = 18:30Z the day before, so a UTC
+    // key files the whole of one day's fuel under the previous date.
+    const dayKey = colomboDayKey(issue.issueDate);
     if (!trendTotals[dayKey]) {
       trendTotals[dayKey] = { date: dayKey, litres: 0, costCents: 0 };
     }
@@ -191,11 +209,21 @@ export async function aggregateFuelData(filter: ReportFilter) {
       }
     }
 
+    const recommended = recommendedUnits(total.litres, total.fuelConsTyp);
+    const v = varianceFlag(runningDelta, recommended);
     assetsList.push({
       ...total,
       runningDelta,
       efficiency,
+      recommended,
+      variancePct: v.variancePct,
+      flag: v.flag,
     });
+  }
+
+  // Resolve the distinct-vehicle count per site for the breakdown.
+  for (const [sid, s] of Object.entries(siteTotals)) {
+    s.vehicleCount = siteAssetSets[sid]?.size ?? 0;
   }
 
   // Sort assets by cost descending

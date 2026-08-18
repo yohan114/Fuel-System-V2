@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSession } from "@/lib/auth";
 import { aggregateFuelData } from "@/lib/reports/aggregate";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest) {
+  // Verify credentials. The proxy bypasses /api/reports/export/*, so this
+  // handler must enforce auth itself (mirrors the PDF export route).
+  const session = await getSession();
+  if (!session) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+
   const { searchParams } = request.nextUrl;
   const fromStr = searchParams.get("from");
   const toStr = searchParams.get("to");
@@ -96,7 +104,7 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="fuel_audit_${fromStr}_to_${toStr}.xlsx"`,
       },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Excel generation error:", err);
     return new NextResponse("Failed to compile excel workbook.", { status: 500 });
   }

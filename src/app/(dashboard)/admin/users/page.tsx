@@ -9,9 +9,27 @@ export default async function AdminUsersPage() {
   const session = await getSession();
   if (!session) return null;
 
-  // 1. Fetch all system users, projects, and bulk tanks
+  // 1. Fetch all system users, projects, and bulk tanks.
+  //
+  // These rows are props for ManageUsersClient ("use client"), so every field
+  // selected here is serialized into the RSC payload and is readable in page
+  // source. `include` returns all User scalars, which meant every account's
+  // bcrypt passwordHash was being shipped to the browser — on the one page an
+  // administrator is most likely to open. UserProp declares only the eight
+  // non-secret fields, so select exactly those.
   const users = await prisma.user.findMany({
-    include: { project: true, bulkTank: true },
+    select: {
+      id: true,
+      username: true,
+      name: true,
+      email: true,
+      role: true,
+      active: true,
+      projectId: true,
+      bulkTankId: true,
+      project: { select: { id: true, name: true, code: true } },
+      bulkTank: { select: { id: true, name: true, fuelKind: true } },
+    },
     orderBy: {
       username: "asc",
     },
@@ -112,13 +130,14 @@ export default async function AdminUsersPage() {
                 <option value="ADMIN">Admin (Full System Controls)</option>
                 <option value="ALLOCATOR">Allocator (Project Vehicle Manager)</option>
                 <option value="WORKSHOP">Workshop Pump Operator</option>
+                <option value="SITE_PUMP">Site Pump Operator (Site-Scoped)</option>
               </select>
             </div>
 
             {/* Project select */}
             <div>
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                Project Assignment (For User Role Only)
+                Project Assignment (Site-scoped roles: User / Site Pump)
               </label>
               <select
                 name="projectId"
@@ -136,7 +155,7 @@ export default async function AdminUsersPage() {
             {/* Bulk Tank select */}
             <div>
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                Bulk Tank Assignment (For Workshop Role Only)
+                Bulk Tank Assignment (Workshop / Site Pump roles)
               </label>
               <select
                 name="bulkTankId"

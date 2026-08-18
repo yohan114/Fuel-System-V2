@@ -22,21 +22,20 @@ interface ChartDataPoint {
   cost: number;
 }
 
-interface DashboardChartsProps {
-  trendData: ChartDataPoint[];
-  autoDieselLitres: number;
-  superDieselLitres: number;
-  autoDieselCost: number;
-  superDieselCost: number;
+export interface KindSlice {
+  name: string;
+  value: number; // litres
+  cost: number; // cents
 }
 
-export default function DashboardCharts({
-  trendData,
-  autoDieselLitres,
-  superDieselLitres,
-  autoDieselCost,
-  superDieselCost
-}: DashboardChartsProps) {
+interface DashboardChartsProps {
+  trendData: ChartDataPoint[];
+  kindSplit: KindSlice[];
+}
+
+const KIND_COLORS = ["#4f46e5", "#10b981", "#f59e0b", "#ec4899", "#06b6d4", "#8b5cf6"];
+
+export default function DashboardCharts({ trendData, kindSplit }: DashboardChartsProps) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -57,11 +56,10 @@ export default function DashboardCharts({
     return `Rs. ${(cents / 100).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  // Pie chart data
-  const pieData = [
-    { name: "Auto Diesel", value: autoDieselLitres, cost: autoDieselCost, color: "#4f46e5" },
-    { name: "Super Diesel", value: superDieselLitres, cost: superDieselCost, color: "#10b981" }
-  ].filter(d => d.value > 0);
+  // Pie chart data — one slice per fuel product used this month
+  const pieData = kindSplit
+    .map((d, i) => ({ ...d, color: KIND_COLORS[i % KIND_COLORS.length] }))
+    .filter((d) => d.value > 0);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -165,7 +163,7 @@ export default function DashboardCharts({
             <div className="absolute flex flex-col items-center">
               <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">Total</span>
               <span className="text-xl font-extrabold text-white">
-                {(autoDieselLitres + superDieselLitres).toFixed(0)}L
+                {kindSplit.reduce((sum, d) => sum + d.value, 0).toFixed(0)}L
               </span>
             </div>
           )}
@@ -174,7 +172,7 @@ export default function DashboardCharts({
         {/* Legend Custom */}
         <div className="space-y-2 pt-4 border-t border-white/5">
           {pieData.map((d, index) => {
-            const total = autoDieselLitres + superDieselLitres;
+            const total = kindSplit.reduce((sum, d) => sum + d.value, 0);
             const pct = total > 0 ? ((d.value / total) * 100).toFixed(1) : "0.0";
             return (
               <div key={index} className="flex items-center justify-between text-xs">

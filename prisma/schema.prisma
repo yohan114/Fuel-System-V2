@@ -37,6 +37,16 @@ model User {
 
   bulkRequests     BulkRequest[] @relation("BulkRequestedBy")
   reviewedBulk     BulkRequest[] @relation("BulkReviewedBy")
+
+  generatedBills   Bill[]        @relation("BillGeneratedBy")
+  createdAssignments AssetAssignment[] @relation("AssignmentCreatedBy")
+
+  fuelCorrections     FuelIssueCorrection[] @relation("CorrectionRequestedBy")
+  reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
+
+  tankDips         TankDip[]     @relation("TankDipRecordedBy")
+
+  serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
 }
 
 model Category {
@@ -46,6 +56,36 @@ model Category {
   defaultMeterType String        // "KM" | "HOURS"
   fleetGroup       String        // "ROAD_VEHICLE" | "MACHINERY_GENSET"
   assets           Asset[]
+  serviceInterval  ServiceInterval?
+  pmTasks          PMTask[]
+}
+
+// A preventive-maintenance task from the Fleet PM Master plan. Every vehicle
+// of the category shares the plan; tasks repeat on an hour-ladder interval
+// (10/50/250/500/1000/2000/4000 h). Road vehicles schedule the same ladder in
+// kilometres at 10 km per plan hour (matching the app's 500 h ≈ 5,000 km rule).
+model PMTask {
+  id            String   @id @default(uuid())
+
+  categoryId    String
+  category      Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  taskCode      String?  // source id, e.g. BAC-1-001; null for manually added tasks
+  intervalHours Float
+  intervalLabel String   // e.g. "Monthly / 250 h"
+  system        String?  // Engine / Hydraulic / Electrical ...
+  component     String?
+  description   String
+  parts         String?  // consumables / parts to use
+  skill         String?
+  laborHours    Float?
+  notes         String?
+  sortOrder     Int      @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([categoryId, intervalHours, sortOrder])
 }
 
 model Asset {
@@ -63,6 +103,39 @@ model Asset {
   site          String?
   status        String         @default("ACTIVE") // "ACTIVE" | "INACTIVE" | "DISPOSED"
   meterType     String         // "KM" | "HOURS"
+  dailyCapLitres Int?          // optional per-vehicle daily fuel cap (litres); blocks over-cap issues
+
+  // Hire ("rented-in") tracking. A HIRED machine is owned by a third party and
+  // rented in by E&C — the hire fields record what E&C pays the owner, kept
+  // separate from the RentalRate E&C charges sites for the same machine.
+  ownership     String         @default("OWNED") // "OWNED" | "HIRED"
+  hireSupplier  String?        // owner / supplier the machine is hired from
+  hireRateCents Int?           // hire charge E&C pays, in LKR cents
+  hireRateBasis String?        // "hour" | "day" | "month"
+  hireStart     DateTime?      // hire commencement date
+  hireEnd       DateTime?      // hire end date; null = ongoing
+  hireNote      String?
+
+  // Minimum guaranteed billable hours per month for this machine (hire
+  // agreements often guarantee a floor). When set it overrides the global
+  // billing.minHours for this asset's hourly bills. Null = use the global.
+  minBillHours  Int?
+
+  // Fuel-only billing: a privately-owned vehicle E&C does not rent but does
+  // fuel from its bulk tanks (e.g. a surveyor's own car on a site). When true
+  // the monthly bill charges the issued fuel (+ SSCL/VAT) only — no rental line
+  // and no rate card required. Kept off by default so the fleet bills as usual.
+  billFuelOnly  Boolean        @default(false)
+
+  // Billed direct: the client settles this machine with its owner without E&C
+  // in the middle, so E&C invoices neither its rental nor its fuel — even
+  // though it is posted to a site and draws from that site's pump, and so
+  // appears in every other report. Distinct from billFuelOnly, which still
+  // recharges the fuel. Off by default: a machine is billable unless someone
+  // says otherwise, and the summary names the ones left out so an exclusion is
+  // never silent.
+  billedDirect  Boolean        @default(false)
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -76,6 +149,97 @@ model Asset {
   fuelIssues    FuelIssue[]
   meterReadings MeterReading[]
   dailyConditions DailyCondition[]
+  assignments   AssetAssignment[]
+
+  rentalRate    RentalRate?
+  bills         Bill[]
+  serviceRecords ServiceRecord[]
+  serviceIntervalOverride ServiceInterval?
+  filters       AssetFilter[]
+  allocations   VehicleAllocation[]
+}
+
+// A saved, time-bounded posting of one asset to one project/site. This is the
+// authoritative record of "which vehicle was assigned where, and when" — it
+// replaces guessing a vehicle's site from its fuel/reading source strings.
+//
+// A vehicle can hold several assignments across a month (e.g. week 1 at site X,
+// week 2 at site Y, weeks 3-4 at site Z); billing splits the month along these
+// segments. Dates are Colombo local-midnight day markers. endDate is the
+// inclusive last day; a null endDate means the posting is still open/ongoing.
+model AssetAssignment {
+  id          String    @id @default(uuid())
+
+  assetId     String
+  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id])
+
+  startDate   DateTime  // inclusive first day (Colombo midnight)
+  endDate     DateTime? // inclusive last day; null = ongoing
+  note        String?
+
+  // Driver/operator assigned to the vehicle for this posting (shown on the bill).
+  driverName  String?
+  // Hire type for this allocation: "DRY" | "WET". DRY bills the vehicle + driver
+  // for the period with NO fuel cost; WET adds the fuel cost. Null = fall back to
+  // the vehicle's rate-card basis. Lets a site that isn't using the system be
+  // allocated and billed correctly by hand.
+  billingType String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  createdById String?
+  createdBy   User?     @relation("AssignmentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([assetId, startDate])
+  @@index([projectId, startDate])
+}
+
+// Site-vehicle allocation master layer: one clean record per vehicle per site
+// per month, built from the register's Vehicle Monthly / Vehicle Bill sheets —
+// which pre-list the FULL fleet stationed at a site, not just the vehicles that
+// drew fuel. This is the authoritative "what was stationed where" table that
+// fuel transactions, billing and reconciliation hang off, so a vehicle with no
+// fuel that month is still recorded as allocated. Distinct from AssetAssignment
+// (the app's date-range posting used for live billing/visibility): this is the
+// month-granular, source-audited import of record.
+model VehicleAllocation {
+  id          String   @id @default(uuid())
+
+  // Idempotency key: normalised "siteName|month|vehicleNo". A re-run upserts on
+  // this so the same source row never duplicates.
+  dedupeKey   String   @unique
+
+  // Resolved site (null only when a raw site name can't be mapped to a project).
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  siteName    String   // raw site/project label exactly as in the source
+
+  month       String   // allocation month, "YYYY-MM"
+
+  // Resolved vehicle (null when the raw vehicle key can't be matched to an asset,
+  // e.g. a not-yet-registered machine); the raw key is always kept for audit.
+  assetId     String?
+  asset       Asset?   @relation(fields: [assetId], references: [id])
+  vehicleNo   String   // raw vehicle key exactly as in the source
+
+  machineType String?  // Vehicle / Machine classification from the source
+  ownerCode   String?  // Company Code / Owner (E&C, Hire, Internal, …)
+  basis       String?  // Fuel Report | Fuel Stock Issue | Hire Summary (Internal/External)
+  active      Boolean  @default(true) // Y/N — vehicle is in its most-recent (current) allocation
+
+  sourceFile  String?  // audit trail
+  sourceSheet String?  // audit trail
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId, month])
+  @@index([assetId, month])
+  @@index([month])
 }
 
 model FuelPrice {
@@ -118,6 +282,12 @@ model FuelRequest {
   reviewedAt     DateTime?
   reviewNote     String?
 
+  // Optional pump/meter photo proof captured by the site PM at request time;
+  // copied onto the resulting FuelIssue when the request is approved.
+  photoData      Bytes?
+  photoName      String?
+  photoMime      String?
+
   issue          FuelIssue?
 }
 
@@ -150,6 +320,90 @@ model FuelIssue {
 
   bulkTankId      String?
   bulkTank        BulkTank?    @relation("TankIssues", fields: [bulkTankId], references: [id])
+
+  // Soft-void: a wrong/duplicate issue is voided (not deleted) via an approved
+  // correction. Voided issues are excluded from billing, fuel sums and reports
+  // but kept for the audit trail.
+  voided          Boolean      @default(false)
+  voidedAt        DateTime?
+
+  // Optional pump/meter photo proof for the issue (carried from the request,
+  // or attached directly on a direct issue).
+  photoData       Bytes?
+  photoName       String?
+  photoMime       String?
+
+  // Accountability: the responsible person who issued / oversaw this fuel — the
+  // site's pump operator, or the site name for historical/imported rows. The
+  // site itself is derived from the vehicle's allocation (see site-attribution).
+  issuePerson     String?
+
+  corrections     FuelIssueCorrection[]
+
+  // Performance: FuelIssue is the largest, fastest-growing table and is read by
+  // date-range on the whole fleet (reports) and per-vehicle (billing/service),
+  // always excluding voided rows. Without these, every such query full-scans.
+  @@index([assetId, issueDate])
+  @@index([issueDate])
+  @@index([bulkTankId])
+}
+
+// An admin-approved error-correction request against a fuel issue. A site user
+// submits it with a mandatory signed running-chart document (stored inline so
+// it travels with DB backups); an admin approves (applies the edit / voids the
+// issue) or rejects. Every request is a permanent, site-stamped log entry.
+model FuelIssueCorrection {
+  id            String    @id @default(uuid())
+
+  fuelIssueId   String
+  fuelIssue     FuelIssue @relation(fields: [fuelIssueId], references: [id], onDelete: Cascade)
+
+  type          String    // "EDIT" | "VOID"
+  status        String    @default("PENDING") // "PENDING" | "APPROVED" | "REJECTED"
+  reason        String
+
+  // Proposed new values (EDIT only; null = leave that field unchanged).
+  newLitres        Float?
+  newMeterReading  Float?
+  newReadingType   String?
+  newFuelKind      String?
+  newIssueDate     DateTime?
+
+  // Original values snapshotted at request time, for the before/after log.
+  origLitres       Float
+  origMeterReading Float?
+  origFuelKind     String
+  origIssueDate    DateTime
+  origSource       String
+
+  // Site snapshot (so the activity log sorts/filters site-wise even if the
+  // vehicle is later reassigned).
+  assetId       String
+  assetCode     String
+  projectId     String?
+  projectName   String?
+  projectCode   String?
+
+  // Required evidence document (photo/PDF of the signed running chart), stored
+  // as a BLOB so it is captured by the existing database backups.
+  docData       Bytes
+  docName       String
+  docMime       String
+
+  requestedById String
+  requestedBy   User      @relation("CorrectionRequestedBy", fields: [requestedById], references: [id])
+
+  reviewedById  String?
+  reviewedBy    User?     @relation("CorrectionReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  reviewNote    String?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, projectCode])
+  @@index([projectCode, createdAt])
+  @@index([fuelIssueId])
 }
 
 model MeterReading {
@@ -191,15 +445,20 @@ model Setting {
 }
 
 model Project {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  code      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid())
+  name         String   @unique
+  code         String   @unique
+  contactName  String?
+  contactEmail String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  users     User[]
-  assets    Asset[]
-  bulkTanks BulkTank[]
+  users       User[]
+  assets      Asset[]
+  bulkTanks   BulkTank[]
+  assignments AssetAssignment[]
+  budgets     Budget[]
+  allocations VehicleAllocation[]
 }
 
 model DailyCondition {
@@ -232,8 +491,32 @@ model BulkTank {
   project   Project?      @relation(fields: [projectId], references: [id])
 
   users     User[]
-  requests  BulkRequest[]
+  requests  BulkRequest[] @relation("BulkRequestTarget")
+  sourceForRequests BulkRequest[] @relation("BulkRequestSource")
   issues    FuelIssue[]   @relation("TankIssues")
+  dips      TankDip[]
+}
+
+// A physical bulk-tank dip/count, recorded periodically to reconcile the
+// measured fuel level against the system-computed balance (top-ups − issues).
+// A persistent gap flags shrinkage, leakage or unrecorded draws.
+model TankDip {
+  id              String   @id @default(uuid())
+
+  bulkTankId      String
+  bulkTank        BulkTank @relation(fields: [bulkTankId], references: [id], onDelete: Cascade)
+
+  dipLitres       Float    // physically measured litres in the tank
+  computedBalance Float    // system balance snapshot at dip time
+  variance        Float    // dipLitres − computedBalance (negative = shortfall)
+  dipDate         DateTime
+  note            String?
+  createdAt       DateTime @default(now())
+
+  recordedById    String
+  recordedBy      User     @relation("TankDipRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([bulkTankId, dipDate])
 }
 
 model BulkRequest {
@@ -245,7 +528,14 @@ model BulkRequest {
   updatedAt       DateTime  @updatedAt
 
   bulkTankId      String
-  bulkTank        BulkTank  @relation(fields: [bulkTankId], references: [id])
+  bulkTank        BulkTank  @relation("BulkRequestTarget", fields: [bulkTankId], references: [id])
+
+  // Where the requested fuel comes from: an outside supplier purchase (a
+  // delivery into the target tank) or a transfer from another site's tank that
+  // has fuel available. Legacy rows default to OUTSIDE (a plain delivery).
+  sourceType      String    @default("OUTSIDE") // "OUTSIDE" | "SITE"
+  sourceTankId    String?
+  sourceTank      BulkTank? @relation("BulkRequestSource", fields: [sourceTankId], references: [id])
 
   requestedById   String
   requestedBy     User      @relation("BulkRequestedBy", fields: [requestedById], references: [id])
@@ -254,4 +544,436 @@ model BulkRequest {
   reviewedBy      User?     @relation("BulkReviewedBy", fields: [reviewedById], references: [id])
   reviewedAt      DateTime?
   reviewNote      String?
+}
+
+// Per-asset machine rental rate card, imported from the E&C Machine Rental
+// Calculator. Rates are stored in LKR cents (whole-LKR source × 100). A null
+// tier means that combination is not available for the machine.
+model RentalRate {
+  id            String   @id @default(uuid())
+
+  assetId       String   @unique
+  asset         Asset    @relation(fields: [assetId], references: [id])
+
+  sourceLabel   String?  // original "label" from the rate card
+  category      String?  // source "cat"
+  equipType     String   @default("FLEET") // "FLEET" | "PORTABLE"
+
+  fuelQtyDefault Float?  // source "fuel" hint (not used for billing fuel cost)
+  opRate         Int?    // source "op" operator rate, cents (reserved)
+
+  // Hourly tier (cents)
+  hrFwCents     Int?
+  hrWCents      Int?
+  hrDCents      Int?
+  // Per-day tier (cents)
+  dyFwCents     Int?
+  dyWCents      Int?
+  dyDCents      Int?
+  // Per-km tier (cents)
+  kmFwCents     Int?
+  kmWCents      Int?
+  kmDCents      Int?
+
+  // Portable equipment: per-day only, 2-tier (dw = day wet, dd = day dry)
+  portDwCents   Int?
+  portDdCents   Int?
+
+  // Default hire basis for this vehicle — "fw" | "w" | "d". Bill generation
+  // uses it (a dry-hired machine bills dry, no fuel, automatically) unless a
+  // draft already carries an explicit basis. Null falls back to Wet.
+  defaultBasis  String?
+
+  // Fuel consumption band (L/hr or L/km): econ ≤ typ ≤ heavy. Actual burn
+  // above heavy flags a repair candidate on /analytics/consumption.
+  fuelConsEcon  Float?   // economic (light load) consumption
+  fuelConsTyp   Float?   // typical consumption
+  fuelConsHeavy Float?   // heavy-work upper bound
+  fuelConsBasis String?  // "hr" | "km"
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// One monthly bill per asset. Acts as both a cost statement and an invoice.
+// All money columns are LKR cents and fully snapshotted at generation time so a
+// finalized bill is immutable even if the underlying issues/readings change.
+model Bill {
+  id            String   @id @default(uuid())
+
+  // Period (Colombo month)
+  year          Int
+  month         Int      // 1-12
+  periodKey     String   // "2026-05"
+  periodStart   DateTime
+  periodEnd     DateTime
+
+  // Asset / site snapshot
+  assetId       String
+  asset         Asset    @relation(fields: [assetId], references: [id])
+  assetCode     String
+  assetRegNo    String?
+  assetLabel    String?
+  driverName    String?  // driver/operator on the winning allocation (snapshot)
+  projectId     String?
+  projectName   String?
+  projectCode   String?
+
+  // Billing config snapshot
+  billingMode   String   // "hourly" | "perkm" | "perday"
+  rateBasis     String   // "fw" | "w" | "d"
+  rateCents     Int
+
+  // Usage derivation snapshot
+  openingMeter  Float?
+  closingMeter  Float?
+  actualUnits   Float
+  minimumUnits  Float
+  billableUnits Float
+
+  // Money (cents)
+  rentalAmountCents Int
+  fuelLitres        Float @default(0)
+  fuelCostCents     Int   @default(0)
+  subtotalCents     Int
+  ssclRate          Float
+  ssclCents         Int
+  vatRate           Float
+  vatCents          Int
+  grandTotalCents   Int
+
+  // Invoice fields
+  invoiceNumber String?  @unique
+  status        String   @default("DRAFT") // "DRAFT" | "ISSUED" | "PAID" | "OVERDUE"
+  issuedDate    DateTime?
+  dueDate       DateTime?
+  paidDate      DateTime?
+  paidAmountCents Int?
+  paymentRef    String?
+  paymentNote   String?
+
+  notes         String?
+
+  // Fuel-derived units (when no meter readings exist)
+  derivedFromFuel Boolean @default(false)
+  fuelConsMidRate Float?  // mid consumption rate used (L/hr or L/km)
+
+  // Fuel-derived options and raw meter units
+  actualMeterUnits     Float?
+  derivedStandardUnits Float?
+  derivedEconUnits     Float?
+  fuelConsEconSnapshot Float?
+  fuelConsTypSnapshot  Float?
+  fuelConsHeavySnapshot Float?
+
+  // Breakdown deduction
+  breakdownDays        Int @default(0)
+  breakdownDeductCents Int @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  generatedById String?
+  generatedBy   User?    @relation("BillGeneratedBy", fields: [generatedById], references: [id])
+
+  // Invoice email dispatch stamp.
+  emailedAt     DateTime?
+  emailedTo     String?
+
+  lineItems     BillLineItem[]
+  creditNotes   CreditNote[]
+  payments      Payment[]
+  revisions     BillRevision[]
+
+  @@unique([assetId, year, month])
+  @@index([periodKey, status])
+  @@index([projectId, periodKey])
+}
+
+// An immutable snapshot of a bill's financial state captured the moment before
+// a regenerate overwrote it. Each regenerate of a DRAFT appends one row, so the
+// full history of what an invoice used to say is preserved and diffable. Never
+// mutated after creation.
+model BillRevision {
+  id              String   @id @default(uuid())
+
+  billId          String
+  bill            Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  revision        Int      // 1-based sequence per bill
+  snapshotJson    String   // full prior BillSnapshot (see lib/billing/revisions.ts)
+  subtotalCents   Int      // denormalised for quick display without parsing
+  grandTotalCents Int
+  reason          String?
+
+  createdById     String?
+  createdAt       DateTime @default(now())
+
+  @@unique([billId, revision])
+  @@index([billId])
+}
+
+// Per-year invoice sequence allocator. One row per calendar year; lastSeq is
+// the highest sequence handed out so far. Incremented atomically inside the
+// issuing transaction so two finalizes can never mint the same invoice number.
+// See lib/billing/invoice-number.ts.
+model InvoiceCounter {
+  id       Int @id @default(autoincrement())
+  year     Int @unique
+  lastSeq  Int @default(0)
+}
+
+// A receipt against an issued invoice. An invoice can take several part-
+// payments; the sum of its payments is the true amount received, and the
+// invoice flips to PAID once that sum covers the grand total. The legacy
+// Bill.paidAmountCents/paidDate mirror the running total for display.
+model Payment {
+  id           String   @id @default(uuid())
+
+  billId       String
+  bill         Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  amountCents  Int
+  paidDate     DateTime
+  method       String?  // Cash / Cheque / Transfer …
+  reference    String?
+  note         String?
+
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  @@index([billId])
+}
+
+model BillLineItem {
+  id          String  @id @default(uuid())
+
+  billId      String
+  bill        Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  kind        String  // "RENTAL" | "FUEL" | "ADJUSTMENT"
+  description String
+  quantity    Float
+  unit        String  // "hr" | "km" | "day" | "L" | "—"
+  unitRateCents Int
+  amountCents Int
+
+  // Per-site attribution. When a vehicle works several sites in one month the
+  // bill carries one RENTAL (+ optional FUEL) line per site; these record which
+  // site the line belongs to. Null for single-site / legacy bills.
+  projectId   String?
+  projectName String?
+
+  @@index([billId])
+}
+
+// Per-site monthly fuel budget, for budget-vs-actual tracking and month-end
+// run-rate forecasting.
+model Budget {
+  id                String   @id @default(uuid())
+
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id])
+
+  year              Int
+  month             Int      // 1-12
+  budgetLitres      Float?
+  budgetAmountCents Int?
+  note              String?
+
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectId, year, month])
+  @@index([year, month])
+}
+
+// A credit note against an issued bill (correction/discount/goodwill). Reduces
+// the outstanding receivable for that invoice once issued.
+model CreditNote {
+  id          String   @id @default(uuid())
+
+  billId      String
+  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  number      String?  @unique
+  reason      String
+  amountCents Int      // positive amount credited back to the customer
+  status      String   @default("DRAFT") // "DRAFT" | "ISSUED"
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  issuedDate  DateTime?
+
+  @@index([billId])
+}
+
+// Service interval config. One row per category (the editable default) and/or
+// one per asset (an override). Resolution precedence: asset → category →
+// hard-coded fleet-group default (machinery 500 hr / road 5,000 km).
+model ServiceInterval {
+  id             String    @id @default(uuid())
+
+  categoryId     String?   @unique
+  category       Category? @relation(fields: [categoryId], references: [id])
+
+  assetId        String?   @unique
+  asset          Asset?    @relation(fields: [assetId], references: [id])
+
+  basis          String    // "HOURS" | "KM"
+  intervalValue  Float
+  intervalMonths Int?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// A logged completed service. The countdown to the next service resets at the
+// latest record's date (and meterAtService when supplied). Records merged from
+// the E&C Service Record System carry jobNo, the labour/sundry breakdown and
+// per-part line items; sourceRef makes their re-import idempotent.
+model ServiceRecord {
+  id             String   @id @default(uuid())
+
+  assetId        String
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  serviceDate    DateTime
+  meterAtService Float?
+  meterType      String   // "HOURS" | "KM"
+  serviceType    String?
+  costCents      Int?     // grand total
+  note           String?
+
+  jobNo          String?
+  partsCents     Int?
+  labourCents    Int?
+  sundryCents    Int?
+  manpowerCents  Int?     // manual labour/other lines (bottom table of the sheet)
+  sourceRef      String?  @unique // e.g. "SRDB:123" for merged records
+
+  // Extra fields from the paper "Vehicle/Machinery Service Details" sheet.
+  location         String?  // site / workshop
+  nextServiceMeter Float?   // meter at which the next service falls due
+  condition        String?  // up-keeping: "G" (good) | "F" (fair) | "B" (bad)
+
+  items          ServiceItem[]
+  attachments    ServiceAttachment[]
+
+  recordedById   String
+  recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
+
+  createdAt      DateTime @default(now())
+
+  @@index([assetId, serviceDate])
+}
+
+// A part/consumable line on a service record (filter replaced, oil top-up …).
+model ServiceItem {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  kind            String // "FILTER" | "OIL"
+  description     String
+  partNo          String?
+  action          String? // replaced / cleaned / top-up …
+  qty             Float   @default(1)
+  unitPriceCents  Int?
+  amountCents     Int?
+
+  @@index([serviceRecordId])
+}
+
+// Lubricant catalogue — the priced oils/greases used on a service. Mirrors the
+// left "Oil Name / Type" table of the paper sheet: `oilType` is the fixed slot
+// (Engine Oil, Hydraulic Oil, Grease …) and `name` the specific grade/product
+// (e.g. "CJ4 15W40"). Price is per unit (litre by default); a service oil line
+// costs qty × pricePerUnitCents.
+model Lubricant {
+  id                String   @id @default(uuid())
+  name              String   // grade / product, e.g. "CJ4 15W40"
+  oilType           String?  // sheet slot: "Engine Oil", "Hydraulic Oil", "Grease" …
+  unit              String   @default("L") // "L" | "kg" | "unit"
+  pricePerUnitCents Int?
+  note              String?
+  active            Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, oilType])
+}
+
+// A file (scanned service sheet, photo …) attached to a service record. Bytes
+// stored inline and streamed back via /api/service/[id]/attachment/[attId],
+// mirroring the fuel-issue photo / correction-document pattern.
+model ServiceAttachment {
+  id              String        @id @default(uuid())
+
+  serviceRecordId String
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  fileName        String
+  mimeType        String
+  data            Bytes
+  uploadedById    String?
+
+  createdAt       DateTime @default(now())
+
+  @@index([serviceRecordId])
+}
+
+// Filter master from the E&C Service Record System: one row per physical
+// filter, addressable by any equivalent part number via FilterCrossRef.
+model Filter {
+  id          String  @id @default(uuid())
+  category    String? // Oil Filter / Fuel Filter / Air Filter …
+  oemPartNo   String?
+  hifiPartNo  String?
+  description String?
+  priceCents  Int?    // best supplier quote, resolved through the cross-refs
+  priceNote   String? // supplier the price came from
+
+  crossRefs   FilterCrossRef[]
+  assetLinks  AssetFilter[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// One equivalent part number for a filter (OEM, HIFI, Fleetguard, Donaldson,
+// Baldwin, Sakura, VIC …). normalizedPN powers the cross-reference search.
+model FilterCrossRef {
+  id           String @id @default(uuid())
+
+  filterId     String
+  filter       Filter @relation(fields: [filterId], references: [id], onDelete: Cascade)
+
+  brand        String?
+  partNumber   String
+  normalizedPN String
+  refType      String? // oem | hifi | cross
+
+  @@index([normalizedPN])
+  @@index([filterId])
+}
+
+// Which filters fit which machine. assetId is null when the source vehicle
+// (e.g. a generator) has no matching asset here; vehicleRef keeps the label.
+model AssetFilter {
+  id         String  @id @default(uuid())
+
+  filterId   String
+  filter     Filter  @relation(fields: [filterId], references: [id], onDelete: Cascade)
+
+  assetId    String?
+  asset      Asset?  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  vehicleRef String
+
+  @@index([assetId])
+  @@index([filterId])
 }

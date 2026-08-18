@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Backup download streaming error:", err);
     return new NextResponse("Failed to stream requested database backup.", { status: 500 });
   }

@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useTransition } from "react";
-import { submitBulkRequestAction, workshopIssueFuelAction } from "@/app/actions/workshop";
+import { submitBulkRequestAction, recordBulkRefuelAction, workshopIssueFuelAction } from "@/app/actions/workshop";
+import { fuelDate } from "@/lib/colombo-date";
 import { 
   Database, 
   Plus, 
@@ -18,6 +19,7 @@ import {
   Gauge,
   X
 } from "lucide-react";
+import { errorMessageOr } from "@/lib/errors";
 
 interface TankProp {
   id: string;
@@ -44,6 +46,7 @@ interface IssueProp {
   issueDate: Date;
   asset: {
     code: string;
+    regNo: string | null;
   };
   issuedBy: {
     name: string;
@@ -77,6 +80,14 @@ interface WorkshopConsoleProps {
   lockMessage: string;
   todayStr: string;
   minDateStr: string;
+  title?: string;
+  // A site pump records what the supplier actually delivered and it lands on
+  // stock at once; the workshop still raises a request for an admin to approve.
+  immediateRefuel?: boolean;
+  // Site operators log fuel in and out but do not own the stock figure — that is
+  // management's number, and showing a running balance here invited operators to
+  // reconcile against it rather than simply record what happened.
+  hideStock?: boolean;
 }
 
 export default function WorkshopConsole({
@@ -90,8 +101,16 @@ export default function WorkshopConsole({
   isLocked,
   lockMessage,
   todayStr,
-  minDateStr
+  minDateStr,
+  title = "Workshop Pump Console",
+  immediateRefuel = false,
+  hideStock = false,
 }: WorkshopConsoleProps) {
+  // Held between "submit" and the confirmation, because an immediate refuel
+  // cannot be undone and the operator should see the number before it is final.
+  const [pendingRefuel, setPendingRefuel] = useState<{
+    litres: number; sourceType: string; sourceTankId: string; sourceName: string | null;
+  } | null>(null);
   const [activeTank, setActiveTank] = useState<TankProp | null>(initialTank);
   const [issues, setIssues] = useState<IssueProp[]>(initialIssues);
   const [requests, setRequests] = useState<BulkReqProp[]>(initialRequests);
@@ -109,6 +128,11 @@ export default function WorkshopConsole({
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
 
+  // Replenishment source: an outside supplier purchase, or a transfer from
+  // another site that has fuel available.
+  const [reqSource, setReqSource] = useState<"OUTSIDE" | "SITE">("OUTSIDE");
+  const [reqSourceTankId, setReqSourceTankId] = useState<string>("");
+
 
 
   const openModal = (type: "replenish" | "issue" | "site-issue") => {
@@ -117,10 +141,12 @@ export default function WorkshopConsole({
     setSuccess(false);
     setSelectedAssetCode("");
     setSelectedProjectId("");
+    setPendingRefuel(null);
   };
 
   const closeModal = () => {
     setActiveModal(null);
+    setPendingRefuel(null);
   };
 
   const handleSiteIssueSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -165,7 +191,7 @@ export default function WorkshopConsole({
               readingType: "KM",
               totalCost: 0,
               issueDate: optimisticDate,
-              asset: { code: assetCode },
+              asset: { code: assetCode, regNo: selectedAsset?.regNo ?? null },
               issuedBy: { name: "Current Operator" },
             },
             ...prev,
@@ -173,12 +199,13 @@ export default function WorkshopConsole({
 
           setTimeout(() => closeModal(), 1500);
         }
-      } catch (err: any) {
-        setError(err?.message || "An unexpected network or system error occurred.");
+      } catch (err: unknown) {
+        setError(errorMessageOr(err, "An unexpected network or system error occurred."));
       }
     });
   };
 
+  // Immediate mode collects the entry, shows it back, and only then commits.
   const handleReplenishSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
@@ -189,9 +216,23 @@ export default function WorkshopConsole({
       formData.set("bulkTankId", activeTank.id);
     }
 
+    if (immediateRefuel && !pendingRefuel) {
+      const litres = parseFloat(formData.get("requestedLitres")?.toString() || "0");
+      if (isNaN(litres) || litres <= 0) { setError("Quantity must be greater than zero"); return; }
+      const st = formData.get("sourceType")?.toString() || "OUTSIDE";
+      const stid = formData.get("sourceTankId")?.toString() || "";
+      setPendingRefuel({
+        litres, sourceType: st, sourceTankId: stid,
+        sourceName: st === "SITE" ? (allTanks.find((t) => t.id === stid)?.name ?? null) : null,
+      });
+      return;
+    }
+
     startTransition(async () => {
       try {
-        const res = await submitBulkRequestAction(formData);
+        const res = immediateRefuel
+          ? await recordBulkRefuelAction(formData)
+          : await submitBulkRequestAction(formData);
         if (res.error) {
           setError(res.error);
         } else {
@@ -203,7 +244,7 @@ export default function WorkshopConsole({
               id: Math.random().toString(),
               fuelKind: activeTank?.fuelKind || "AUTO_DIESEL",
               requestedLitres: litres,
-              status: "PENDING",
+              status: immediateRefuel ? "APPROVED" : "PENDING",
               createdAt: new Date(),
               reviewNote: null,
             },
@@ -211,8 +252,8 @@ export default function WorkshopConsole({
           ]);
           setTimeout(() => closeModal(), 1500);
         }
-      } catch (err: any) {
-        setError(err?.message || "An unexpected network or system error occurred.");
+      } catch (err: unknown) {
+        setError(errorMessageOr(err, "An unexpected network or system error occurred."));
       }
     });
   };
@@ -253,7 +294,7 @@ export default function WorkshopConsole({
               readingType: selectedAsset?.meterType || "KM",
               totalCost: 0,
               issueDate: optimisticDate,
-              asset: { code: assetCode },
+              asset: { code: assetCode, regNo: selectedAsset?.regNo ?? null },
               issuedBy: { name: "Current Operator" },
             },
             ...prev,
@@ -261,8 +302,8 @@ export default function WorkshopConsole({
 
           setTimeout(() => closeModal(), 1500);
         }
-      } catch (err: any) {
-        setError(err?.message || "An unexpected network or system error occurred.");
+      } catch (err: unknown) {
+        setError(errorMessageOr(err, "An unexpected network or system error occurred."));
       }
     });
   };
@@ -288,7 +329,7 @@ export default function WorkshopConsole({
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white tracking-wide">Workshop Pump Console</h1>
+          <h1 className="text-xl font-bold text-white tracking-wide">{title}</h1>
           <p className="text-xs text-gray-400 mt-1 capitalize">
             Manage dispatch inventories and vehicle fillings for **{activeTank.name}**.
           </p>
@@ -312,7 +353,7 @@ export default function WorkshopConsole({
             className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-gray-200 border border-white/5 px-4 py-2.5 rounded-xl text-xs font-semibold tracking-wide active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition-all w-fit"
           >
             <PlusCircle className="w-4 h-4 text-indigo-400" />
-            Request Bulk replenishment
+            {immediateRefuel ? "Record Bulk Replenishment" : "Request Bulk replenishment"}
           </button>
           
           <button
@@ -337,6 +378,7 @@ export default function WorkshopConsole({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Pump Fuel Inventory Progress card */}
+        {!hideStock && (
         <div className="lg:col-span-2 bg-[#121420] border border-white/5 p-6 rounded-2xl shadow-xl flex flex-col justify-between space-y-6">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-3">
@@ -372,16 +414,24 @@ export default function WorkshopConsole({
             </div>
           </div>
         </div>
+        )}
 
         {/* Local Fuel Pump Scrap Info */}
-        <div className="bg-[#121420] border border-white/5 p-6 rounded-2xl shadow-xl flex flex-col justify-between">
+        <div className={`bg-[#121420] border border-white/5 p-6 rounded-2xl shadow-xl flex flex-col justify-between${hideStock ? " lg:col-span-3" : ""}`}>
           <div>
             <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3">Operator Instructions</h4>
             <ul className="text-[11px] text-gray-400 space-y-2 list-disc pl-4 leading-relaxed font-medium">
               <li>You can refuel <strong>any vehicle or machinery</strong> in the E&C fleet.</li>
               <li>Dispatched quantities are automatically deducted from your pump storage.</li>
-              <li>If the fuel level is low, request a bulk replenishment immediately.</li>
-              <li>Type custom asset codes to auto-create unregistered items under "OTHER".</li>
+              {immediateRefuel ? (
+                <li>Record a bulk replenishment as soon as fuel is delivered — it is applied immediately.</li>
+              ) : (
+                <li>If the fuel level is low, request a bulk replenishment immediately.</li>
+              )}
+              <li>Type custom asset codes to auto-create unregistered items under &quot;OTHER&quot;.</li>
+              {hideStock && (
+                <li>Tank stock figures are held by management. Every issue and every replenishment is logged against your name.</li>
+              )}
             </ul>
           </div>
           <div className="text-[9px] text-gray-500 font-bold border-t border-white/5 pt-3 mt-4">
@@ -410,10 +460,13 @@ export default function WorkshopConsole({
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-white">{issue.asset.code}</span>
+                      {issue.asset.regNo && (
+                        <span className="text-[10px] text-indigo-300 font-semibold">{issue.asset.regNo}</span>
+                      )}
                       <span className="text-[10px] text-gray-400 font-semibold">({issue.litres}L)</span>
                     </div>
                     <p className="text-[9px] text-gray-500 mt-1">
-                      Issued to {issue.asset.code} • {new Date(issue.issueDate).toLocaleDateString()}
+                      Issued to {issue.asset.code}{issue.asset.regNo ? ` (${issue.asset.regNo})` : ""} • {fuelDate(issue.issueDate)}
                     </p>
                   </div>
                   <div className="text-right">
@@ -445,7 +498,7 @@ export default function WorkshopConsole({
                       {req.requestedLitres.toLocaleString()} L
                     </div>
                     <p className="text-[9px] text-gray-500 mt-1">
-                      Submitted: {new Date(req.createdAt).toLocaleDateString()}
+                      {immediateRefuel ? "Recorded" : "Submitted"}: {new Date(req.createdAt).toLocaleDateString()}
                     </p>
                   </div>
 
@@ -456,7 +509,7 @@ export default function WorkshopConsole({
                       ? "bg-red-500/10 text-red-400"
                       : "bg-amber-500/10 text-amber-400"
                   }`}>
-                    {req.status}
+                    {immediateRefuel && req.status === "APPROVED" ? "Added to stock" : req.status}
                   </span>
                 </div>
               ))
@@ -481,10 +534,14 @@ export default function WorkshopConsole({
 
             <h3 className="text-md font-bold text-white uppercase tracking-wider flex items-center gap-2">
               <PlusCircle className="w-5 h-5 text-indigo-400" />
-              Request Bulk Refuel
+              {immediateRefuel ? "Record Bulk Refuel" : "Request Bulk Refuel"}
             </h3>
             <p className="text-xs text-gray-400">
-              Submit a fuel request to load bulk inventory into <strong>{activeTank.name}</strong>. Admins must authorize the delivery.
+              {immediateRefuel ? (
+                <>Record fuel loaded into <strong>{activeTank.name}</strong>. It is applied to stock immediately and logged against your name.</>
+              ) : (
+                <>Submit a fuel request to load bulk inventory into <strong>{activeTank.name}</strong>. Admins must authorize the delivery.</>
+              )}
             </p>
 
             {error && (
@@ -497,10 +554,62 @@ export default function WorkshopConsole({
             {success && (
               <div className="bg-emerald-500/10 border border-emerald-500/10 text-emerald-400 text-xs px-4 py-3 rounded-xl flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                <span>Request submitted successfully! Waiting for admin review.</span>
+                <span>{immediateRefuel ? "Recorded and added to tank stock." : "Request submitted successfully! Waiting for admin review."}</span>
               </div>
             )}
 
+            {pendingRefuel ? (
+              /* There is no undo once this is applied, so the operator reads the
+                 figures back before committing rather than after. */
+              <div className="space-y-4">
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 flex gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <div className="text-[11px] text-amber-200/90 leading-relaxed">
+                    <strong className="block text-amber-300 mb-0.5">Please check carefully</strong>
+                    This is added to tank stock straight away. It <strong>cannot be edited or deleted</strong> afterwards,
+                    and is logged against your name.
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/5 overflow-hidden">
+                  {[
+                    ["Quantity", `${pendingRefuel.litres.toLocaleString()} L`],
+                    ["Fuel", activeTank.fuelKind.replace("_", " ")],
+                    ["Into tank", activeTank.name],
+                    ["Source", pendingRefuel.sourceType === "SITE"
+                      ? `Transfer from ${pendingRefuel.sourceName ?? "another site"}`
+                      : "Outside purchase (supplier delivery)"],
+                  ].map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between px-4 py-3 bg-[#1b1e30]/60 border-b border-white/5 last:border-b-0">
+                      <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">{k}</span>
+                      <span className="text-xs font-bold text-white text-right">{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <form onSubmit={handleReplenishSubmit} className="flex gap-3">
+                  <input type="hidden" name="requestedLitres" value={pendingRefuel.litres} />
+                  <input type="hidden" name="sourceType" value={pendingRefuel.sourceType} />
+                  {pendingRefuel.sourceType === "SITE" && (
+                    <input type="hidden" name="sourceTankId" value={pendingRefuel.sourceTankId} />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPendingRefuel(null)}
+                    className="flex-1 bg-white/5 hover:bg-white/10 border border-white/5 text-gray-200 rounded-xl px-4 py-2.5 text-xs font-semibold transition-colors"
+                  >
+                    Go back &amp; edit
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isPending}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl px-4 py-2.5 text-xs font-bold transition-colors"
+                  >
+                    {isPending ? "Adding…" : `Yes, add ${pendingRefuel.litres.toLocaleString()} L`}
+                  </button>
+                </form>
+              </div>
+            ) : (
             <form onSubmit={handleReplenishSubmit} className="space-y-4">
               <div>
                 <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
@@ -513,6 +622,50 @@ export default function WorkshopConsole({
                   className="w-full bg-[#1b1e30]/50 border border-white/5 rounded-xl px-3 py-2.5 text-gray-400 text-xs font-semibold uppercase"
                 />
               </div>
+
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                  Fuel Source
+                </label>
+                <select
+                  name="sourceType"
+                  value={reqSource}
+                  onChange={(e) => { setReqSource(e.target.value as "OUTSIDE" | "SITE"); setReqSourceTankId(""); }}
+                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none"
+                >
+                  <option value="OUTSIDE">Outside Purchase (supplier delivery)</option>
+                  <option value="SITE">From Another Site (transfer available fuel)</option>
+                </select>
+              </div>
+
+              {reqSource === "SITE" && (
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                    Draw Fuel From Site
+                  </label>
+                  <select
+                    name="sourceTankId"
+                    required
+                    value={reqSourceTankId}
+                    onChange={(e) => setReqSourceTankId(e.target.value)}
+                    className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none"
+                  >
+                    <option value="">Select a site with available fuel…</option>
+                    {allTanks
+                      .filter((t) => t.id !== activeTank.id && t.fuelKind === activeTank.fuelKind && t.balance > 0)
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} — {t.balance.toLocaleString()} L available
+                        </option>
+                      ))}
+                  </select>
+                  {allTanks.filter((t) => t.id !== activeTank.id && t.fuelKind === activeTank.fuelKind && t.balance > 0).length === 0 && (
+                    <p className="text-[10px] text-amber-400 mt-1.5">
+                      No other site currently has {activeTank.fuelKind.replace("_", " ")} fuel available.
+                    </p>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
@@ -534,9 +687,10 @@ export default function WorkshopConsole({
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs py-2.5 rounded-xl active:scale-95 transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {isPending && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                Submit Bulk Request
+                {immediateRefuel ? "Review & add to stock" : "Submit Bulk Request"}
               </button>
             </form>
+            )}
           </div>
         </div>
       )}
@@ -605,9 +759,16 @@ export default function WorkshopConsole({
                   />
                   <datalist id="workshop-asset-suggestions">
                     {assets.map((a) => (
-                      <option key={a.id} value={a.code}>
-                        {a.code} {a.regNo ? `• ${a.regNo}` : ""} ({a.meterType})
-                      </option>
+                      <React.Fragment key={a.id}>
+                        <option value={a.code}>
+                          {a.code}{a.regNo ? ` • ${a.regNo}` : ""} ({a.meterType})
+                        </option>
+                        {a.regNo && (
+                          <option value={a.regNo}>
+                            {a.regNo} • {a.code} ({a.meterType})
+                          </option>
+                        )}
+                      </React.Fragment>
                     ))}
                   </datalist>
                 </div>
@@ -628,7 +789,6 @@ export default function WorkshopConsole({
                   name="issueDate"
                   required
                   defaultValue={todayStr}
-                  min={minDateStr}
                   max={todayStr}
                   className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50 font-semibold"
                 />
@@ -784,7 +944,6 @@ export default function WorkshopConsole({
                   name="issueDate"
                   required
                   defaultValue={todayStr}
-                  min={minDateStr}
                   max={todayStr}
                   className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50 font-semibold"
                 />

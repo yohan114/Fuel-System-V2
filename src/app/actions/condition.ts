@@ -1,8 +1,11 @@
 "use server";
 
+import { isSiteUser } from "@/lib/roles";
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
+import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 export async function logDailyConditionAction(assetId: string, status: string, note: string | null = null) {
   let user;
@@ -43,9 +46,18 @@ export async function logDailyConditionAction(assetId: string, status: string, n
       return { error: "Asset not found" };
     }
 
-    // Check project user scope
-    if (user.role === "USER" && user.projectId && asset.projectId !== user.projectId) {
-      return { error: "Asset does not belong to your assigned project" };
+    // Project-scoped users may only log conditions for vehicles assigned to
+    // their site today (legacy pin honored for never-assigned vehicles).
+    if (isSiteUser(user.role) && user.projectId) {
+      const ok = await canUserAccessAsset(user, asset.id, logDate);
+      if (!ok) {
+        return { error: "This vehicle is not assigned to your site today." };
+      }
+    }
+
+    // Only ADMIN can restore a machine from INACTIVE (breakdown) to WORKING
+    if (status === "WORKING" && asset.status === "INACTIVE" && user.role !== "ADMIN") {
+      return { error: "Only an admin can mark a machine as Working when it is in Breakdown." };
     }
 
     // Upsert condition log for this asset and date
@@ -92,8 +104,8 @@ export async function logDailyConditionAction(assetId: string, status: string, n
     revalidatePath("/fleet");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Log daily condition error:", err);
-    return { error: err.message || "Failed to log daily machine condition" };
+    return { error: errorMessage(err) || "Failed to log daily machine condition" };
   }
 }

@@ -2,11 +2,13 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
+import { isSiteUser, isPumpOperator } from "@/lib/roles";
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
+import { errorMessage } from "@/lib/errors";
 
 // 1. Update Settings
 export async function updateSettingsAction(formData: FormData) {
@@ -18,7 +20,7 @@ export async function updateSettingsAction(formData: FormData) {
   }
 
   const scraperEnabled = formData.get("scraperEnabled") === "true" ? "true" : "false";
-  const scraperCron = formData.get("scraperCron")?.toString() || "0 0 1 * *";
+  const scraperCron = formData.get("scraperCron")?.toString() || "0 6 * * *";
   const backupCron = formData.get("backupCron")?.toString() || "30 2 * * *";
   const backupRetentionDays = formData.get("backupRetentionDays")?.toString() || "7";
 
@@ -57,9 +59,9 @@ export async function updateSettingsAction(formData: FormData) {
 
     revalidatePath("/admin/settings");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update settings error:", err);
-    return { error: err.message || "Failed to update settings" };
+    return { error: errorMessage(err) || "Failed to update settings" };
   }
 }
 
@@ -84,7 +86,7 @@ export async function createUserAction(formData: FormData) {
     return { error: "All fields are required" };
   }
 
-  if (role !== "ADMIN" && role !== "USER" && role !== "ALLOCATOR" && role !== "WORKSHOP") {
+  if (role !== "ADMIN" && role !== "USER" && role !== "ALLOCATOR" && role !== "WORKSHOP" && role !== "SITE_PUMP") {
     return { error: "Invalid user role specified" };
   }
 
@@ -105,8 +107,8 @@ export async function createUserAction(formData: FormData) {
         email,
         passwordHash,
         role,
-        projectId: role === "USER" && projectId ? projectId : null,
-        bulkTankId: role === "WORKSHOP" && bulkTankId ? bulkTankId : null,
+        projectId: isSiteUser(role) && projectId ? projectId : null,
+        bulkTankId: isPumpOperator(role) && bulkTankId ? bulkTankId : null,
         active: true,
         createdById: admin.id,
       },
@@ -124,9 +126,9 @@ export async function createUserAction(formData: FormData) {
 
     revalidatePath("/admin/users");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create user error:", err);
-    return { error: err.message || "Failed to create user account" };
+    return { error: errorMessage(err) || "Failed to create user account" };
   }
 }
 
@@ -169,9 +171,9 @@ export async function toggleUserStatusAction(targetUserId: string, active: boole
 
     revalidatePath("/admin/users");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Toggle user status error:", err);
-    return { error: err.message || "Failed to update user status" };
+    return { error: errorMessage(err) || "Failed to update user status" };
   }
 }
 
@@ -244,9 +246,9 @@ export async function runOnDemandBackupAction() {
 
     revalidatePath("/admin/backups");
     return { success: true, filename: backupFilename };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Manual backup error:", err);
-    return { error: err.message || "Failed to complete database backup" };
+    return { error: errorMessage(err) || "Failed to complete database backup" };
   }
 }
 
@@ -315,9 +317,9 @@ export async function addManualPriceAction(formData: FormData) {
     revalidatePath("/admin/prices");
     revalidatePath("/fuel/issues");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Add manual price error:", err);
-    return { error: err.message || "Failed to register manual price entry" };
+    return { error: errorMessage(err) || "Failed to register manual price entry" };
   }
 }
 
@@ -339,7 +341,7 @@ export async function updateUserAssignmentAction(targetUserId: string, formData:
     return { error: "Name and Role are required fields" };
   }
 
-  if (role !== "ADMIN" && role !== "USER" && role !== "ALLOCATOR" && role !== "WORKSHOP") {
+  if (role !== "ADMIN" && role !== "USER" && role !== "ALLOCATOR" && role !== "WORKSHOP" && role !== "SITE_PUMP") {
     return { error: "Invalid user role specified" };
   }
 
@@ -357,8 +359,8 @@ export async function updateUserAssignmentAction(targetUserId: string, formData:
       data: {
         name,
         role,
-        projectId: role === "USER" && projectId ? projectId : null,
-        bulkTankId: role === "WORKSHOP" && bulkTankId ? bulkTankId : null,
+        projectId: isSiteUser(role) && projectId ? projectId : null,
+        bulkTankId: isPumpOperator(role) && bulkTankId ? bulkTankId : null,
       },
     });
 
@@ -374,9 +376,155 @@ export async function updateUserAssignmentAction(targetUserId: string, formData:
 
     revalidatePath("/admin/users");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update user assignment error:", err);
-    return { error: err.message || "Failed to update user assignment" };
+    return { error: errorMessage(err) || "Failed to update user assignment" };
+  }
+}
+
+// 7. Reset a User's Password (Admin only)
+export async function resetUserPasswordAction(targetUserId: string, formData: FormData) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch (err) {
+    return { error: "You are not authorized to perform this action" };
+  }
+
+  const password = formData.get("password")?.toString() || "";
+  const confirm = formData.get("confirmPassword")?.toString() || "";
+
+  if (password.length < 6) {
+    return { error: "Password must be at least 6 characters long" };
+  }
+  if (confirm && password !== confirm) {
+    return { error: "The two passwords do not match" };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!user) {
+      return { error: "User account not found" };
+    }
+
+    const passwordHash = bcrypt.hashSync(password, 10);
+    await prisma.user.update({
+      where: { id: targetUserId },
+      data: { passwordHash },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: admin.id,
+        action: "UPDATE",
+        entity: "User",
+        entityId: targetUserId,
+        summary: `Reset password for user "${user.username}"`,
+      },
+    });
+
+    revalidatePath("/admin/users");
+    return { success: true };
+  } catch (err: unknown) {
+    console.error("Reset user password error:", err);
+    return { error: errorMessage(err) || "Failed to reset user password" };
+  }
+}
+
+// 8. Delete a User (Admin only)
+// Hard-deletes an account only when it has no operational footprint. Fuel
+// issues, meter readings, bills, etc. are RESTRICT-linked to their author, so
+// removing a user with history would orphan/destroy financial records — those
+// accounts must be deactivated instead (their history stays attributed).
+export async function deleteUserAction(targetUserId: string) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch (err) {
+    return { error: "You are not authorized to perform this action" };
+  }
+
+  if (targetUserId === admin.id) {
+    return { error: "You cannot delete your own administrator account" };
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      include: {
+        _count: {
+          select: {
+            enteredPrices: true,
+            fuelRequests: true,
+            fuelIssues: true,
+            meterReadings: true,
+            dailyConditions: true,
+            bulkRequests: true,
+            generatedBills: true,
+            createdAssignments: true,
+            fuelCorrections: true,
+            tankDips: true,
+            serviceRecords: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return { error: "User account not found" };
+    }
+
+    // Never allow deleting the last remaining active administrator.
+    if (user.role === "ADMIN") {
+      const activeAdmins = await prisma.user.count({
+        where: { role: "ADMIN", active: true, id: { not: targetUserId } },
+      });
+      if (activeAdmins === 0) {
+        return { error: "Cannot delete the last active administrator account" };
+      }
+    }
+
+    // Block deletion when the account authored operational/financial records.
+    const c = user._count;
+    const footprint: Array<[string, number]> = [
+      ["fuel issues", c.fuelIssues],
+      ["meter readings", c.meterReadings],
+      ["fuel requests", c.fuelRequests],
+      ["daily conditions", c.dailyConditions],
+      ["price entries", c.enteredPrices],
+      ["bulk requests", c.bulkRequests],
+      ["generated bills", c.generatedBills],
+      ["asset assignments", c.createdAssignments],
+      ["fuel corrections", c.fuelCorrections],
+      ["tank dips", c.tankDips],
+      ["service records", c.serviceRecords],
+    ];
+    const nonEmpty = footprint.filter(([, n]) => n > 0);
+    if (nonEmpty.length > 0) {
+      const detail = nonEmpty.map(([label, n]) => `${n} ${label}`).join(", ");
+      return {
+        error: `This user has operational history (${detail}) and cannot be deleted. Deactivate the account instead to preserve its records.`,
+      };
+    }
+
+    const username = user.username;
+    await prisma.user.delete({ where: { id: targetUserId } });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: admin.id,
+        action: "DELETE",
+        entity: "User",
+        entityId: targetUserId,
+        summary: `Deleted user account "${username}" (role ${user.role})`,
+      },
+    });
+
+    revalidatePath("/admin/users");
+    return { success: true };
+  } catch (err: unknown) {
+    console.error("Delete user error:", err);
+    return { error: errorMessage(err) || "Failed to delete user account" };
   }
 }
 

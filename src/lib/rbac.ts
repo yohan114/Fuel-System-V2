@@ -4,6 +4,7 @@ const MATRIX = {
   ADMIN: new Set(["create", "update", "delete", "approve", "manage", "allocate"]),
   ALLOCATOR: new Set(["allocate"]),
   USER: new Set(["create"]),
+  SITE_PUMP: new Set(["create"]),
   WORKSHOP: new Set(["create"]),
 };
 

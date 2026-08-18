@@ -3,6 +3,7 @@
 import React, { useState, useTransition } from "react";
 import { logDailyConditionAction } from "@/app/actions/condition";
 import { Gauge, CheckCircle, AlertTriangle, Clock, Search, ShieldCheck } from "lucide-react";
+import { errorMessageOr } from "@/lib/errors";
 
 interface AssetConditionProp {
   id: string;
@@ -20,12 +21,14 @@ interface ConditionWidgetProps {
   initialAssets: AssetConditionProp[];
   isLocked: boolean;
   lockMessage: string;
+  isAdmin?: boolean;
 }
 
-export default function ConditionWidget({ 
-  initialAssets, 
-  isLocked, 
-  lockMessage 
+export default function ConditionWidget({
+  initialAssets,
+  isLocked,
+  lockMessage,
+  isAdmin = false,
 }: ConditionWidgetProps) {
   const [assets, setAssets] = useState<AssetConditionProp[]>(initialAssets);
   const [search, setSearch] = useState("");
@@ -60,9 +63,9 @@ export default function ConditionWidget({
             )
           );
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         setUpdatingId(null);
-        setError(err?.message || "An unexpected network or system error occurred.");
+        setError(errorMessageOr(err, "An unexpected network or system error occurred."));
       }
     });
   };
@@ -164,17 +167,24 @@ export default function ConditionWidget({
 
                 {/* Toggles */}
                 <div className="flex items-center gap-1.5">
-                  <button
-                    disabled={isLocked || isUpdating}
-                    onClick={() => handleToggleCondition(asset.id, currentCondition, "WORKING")}
-                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider active:scale-95 transition-all ${
-                      currentCondition === "WORKING"
-                        ? "bg-emerald-600 text-white shadow-md shadow-emerald-500/10"
-                        : "bg-white/5 text-gray-400 hover:text-white"
-                    } disabled:opacity-50 disabled:pointer-events-none`}
-                  >
-                    Working
-                  </button>
+                  {/* Restoring from breakdown is admin-only */}
+                  {currentCondition === "BREAKDOWN" && !isAdmin ? (
+                    <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold bg-white/5 text-gray-600 cursor-not-allowed" title="Only an admin can restore from breakdown">
+                      <ShieldCheck className="w-3 h-3" /> Admin only
+                    </div>
+                  ) : (
+                    <button
+                      disabled={isLocked || isUpdating}
+                      onClick={() => handleToggleCondition(asset.id, currentCondition, "WORKING")}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wider active:scale-95 transition-all ${
+                        currentCondition === "WORKING"
+                          ? "bg-emerald-600 text-white shadow-md shadow-emerald-500/10"
+                          : "bg-white/5 text-gray-400 hover:text-white"
+                      } disabled:opacity-50 disabled:pointer-events-none`}
+                    >
+                      Working
+                    </button>
+                  )}
                   <button
                     disabled={isLocked || isUpdating}
                     onClick={() => handleToggleCondition(asset.id, currentCondition, "BREAKDOWN")}
@@ -187,6 +197,7 @@ export default function ConditionWidget({
                     Breakdown
                   </button>
                 </div>
+
               </div>
             );
           })

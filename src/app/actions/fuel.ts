@@ -2,8 +2,20 @@
 
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
+import { canUserAccessAsset } from "@/lib/assignments";
+import { isSiteUser } from "@/lib/roles";
 import { getPriceForDate } from "@/lib/pricing";
+import { checkDailyCap } from "@/lib/fuel-policy";
+import { extractFileField } from "@/lib/upload";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
+
+// Site-configurable gate: when Setting "fuel_photo_required" === "true", a
+// pump/meter photo must accompany every fuel request / direct issue.
+async function photoRequired(): Promise<boolean> {
+  const s = await prisma.setting.findUnique({ where: { key: "fuel_photo_required" } });
+  return s?.value === "true";
+}
 
 // 1. Submit Request (User/Admin)
 export async function submitRequestAction(formData: FormData) {
@@ -14,20 +26,8 @@ export async function submitRequestAction(formData: FormData) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (colomboHour < 8 || colomboHour >= 17) {
-      return { error: "Fuel operations are only allowed between 08:00 AM and 17:00 PM." };
-    }
-  }
+  // Fuel issuing is allowed 24/7 — the 08:00–17:00 time window was removed.
+  // (Issue date/time, user, site, vehicle and issue person are still recorded.)
 
   const assetId = formData.get("assetId")?.toString();
   const fuelKind = formData.get("fuelKind")?.toString();
@@ -77,9 +77,14 @@ export async function submitRequestAction(formData: FormData) {
         }
       });
     } else {
-      // Check project user scope
-      if (user.role === "USER" && user.projectId && asset.projectId !== user.projectId) {
-        return { error: "Asset does not belong to your assigned project" };
+      // Site-scoped users (USER / SITE_PUMP) may only request fuel for vehicles
+      // allocated to their site (legacy pin honored for never-assigned vehicles).
+      // WORKSHOP is exempt — it can issue for any site / any vehicle.
+      if (isSiteUser(user.role) && user.projectId) {
+        const ok = await canUserAccessAsset(user, asset.id, new Date());
+        if (!ok) {
+          return { error: "This vehicle is not assigned to your site." };
+        }
       }
     }
 
@@ -101,6 +106,11 @@ export async function submitRequestAction(formData: FormData) {
       }
     }
 
+    const photo = await extractFileField(formData, "photo");
+    if (!photo && (await photoRequired())) {
+      return { error: "A pump/meter photo is required to submit a fuel request." };
+    }
+
     const request = await prisma.fuelRequest.create({
       data: {
         assetId: asset.id,
@@ -111,6 +121,7 @@ export async function submitRequestAction(formData: FormData) {
         reason,
         status: "PENDING",
         requestedById: user.id,
+        ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
       },
     });
 
@@ -127,9 +138,9 @@ export async function submitRequestAction(formData: FormData) {
     revalidatePath("/");
     revalidatePath("/fuel/requests");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Submit request error:", err);
-    return { error: err.message || "Failed to submit request" };
+    return { error: errorMessage(err) || "Failed to submit request" };
   }
 }
 
@@ -158,6 +169,15 @@ export async function approveRequestAction(requestId: string, reviewNote: string
 
     // Resolve active price for the current date
     const issueDate = new Date();
+
+    // Site fuel discipline: block if this would exceed the vehicle's daily cap.
+    const capError = await checkDailyCap(
+      request.assetId,
+      request.asset.dailyCapLitres,
+      issueDate,
+      request.requestedLitres
+    );
+    if (capError) return { error: capError };
     const resolvedPrice = await getPriceForDate(request.fuelKind, issueDate);
     const totalCost = Math.round(request.requestedLitres * resolvedPrice.pricePerLitre);
 
@@ -175,8 +195,12 @@ export async function approveRequestAction(requestId: string, reviewNote: string
           source: "STATION",
           issueDate,
           issuedById: admin.id,
+          issuePerson: admin.name,
           linkedRequestId: request.id,
           fuelPriceId: resolvedPrice.id,
+          ...(request.photoData
+            ? { photoData: request.photoData, photoName: request.photoName, photoMime: request.photoMime }
+            : {}),
         },
       });
 
@@ -230,9 +254,9 @@ export async function approveRequestAction(requestId: string, reviewNote: string
     revalidatePath("/fuel/issues");
     revalidatePath(`/fleet/${request.asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Approve request error:", err);
-    return { error: err.message || "Failed to approve request" };
+    return { error: errorMessage(err) || "Failed to approve request" };
   }
 }
 
@@ -284,9 +308,9 @@ export async function rejectRequestAction(requestId: string, reviewNote: string 
     revalidatePath("/");
     revalidatePath("/fuel/requests");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Reject request error:", err);
-    return { error: err.message || "Failed to reject request" };
+    return { error: errorMessage(err) || "Failed to reject request" };
   }
 }
 
@@ -329,26 +353,8 @@ export async function recordDirectIssueAction(formData: FormData) {
     }
   }
 
-  // Time Lock check
-  if (process.env.TEST_ENV !== "true") {
-    const colomboHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Colombo",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    
-    const nowTime = new Date();
-    const bypassExpiry = new Date("2026-06-19T10:04:11.000Z");
-    const issueDatePart = dateStr.split("T")[0];
-    const isBypassActive = nowTime < bypassExpiry && (issueDatePart === "2026-06-01" || issueDatePart === "2026-06-02");
-
-    if ((colomboHour < 8 || colomboHour >= 17) && !isBypassActive) {
-      return { error: "Fuel operations are only allowed between 08:00 AM and 17:00 PM." };
-    }
-  }
+  // Fuel issuing is allowed 24/7 — the 08:00–17:00 time window was removed.
+  // (Issue date/time, user, site, vehicle and issue person are still recorded.)
 
   if (isNaN(litres) || litres <= 0) {
     return { error: "Litres must be greater than zero" };
@@ -403,6 +409,15 @@ export async function recordDirectIssueAction(formData: FormData) {
       }
     }
 
+    // Site fuel discipline: block if this would exceed the vehicle's daily cap.
+    const capError = await checkDailyCap(asset.id, asset.dailyCapLitres, issueDate, litres);
+    if (capError) return { error: capError };
+
+    const photo = await extractFileField(formData, "photo");
+    if (!photo && (await photoRequired())) {
+      return { error: "A pump/meter photo is required to record a fuel issue." };
+    }
+
     // Resolve price for the date of issue
     const resolvedPrice = await getPriceForDate(fuelKind, issueDate);
     const totalCost = Math.round(litres * resolvedPrice.pricePerLitre);
@@ -421,7 +436,9 @@ export async function recordDirectIssueAction(formData: FormData) {
           source,
           issueDate,
           issuedById: admin.id,
+          issuePerson: admin.name,
           fuelPriceId: resolvedPrice.id,
+          ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
         },
       });
 
@@ -463,9 +480,9 @@ export async function recordDirectIssueAction(formData: FormData) {
     revalidatePath("/fuel/issues");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Record direct issue error:", err);
-    return { error: err.message || "Failed to record fuel issue" };
+    return { error: errorMessage(err) || "Failed to record fuel issue" };
   }
 }
 

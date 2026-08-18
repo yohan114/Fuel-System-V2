@@ -1,0 +1,241 @@
+import { prisma } from "../db";
+import { resolvePeriod } from "../billing/period";
+import { indexAssignments, assignedSiteOn, type SiteSpan } from "../fuel/site-attribution";
+
+// Monthly fuel-issue summary, site by site, in which EVERY issue of the month
+// is attributed to exactly one site — the site totals always add back up to the
+// month total.
+//
+// This is deliberately not aggregateFuelData/getSiteOverview, which bucket an
+// issue by its asset's *current* project pointer. That pointer moves with the
+// machine, so last month's fuel silently follows a machine to its new site and
+// a closed month's numbers change after the fact. Here attribution is resolved
+// against the state on the day of the issue.
+//
+// The cascade, most authoritative first:
+//   1. "posted"  — the site the machine was assigned to on the issue date.
+//   2. "tank"    — the site that owns the tank the fuel was drawn from, used
+//                  only when the machine had no posting covering that day.
+//                  Recorded fact rather than inference.
+//   3. "current" — the machine's current site pointer; last resort.
+// Anything that somehow escapes all three lands in "unassigned" and is counted
+// openly rather than dropped, so a shortfall is visible instead of silent.
+
+export type AttributionRule = "posted" | "tank" | "current" | "unassigned";
+
+export interface AttributionInput {
+  assetId: string;
+  issueDate: Date;
+  bulkTankId: string | null;
+  assetProjectId: string | null;
+}
+
+export interface Attribution {
+  projectId: string | null;
+  rule: AttributionRule;
+}
+
+// Pure: no database access, so the rule order is unit-testable on its own.
+export function attributeIssue(
+  assignmentIndex: Map<string, SiteSpan[]>,
+  tankProject: Map<string, string | null>,
+  input: AttributionInput,
+): Attribution {
+  const posted = assignedSiteOn(assignmentIndex, input.assetId, input.issueDate);
+  if (posted) return { projectId: posted, rule: "posted" };
+
+  if (input.bulkTankId) {
+    const viaTank = tankProject.get(input.bulkTankId);
+    if (viaTank) return { projectId: viaTank, rule: "tank" };
+  }
+
+  if (input.assetProjectId) return { projectId: input.assetProjectId, rule: "current" };
+
+  return { projectId: null, rule: "unassigned" };
+}
+
+export interface MachineRow {
+  assetId: string;
+  code: string;
+  label: string;
+  litres: number;
+  costCents: number;
+  issueCount: number;
+  postedIssues: number; // how many of this machine's issues came from a posting
+}
+
+export interface SiteRow {
+  projectId: string; // UNASSIGNED_ID when no site could be resolved
+  code: string;
+  name: string;
+  litres: number;
+  costCents: number;
+  issueCount: number;
+  machineCount: number;
+  machines: MachineRow[];
+  byRule: Record<AttributionRule, number>;
+}
+
+export interface MonthlySiteFuelReport {
+  period: { year: number; month: number; periodKey: string; label: string; start: Date; end: Date };
+  sites: SiteRow[];
+  totals: { litres: number; costCents: number; issueCount: number; machineCount: number };
+  byRule: Record<AttributionRule, number>;
+  voidedExcluded: number;
+  // Proof the sheet balances: site rows re-summed vs the month's own total.
+  reconciliation: { issuesInMonth: number; issuesOnSheet: number; litresInMonth: number; litresOnSheet: number; balanced: boolean };
+}
+
+export const UNASSIGNED_ID = "unassigned";
+
+// Excel tab names are far stricter than site names: 31 characters, no
+// : \ / ? * [ ], not blank, and unique within the workbook. A site called
+// "CEP-03 A,B & C Package" or two sites sharing a 31-character prefix would
+// otherwise produce a corrupt file or a silently dropped tab.
+export function excelSheetName(desired: string, taken: Set<string>): string {
+  let base = (desired || "Site").replace(/[:\\/?*[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31);
+  if (!base) base = "Site";
+  if (!taken.has(base.toLowerCase())) { taken.add(base.toLowerCase()); return base; }
+  for (let i = 2; ; i++) {
+    const suffix = ` (${i})`;
+    const candidate = base.slice(0, 31 - suffix.length) + suffix;
+    if (!taken.has(candidate.toLowerCase())) { taken.add(candidate.toLowerCase()); return candidate; }
+  }
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+export async function buildMonthlySiteFuel(opts: {
+  year: number;
+  month: number;
+  projectId?: string;
+}): Promise<MonthlySiteFuelReport> {
+  const period = resolvePeriod(opts.year, opts.month);
+
+  const [issues, voidedCount, spans, tanks, projects] = await Promise.all([
+    prisma.fuelIssue.findMany({
+      where: { voided: false, issueDate: { gte: period.start, lte: period.end } },
+      select: {
+        litres: true,
+        totalCost: true,
+        issueDate: true,
+        bulkTankId: true,
+        asset: { select: { id: true, code: true, brand: true, model: true, projectId: true, category: { select: { name: true } } } },
+      },
+    }),
+    prisma.fuelIssue.count({ where: { voided: true, issueDate: { gte: period.start, lte: period.end } } }),
+    // Only spans that can touch the month; assignmentIndex resolves by day.
+    prisma.assetAssignment.findMany({
+      where: { startDate: { lte: period.end }, OR: [{ endDate: null }, { endDate: { gte: period.start } }] },
+      select: { assetId: true, projectId: true, startDate: true, endDate: true },
+    }),
+    prisma.bulkTank.findMany({ select: { id: true, projectId: true } }),
+    prisma.project.findMany({ select: { id: true, code: true, name: true } }),
+  ]);
+
+  const assignmentIndex = indexAssignments(spans);
+  const tankProject = new Map(tanks.map((t) => [t.id, t.projectId]));
+  const projectById = new Map(projects.map((p) => [p.id, p]));
+
+  const emptyRules = (): Record<AttributionRule, number> => ({ posted: 0, tank: 0, current: 0, unassigned: 0 });
+  const byRule = emptyRules();
+  const acc = new Map<string, SiteRow & { machineMap: Map<string, MachineRow> }>();
+
+  const ensureSite = (projectId: string | null): SiteRow & { machineMap: Map<string, MachineRow> } => {
+    const id = projectId ?? UNASSIGNED_ID;
+    let row = acc.get(id);
+    if (!row) {
+      const p = projectId ? projectById.get(projectId) : undefined;
+      row = {
+        projectId: id,
+        code: p?.code ?? "—",
+        name: p?.name ?? "Unassigned",
+        litres: 0, costCents: 0, issueCount: 0, machineCount: 0,
+        machines: [], byRule: emptyRules(), machineMap: new Map(),
+      };
+      acc.set(id, row);
+    }
+    return row;
+  };
+
+  for (const issue of issues) {
+    const { projectId, rule } = attributeIssue(assignmentIndex, tankProject, {
+      assetId: issue.asset.id,
+      issueDate: issue.issueDate,
+      bulkTankId: issue.bulkTankId,
+      assetProjectId: issue.asset.projectId,
+    });
+
+    // A site filter is applied after attribution — filtering the query by the
+    // asset's project would reintroduce the current-pointer bug this report exists to avoid.
+    if (opts.projectId && (projectId ?? UNASSIGNED_ID) !== opts.projectId) continue;
+
+    byRule[rule]++;
+    const site = ensureSite(projectId);
+    site.litres += issue.litres;
+    site.costCents += issue.totalCost;
+    site.issueCount++;
+    site.byRule[rule]++;
+
+    const a = issue.asset;
+    let m = site.machineMap.get(a.id);
+    if (!m) {
+      m = {
+        assetId: a.id,
+        code: a.code,
+        label: [a.brand, a.model].filter(Boolean).join(" ").trim() || a.category.name,
+        litres: 0, costCents: 0, issueCount: 0, postedIssues: 0,
+      };
+      site.machineMap.set(a.id, m);
+    }
+    m.litres += issue.litres;
+    m.costCents += issue.totalCost;
+    m.issueCount++;
+    if (rule === "posted") m.postedIssues++;
+  }
+
+  const sites: SiteRow[] = [...acc.values()].map((s) => {
+    const machines = [...s.machineMap.values()]
+      .map((m) => ({ ...m, litres: round2(m.litres) }))
+      .sort((x, y) => y.litres - x.litres || x.code.localeCompare(y.code));
+    return {
+      projectId: s.projectId, code: s.code, name: s.name,
+      litres: round2(s.litres), costCents: s.costCents, issueCount: s.issueCount,
+      machineCount: machines.length, machines, byRule: s.byRule,
+    };
+  });
+  // Biggest consumer first; the unassigned bucket always sits last so it reads as an exception.
+  sites.sort((x, y) =>
+    (x.projectId === UNASSIGNED_ID ? 1 : 0) - (y.projectId === UNASSIGNED_ID ? 1 : 0) ||
+    y.litres - x.litres || x.name.localeCompare(y.name));
+
+  const totals = sites.reduce(
+    (t, s) => {
+      t.litres = round2(t.litres + s.litres);
+      t.costCents += s.costCents;
+      t.issueCount += s.issueCount;
+      return t;
+    },
+    { litres: 0, costCents: 0, issueCount: 0, machineCount: 0 },
+  );
+  totals.machineCount = new Set(sites.flatMap((s) => s.machines.map((m) => m.assetId))).size;
+
+  const litresInMonth = round2(issues.reduce((s, i) => s + i.litres, 0));
+  const reconciliation = {
+    issuesInMonth: issues.length,
+    issuesOnSheet: totals.issueCount,
+    litresInMonth,
+    litresOnSheet: totals.litres,
+    // Only meaningful without a site filter; a filtered sheet is a subset by design.
+    balanced: opts.projectId
+      ? true
+      : issues.length === totals.issueCount && Math.abs(litresInMonth - totals.litres) < 0.01,
+  };
+
+  const label = new Date(period.year, period.month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+
+  return {
+    period: { year: period.year, month: period.month, periodKey: period.periodKey, label, start: period.start, end: period.end },
+    sites, totals, byRule, voidedExcluded: voidedCount, reconciliation,
+  };
+}

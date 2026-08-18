@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 export async function createAssetAction(formData: FormData) {
   let admin;
@@ -25,6 +26,11 @@ export async function createAssetAction(formData: FormData) {
   const site = formData.get("site")?.toString().trim() || null;
   const categoryId = formData.get("categoryId")?.toString();
   const meterType = formData.get("meterType")?.toString() || "KM";
+  const dailyCapStr = formData.get("dailyCapLitres")?.toString();
+  const dailyCapParsed = dailyCapStr && dailyCapStr.trim() !== "" ? parseInt(dailyCapStr, 10) : null;
+  const dailyCapLitres = dailyCapParsed != null && !isNaN(dailyCapParsed) && dailyCapParsed > 0 ? dailyCapParsed : null;
+  // Fuel-only billing flag (private vehicles E&C fuels but does not rent).
+  const billFuelOnly = !!formData.get("billFuelOnly");
 
   if (!code || !categoryId) {
     return { error: "Asset Code and Category are required fields" };
@@ -64,6 +70,8 @@ export async function createAssetAction(formData: FormData) {
         site,
         categoryId,
         meterType,
+        dailyCapLitres,
+        billFuelOnly,
         status: "ACTIVE",
       },
     });
@@ -80,9 +88,9 @@ export async function createAssetAction(formData: FormData) {
 
     revalidatePath("/fleet");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create asset error:", err);
-    return { error: err.message || "Failed to create asset" };
+    return { error: errorMessage(err) || "Failed to create asset" };
   }
 }
 
@@ -106,6 +114,11 @@ export async function updateAssetAction(assetId: string, formData: FormData) {
   const site = formData.get("site")?.toString().trim() || null;
   const status = formData.get("status")?.toString() || "ACTIVE";
   const meterType = formData.get("meterType")?.toString() || "KM";
+  const dailyCapStr = formData.get("dailyCapLitres")?.toString();
+  const dailyCapParsed = dailyCapStr && dailyCapStr.trim() !== "" ? parseInt(dailyCapStr, 10) : null;
+  const dailyCapLitres = dailyCapParsed != null && !isNaN(dailyCapParsed) && dailyCapParsed > 0 ? dailyCapParsed : null;
+  // Fuel-only billing flag (private vehicles E&C fuels but does not rent).
+  const billFuelOnly = !!formData.get("billFuelOnly");
 
   const yom = yomStr ? parseInt(yomStr, 10) : null;
 
@@ -133,6 +146,8 @@ export async function updateAssetAction(assetId: string, formData: FormData) {
         site,
         status,
         meterType,
+        dailyCapLitres,
+        billFuelOnly,
       },
     });
 
@@ -149,9 +164,9 @@ export async function updateAssetAction(assetId: string, formData: FormData) {
     revalidatePath("/fleet");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update asset error:", err);
-    return { error: err.message || "Failed to update asset" };
+    return { error: errorMessage(err) || "Failed to update asset" };
   }
 }
 
@@ -191,8 +206,8 @@ export async function deleteAssetAction(assetId: string) {
     revalidatePath("/fleet");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Delete asset error:", err);
-    return { error: err.message || "Failed to dispose asset" };
+    return { error: errorMessage(err) || "Failed to dispose asset" };
   }
 }

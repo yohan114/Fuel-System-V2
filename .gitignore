@@ -23,6 +23,10 @@
 # misc
 .DS_Store
 *.pem
+*.rar
+*.zip
+*.7z
+*.tar.gz
 
 # debug
 npm-debug.log*
@@ -45,6 +49,23 @@ next-env.d.ts
 /src/generated/prisma
 
 # local sqlite database and backups
-/data/
-/backups/
+/temp-uploads/
+/scan_out.txt
+/verify_out.txt
 
+
+# SQLite WAL side-files (transient)
+*.db-shm
+*.db-wal
+scratch/
+backups/
+billing_exports
+# local database snapshots (backups, pre-deploy copies) — never commit these
+data/app.db.backup-*
+data/app.db.*-test
+data/app.db.live.*
+data/app.db-shm
+data/app.db-wal
+
+# Generated invoices — the bill lives in the database, not in the repo.
+out/

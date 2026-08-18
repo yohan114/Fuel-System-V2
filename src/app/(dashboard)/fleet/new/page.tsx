@@ -218,6 +218,21 @@ export default async function NewAssetPage() {
                 <option value="HOURS">Hours (HOURS)</option>
               </select>
             </div>
+
+            {/* Daily Fuel Cap */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                Daily Fuel Cap (Litres)
+              </label>
+              <input
+                type="number"
+                name="dailyCapLitres"
+                min="1"
+                step="1"
+                placeholder="Leave blank for no limit"
+                className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-3 text-white text-xs focus:outline-none"
+              />
+            </div>
           </div>
 
           {/* Form Actions */}

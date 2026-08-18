@@ -9,11 +9,28 @@ import {
   Car, 
   FileCheck, 
   FileText, 
-  Gauge, 
-  Settings, 
+  Gauge,
+  Settings,
   LogOut,
   Menu,
-  Database
+  Database,
+  Receipt,
+  Wrench,
+  ShieldAlert,
+  Droplets,
+  Bell,
+  Activity,
+  ScrollText,
+  DatabaseZap,
+  Wallet,
+  Target,
+  Building2,
+  AlertTriangle,
+  ClipboardList,
+  Handshake,
+  FileSpreadsheet,
+  MapPin,
+  Filter as FilterIcon
 } from "lucide-react";
 
 import { prisma } from "@/lib/db";
@@ -41,8 +58,9 @@ export default async function DashboardLayout({ children }: LayoutProps) {
   const isAdmin = session.role === "ADMIN";
   const isAllocator = session.role === "ALLOCATOR";
   const isWorkshop = session.role === "WORKSHOP";
+  const isSitePump = session.role === "SITE_PUMP";
  
-  let navItems = [
+  const navItems = [
     { label: "Dashboard", href: "/", icon: LayoutDashboard },
   ];
 
@@ -51,24 +69,77 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Allocator Console", href: "/allocator", icon: Car },
       { label: "Workshop Console", href: "/workshop", icon: Database },
       { label: "Fleet Directory", href: "/fleet", icon: Car },
+      { label: "Hire Fleet", href: "/hire", icon: Handshake },
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
+      { label: "Fuel Reports", href: "/fuel/report", icon: FileCheck },
+      // Admins had no way into the reports console from the menu at all — every
+      // other role has this entry — so the exports and the site-wise monthly
+      // fuel sheet were reachable only by typing the URL.
+      { label: "Reports Console", href: "/reports", icon: FileSpreadsheet },
+      { label: "Fuel by Site", href: "/reports/site-fuel", icon: MapPin },
+      { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
+      { label: "Fuel Integrity", href: "/integrity", icon: ShieldAlert },
+      { label: "Tank Reconciliation", href: "/admin/tanks", icon: Droplets },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Filter Database", href: "/filters", icon: FilterIcon },
+      { label: "Lubricants", href: "/lubricants", icon: Droplets },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck }
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Fuel Rates", href: "/rates", icon: Gauge },
+      { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Alerts", href: "/alerts", icon: Bell },
+      { label: "Receivables", href: "/billing/aging", icon: Wallet },
+      { label: "Fuel Budgets", href: "/admin/budgets", icon: Target },
+      { label: "Audit Log", href: "/admin/audit", icon: ScrollText },
+      { label: "Data Quality", href: "/admin/data-quality", icon: DatabaseZap }
     );
   } else if (isAllocator) {
     navItems.push(
       { label: "Allocator Console", href: "/allocator", icon: Car },
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck }
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Filter Database", href: "/filters", icon: FilterIcon },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Fuel Rates", href: "/rates", icon: Gauge },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else if (isWorkshop) {
     navItems.push(
       { label: "Workshop Console", href: "/workshop", icon: Database },
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
-      { label: "Meter Readings", href: "/readings", icon: Gauge }
+      { label: "Fuel Reports", href: "/fuel/report", icon: FileCheck },
+      { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
+      { label: "Meter Readings", href: "/readings", icon: Gauge },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Filter Database", href: "/filters", icon: FilterIcon }
+    );
+  } else if (isSitePump) {
+    // SITE_PUMP: a site pump operator — issues fuel + requests from the site's
+    // pump (Site Console), and sees only their own site's data.
+    navItems.push(
+      { label: "Site Console", href: "/site", icon: Database },
+      { label: "Fleet Directory", href: "/fleet", icon: Car },
+      { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
+      { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
+      { label: "Fuel Reports", href: "/fuel/report", icon: FileCheck },
+      { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
+      { label: "Meter Readings", href: "/readings", icon: Gauge },
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else {
     // USER role
@@ -76,8 +147,18 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Fleet Directory", href: "/fleet", icon: Car },
       { label: "Fuel Requests", href: "/fuel/requests", icon: FileText },
       { label: "Fuel Issues", href: "/fuel/issues", icon: Fuel },
+      { label: "Fuel Reports", href: "/fuel/report", icon: FileCheck },
+      { label: "Fuel Corrections", href: "/fuel/corrections", icon: Wrench },
       { label: "Meter Readings", href: "/readings", icon: Gauge },
-      { label: "Reports Console", href: "/reports", icon: FileCheck }
+      { label: "Reports Console", href: "/reports", icon: FileCheck },
+      { label: "Site Fuel", href: "/sites", icon: Building2 },
+      { label: "Service Planner", href: "/service", icon: Wrench },
+      { label: "Services", href: "/service/log", icon: ClipboardList },
+      { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
+      { label: "Analytics", href: "/analytics", icon: Activity },
+      { label: "Billing", href: "/billing", icon: Receipt },
+      { label: "Receivables", href: "/billing/aging", icon: Wallet },
+      { label: "Alerts", href: "/alerts", icon: Bell }
     );
   }
 
