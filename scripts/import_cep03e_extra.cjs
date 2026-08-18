@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Add-only import of CEP-03 E Package fuel from the EXTERNALDATA app.db extract
 // (scripts/data/cep03e_external.json). The Consolidated Register already holds
 // CEP-03 E (1,010 issues from the CEP_03_E_Package workbook) and stays

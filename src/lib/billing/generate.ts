@@ -11,9 +11,10 @@ import {
 import { pickRateCents, defaultModeForAsset, resolveRateBasis, basisFromBillingType } from "./rate";
 import { computeTotals, unitLabel, basisLabel, type BillingMode, type RateBasis } from "./calc";
 import { computeSegmentedTotals, type SegmentInput } from "./segmented";
-import { attributeSegmentFuel } from "./fuel-attribution";
 import { buildBillSnapshot } from "./revisions";
 import { getMonthSegments, assetHasAssignments, type MonthSegment } from "../assignments";
+import { resolveBand } from "../consumption/band";
+import { errorMessageOr } from "@/lib/errors";
 
 export type GenerateStatus =
   | "created"
@@ -199,6 +200,33 @@ export async function generateBillForAsset(
     where: { assetId: asset.id, status: "BREAKDOWN", logDate: { gte: period.start, lte: period.end } },
   });
 
+  // Phantom-bill guard, applied to BOTH paths.
+  //
+  // It used to sit below the segmented branch, which made it unreachable for
+  // any machine that owns an assignment — i.e. exactly the machines that take
+  // the segmented path. The result was a guaranteed monthly minimum charged to
+  // machines with no fuel, no meter movement and no daily condition entry all
+  // month: the assignment record was the only evidence they existed.
+  //
+  // A machine that has moved sites before (it owns assignments, just none that
+  // prove work this month) and shows no activity at all is not billed. Machines
+  // that were never assigned anywhere stay exempt, preserving back-compat.
+  if (billingMode === "hourly" || billingMode === "perkm") {
+    const [periodFuel, periodConditions] = await Promise.all([
+      sumFuelForWindow(asset.id, period.start, period.end),
+      prisma.dailyCondition.count({
+        where: { assetId: asset.id, logDate: { gte: period.start, lte: period.end } },
+      }),
+    ]);
+    if (periodFuel.litres === 0 && periodConditions === 0) {
+      const meterType = billingMode === "perkm" ? "KM" : "HOURS";
+      const rd = await computeRunningDelta(asset.id, meterType, period.start, period.end, undefined);
+      if (rd.delta === 0 && (await assetHasAssignments(asset.id))) {
+        return { status: "skipped-not-here", billId: existing?.id };
+      }
+    }
+  }
+
   if (segments.length > 0) {
     return persistSegmentedBill({
       asset,
@@ -265,27 +293,34 @@ export async function generateBillForAsset(
   let derivedStandardUnits: number | null = null;
   let derivedEconUnits: number | null = null;
 
+  // Units come from the standard consumption band whenever fuel was issued and
+  // the band is expressed in the unit being billed. The meter is the fallback,
+  // not the primary — the fleet's meter estate is demonstrably incomplete
+  // (most metered bills show no movement at all), whereas every litre issued is
+  // recorded. The band's basis is checked rather than assumed: an L/hr figure
+  // divided into litres and labelled "kilometres" is a ~45x error.
+  const bandForBilling = resolveBand(asset.rentalRate, billingMode === "perkm" ? "KM" : "HOURS");
+
   if (
     fuel.litres > 0 &&
     (billingMode === "hourly" || billingMode === "perkm") &&
-    asset.rentalRate?.fuelConsTyp != null &&
-    asset.rentalRate.fuelConsTyp > 0
+    bandForBilling.comparable &&
+    bandForBilling.typ != null &&
+    bandForBilling.typ > 0
   ) {
-    const fuelConsTyp = asset.rentalRate.fuelConsTyp;
+    const fuelConsTyp = bandForBilling.typ;
     derivedStandardUnits = fuel.litres / fuelConsTyp;
-    if (asset.rentalRate.fuelConsEcon && asset.rentalRate.fuelConsEcon > 0) {
-      derivedEconUnits = fuel.litres / asset.rentalRate.fuelConsEcon;
+    if (bandForBilling.econ && bandForBilling.econ > 0) {
+      derivedEconUnits = fuel.litres / bandForBilling.econ;
     }
 
-    const tolerance = billingMode === "hourly" ? 10 : 50;
-    if (Math.abs(actualMeterUnits - derivedStandardUnits) <= tolerance) {
-      actualUnits = actualMeterUnits;
-    } else {
-      actualUnits = derivedStandardUnits;
-      derivedFromFuel = true;
-      fuelConsMidRate = fuelConsTyp;
-    }
+    actualUnits = derivedStandardUnits;
+    derivedFromFuel = true;
+    fuelConsMidRate = fuelConsTyp;
   }
+  // Otherwise actualUnits stays as the meter delta computed above: no fuel this
+  // month, no usable band, or a band the meter cannot measure. The last case
+  // raises a clarify reason rather than being billed silently.
 
   if (billingMode === "hourly" && actualUnits > 720) {
     actualUnits = 720;
@@ -503,6 +538,16 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     const fuelSeg = await sumFuelForWindow(asset.id, seg.start, seg.end);
     potLitres += fuelSeg.litres;
     potCents += fuelSeg.costCents;
+    // Each site is billed on the hire type IT was allocated on. Only when the
+    // allocation left it blank does the segment fall back to the bill-level
+    // basis. Without this a vehicle allocated Dry at one site and Wet at another
+    // billed the whole month on whichever site held it longest — so a Wet site's
+    // diesel was charged to nobody, and a Dry site's invoice printed "(W)".
+    const segBasis = basisFromBillingType(seg.billingType);
+    const segRate = segBasis && rentalRate
+      ? pickRateCents(rentalRate, billingMode, segBasis)
+      : null;
+
     segInputs.push({
       projectId: seg.projectId,
       projectName: seg.projectName,
@@ -511,6 +556,8 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
       rawUnits,
       fuelLitres: fuelSeg.litres,
       fuelCostCents: fuelSeg.costCents,
+      rateBasis: segBasis,
+      rateCents: segRate,
       // Physical-work estimate stays pinned to the fuel burnt on-site during this
       // segment's days, so re-attributing billed fuel by source (below) never
       // moves rental between sites.
@@ -518,28 +565,21 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     });
   }
 
-  // Re-attribute each segment's fuel by SOURCE (the site register / pump the
-  // litres came from), folding shared-pump fuel by day-share. This redistributes
-  // exactly the same pot (potLitres/potCents) the date-window sums above produced,
-  // so the bill's fuel total — hence its subtotal, SSCL, VAT and grand total — is
-  // unchanged; only which site each FUEL line is attributed to moves. Single-site
-  // bills never reach here (one segment → the whole pot).
-  if (segInputs.length > 1 && potLitres > 0) {
-    const monthIssues = await prisma.fuelIssue.findMany({
-      where: { assetId: asset.id, issueDate: { gte: period.start, lte: period.end }, voided: false },
-      select: { litres: true, totalCost: true, source: true },
-    });
-    const attributed = attributeSegmentFuel(
-      monthIssues.map((i) => ({ litres: i.litres, costCents: i.totalCost, source: i.source })),
-      segInputs.map((s) => ({ projectCode: s.projectCode, days: s.days })),
-      potLitres,
-      potCents,
-    );
-    for (let i = 0; i < segInputs.length; i++) {
-      segInputs[i].fuelLitres = attributed[i].litres;
-      segInputs[i].fuelCostCents = attributed[i].costCents;
-    }
-  }
+  // Fuel stays exactly where sumFuelForWindow put it above: on the segment whose
+  // DATE WINDOW contains the issue. That is the rule the owner specified — fuel
+  // is charged to the site the vehicle was allocated to on the issue date — and
+  // because the segments partition the month into non-overlapping day runs, every
+  // issue lands in exactly one segment and none is counted twice.
+  //
+  // This used to be overwritten by attributeSegmentFuel(), which re-attributed
+  // litres by matching FuelIssue.source — a free-text PUMP or import-batch label,
+  // not a site — to project codes, then spread whatever failed to match across the
+  // segments by day-share. Nine of the fourteen labels it looked for are not
+  // Project codes at all, so most fuel fell through to the day-share path. Live
+  // example: a machine that burnt 300 L at Marawila and 200 L at Ruwanwella billed
+  // as 454.8 L and 45.2 L — the receiving site charged for a quarter of what it
+  // used. Deleting the re-attribution restores the date-window answer, which was
+  // correct all along.
 
   // Working days across the whole period feed the breakdown-deduction estimate.
   const workingDaysForBreakdown =
@@ -723,12 +763,15 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
     ? opts.assetIds.filter((id) => activeAssetIds.has(id))
     : [...activeAssetIds];
 
+  // Deliberately NOT filtered to assets that have a rate card. A machine with
+  // no rate is still part of the month's available fleet, and the per-asset
+  // path below reports it as "no-rate" so the operator can see which rate
+  // cards are missing. Excluding them here instead made them vanish from the
+  // run entirely — with the rate table empty the generator reported nothing at
+  // all, not even a count, which read as "billing is broken".
   const assets = await prisma.asset.findMany({
     where: {
       status: { not: "DISPOSED" },
-      // Billable when it has a rate card, or is a fuel-only vehicle (fuel billed
-      // without a rate card).
-      OR: [{ rentalRate: { isNot: null } }, { billFuelOnly: true }],
       id: { in: idFilter },
     },
     select: { id: true, code: true, brand: true, model: true, regNo: true, category: { select: { name: true } } },
@@ -751,9 +794,9 @@ export async function generateBillsForMonth(opts: GenerateOptions): Promise<Gene
       else if (r.status === "skipped-billed-direct") result.skippedBilledDirect++;
       else if (r.status === "no-rate") result.noRate++;
       result.assets.push({ assetId: a.id, assetCode: a.code, assetLabel, status: r.status, billId: r.billId });
-    } catch (err: any) {
-      result.errors.push({ assetId: a.id, assetCode: a.code, message: err?.message || "error" });
-      result.assets.push({ assetId: a.id, assetCode: a.code, assetLabel, status: "error", message: err?.message || "error" });
+    } catch (err: unknown) {
+      result.errors.push({ assetId: a.id, assetCode: a.code, message: errorMessageOr(err, "error") });
+      result.assets.push({ assetId: a.id, assetCode: a.code, assetLabel, status: "error", message: errorMessageOr(err, "error") });
     }
   }
 

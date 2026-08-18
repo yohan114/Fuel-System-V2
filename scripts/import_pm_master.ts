@@ -58,7 +58,7 @@ async function main() {
     if (SKIP_SHEETS.has(sheetName)) continue;
 
     const ns = norm(sheetName);
-    let category =
+    const category =
       byNorm.get(ns) ??
       (ALIASES[ns] ? byCode.get(ALIASES[ns]) : undefined) ??
       categories.find((c) => norm(c.name).startsWith(ns) || ns.startsWith(norm(c.name)));

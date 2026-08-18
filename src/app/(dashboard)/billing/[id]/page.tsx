@@ -1,4 +1,4 @@
-import { isSiteUser } from "@/lib/roles";
+import { canReadBillFor } from "@/lib/roles";
 import { fuelDateGB } from "@/lib/colombo-date";
 import React from "react";
 import Link from "next/link";
@@ -65,7 +65,9 @@ export default async function BillDetailPage(props: PageProps) {
   const isFuelOnly = !bill.lineItems.some((l) => l.kind === "RENTAL");
 
   // USER scope: only their own project's bills.
-  if (isSiteUser(session.role) && session.projectId && bill.projectId !== session.projectId) {
+  // Allow-list check — see billingScope(). WORKSHOP and an unscoped site login
+  // get nothing rather than everything.
+  if (!canReadBillFor(session, bill.projectId)) {
     notFound();
   }
 

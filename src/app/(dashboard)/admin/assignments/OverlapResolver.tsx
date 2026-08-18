@@ -29,7 +29,8 @@ export default function OverlapResolver({ overlaps }: { overlaps: AssignmentOver
     setMsg(null);
     startTransition(async () => {
       const res = await fn();
-      if ((res as any).error) setMsg({ ok: false, text: (res as any).error });
+      const err = "error" in res ? res.error : undefined;
+      if (err) setMsg({ ok: false, text: err });
       else {
         setMsg({ ok: true, text: ok });
         router.refresh();

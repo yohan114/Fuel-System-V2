@@ -1,4 +1,6 @@
+import type { Prisma } from "@prisma/client";
 import { isSiteUser } from "@/lib/roles";
+import { assetSearchClause } from "@/lib/fleet/asset-search";
 import React from "react";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
@@ -32,8 +34,10 @@ export default async function ServiceLogPage(props: PageProps) {
   const to = (sp.to || "").trim();
 
   // Filter clause.
-  const where: any = {};
-  if (vehicle) where.asset = { code: { contains: vehicle.toUpperCase() } };
+  const where: Prisma.ServiceRecordWhereInput = {};
+  // E&C number, registration/vehicle number or make/model — see lib/fleet/asset-search.
+  const vehicleSearch = assetSearchClause(vehicle);
+  if (vehicleSearch) where.asset = vehicleSearch;
   if (site) where.location = site;
   if (type) where.serviceType = type;
   if (from || to) {
@@ -81,8 +85,8 @@ export default async function ServiceLogPage(props: PageProps) {
       {/* Filter bar */}
       <form method="GET" className="bg-[#121420] border border-white/5 rounded-2xl p-4 grid grid-cols-2 sm:grid-cols-6 gap-3 items-end">
         <div className="col-span-2">
-          <label className={label}>Vehicle (E&C code)</label>
-          <input name="vehicle" defaultValue={vehicle} placeholder="e.g. HEX-21" className={input + " w-full"} />
+          <label className={label}>Vehicle (E&C or vehicle no.)</label>
+          <input name="vehicle" defaultValue={vehicle} placeholder="e.g. HEX-21 or ZB-2587" className={input + " w-full"} />
         </div>
         <div>
           <label className={label}>Site</label>

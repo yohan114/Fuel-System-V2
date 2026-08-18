@@ -7,6 +7,7 @@ import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset, getActiveAssignment } from "@/lib/assignments";
 import { getPriceForDate } from "@/lib/pricing";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 const ALLOWED_MIME = (m: string) => m.startsWith("image/") || m === "application/pdf";
 const MAX_DOC_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -157,9 +158,9 @@ export async function submitCorrectionAction(formData: FormData) {
     revalidatePath("/fuel/corrections");
     revalidatePath("/fuel/issues");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Submit correction error:", err);
-    return { error: err.message || "Failed to submit correction" };
+    return { error: errorMessage(err) || "Failed to submit correction" };
   }
 }
 
@@ -270,9 +271,9 @@ export async function approveCorrectionAction(correctionId: string, reviewNote: 
     revalidatePath("/fuel/issues");
     revalidatePath("/billing");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Approve correction error:", err);
-    return { error: err.message || "Failed to approve correction" };
+    return { error: errorMessage(err) || "Failed to approve correction" };
   }
 }
 
@@ -306,8 +307,8 @@ export async function rejectCorrectionAction(correctionId: string, reviewNote: s
 
     revalidatePath("/fuel/corrections");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Reject correction error:", err);
-    return { error: err.message || "Failed to reject correction" };
+    return { error: errorMessage(err) || "Failed to reject correction" };
   }
 }

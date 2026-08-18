@@ -131,7 +131,8 @@ async function main() {
       if (!asset) {
         // Create under Badalgama if it is one of the 4 Badal vehicles, else create as unassigned
         let code = reg.toUpperCase();
-        let base = code, n = 2;
+        const base = code;
+        let n = 2;
         while (usedCodes.has(code) || byCode.has(stripCode(code))) code = `${base}#${n++}`;
         usedCodes.add(code);
         const catCode = mapType(type);

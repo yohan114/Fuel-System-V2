@@ -8,6 +8,7 @@ import { getPriceForDate } from "@/lib/pricing";
 import { checkDailyCap } from "@/lib/fuel-policy";
 import { extractFileField } from "@/lib/upload";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 // Site-configurable gate: when Setting "fuel_photo_required" === "true", a
 // pump/meter photo must accompany every fuel request / direct issue.
@@ -137,9 +138,9 @@ export async function submitRequestAction(formData: FormData) {
     revalidatePath("/");
     revalidatePath("/fuel/requests");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Submit request error:", err);
-    return { error: err.message || "Failed to submit request" };
+    return { error: errorMessage(err) || "Failed to submit request" };
   }
 }
 
@@ -253,9 +254,9 @@ export async function approveRequestAction(requestId: string, reviewNote: string
     revalidatePath("/fuel/issues");
     revalidatePath(`/fleet/${request.asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Approve request error:", err);
-    return { error: err.message || "Failed to approve request" };
+    return { error: errorMessage(err) || "Failed to approve request" };
   }
 }
 
@@ -307,9 +308,9 @@ export async function rejectRequestAction(requestId: string, reviewNote: string 
     revalidatePath("/");
     revalidatePath("/fuel/requests");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Reject request error:", err);
-    return { error: err.message || "Failed to reject request" };
+    return { error: errorMessage(err) || "Failed to reject request" };
   }
 }
 
@@ -473,8 +474,8 @@ export async function recordDirectIssueAction(formData: FormData) {
     revalidatePath("/fuel/issues");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Record direct issue error:", err);
-    return { error: err.message || "Failed to record fuel issue" };
+    return { error: errorMessage(err) || "Failed to record fuel issue" };
   }
 }

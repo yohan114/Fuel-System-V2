@@ -153,7 +153,7 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="monthly_fuel_report_${fileSuffix}.xlsx"`,
       },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Monthly report XLSX error:", err);
     return new NextResponse("Failed to compile monthly report.", { status: 500 });
   }

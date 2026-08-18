@@ -9,9 +9,10 @@ import {
   Calendar, 
   Coins, 
   Fuel, 
-  BarChart4, 
+  BarChart4,
   Gauge,
-  Sparkles
+  Sparkles,
+  MapPin
 } from "lucide-react";
 import SiteConsumptionCharts from "./SiteConsumptionCharts";
 import { currentMonthPeriod } from "@/lib/billing/period";
@@ -65,6 +66,13 @@ export default async function ReportsPage(props: PageProps) {
 
         {/* Export triggers */}
         <div className="flex items-center gap-2">
+          <Link
+            href={`/reports/site-fuel?year=${fromStr.slice(0, 4)}&month=${Number(fromStr.slice(5, 7))}`}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"
+          >
+            <MapPin className="w-4 h-4" />
+            Fuel by Site
+          </Link>
           <a
             href={`/api/reports/monthly/xlsx?year=${fromStr.slice(0, 4)}&month=${fromStr.slice(5, 7)}`}
             className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-indigo-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all"

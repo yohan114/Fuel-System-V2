@@ -1,7 +1,9 @@
+import type { Prisma } from "@prisma/client";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { visibleAssetIdsForUser } from "@/lib/assignments";
+import { assetSearchClause } from "@/lib/fleet/asset-search";
 import Link from "next/link";
 import { Search, Gauge, Calendar, User, CornerDownRight } from "lucide-react";
 
@@ -17,12 +19,10 @@ export default async function ReadingsPage(props: PageProps) {
   const q = searchParams.q || "";
 
   // 1. Build where query
-  const where: any = {};
-  if (q) {
-    where.asset = {
-      code: { contains: q.trim().toUpperCase() },
-    };
-  }
+  const where: Prisma.MeterReadingWhereInput = {};
+  // E&C number, registration/vehicle number or make/model — see lib/fleet/asset-search.
+  const assetSearch = assetSearchClause(q);
+  if (assetSearch) where.asset = assetSearch;
 
   // Project-scoped users see readings only for vehicles currently assigned to
   // their site (plus any legacy-pinned, never-assigned vehicles).
@@ -63,7 +63,7 @@ export default async function ReadingsPage(props: PageProps) {
               type="text"
               name="q"
               defaultValue={q}
-              placeholder="Search asset e.g. DT-01, HEX-11..."
+              placeholder="E&C or vehicle no. e.g. HEX-11 / ZB-2587"
               className="w-full bg-[#1b1e30] border border-white/5 rounded-xl pl-10 pr-3 py-2.5 text-white placeholder-gray-500 text-xs focus:outline-none"
             />
           </div>

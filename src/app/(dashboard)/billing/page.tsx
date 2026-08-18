@@ -1,4 +1,4 @@
-import { isSiteUser } from "@/lib/roles";
+import { isSiteUser, billingScope } from "@/lib/roles";
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
@@ -51,10 +51,25 @@ export default async function BillingPage(props: PageProps) {
 
   const projects = await prisma.project.findMany({ orderBy: { name: "asc" } });
 
-  // Build the where clause. USER role is locked to its own project.
+  // Who may see what. Resolved from an allow-list, not by exclusion: a role that
+  // is not explicitly granted company-wide billing and is not a site user with a
+  // site set sees nothing at all. WORKSHOP falls here — issuing fuel for any
+  // vehicle does not entitle it to read every site's invoices.
+  const scope = billingScope(session);
+  if (scope.kind === "none") {
+    return (
+      <div className="bg-[#121420] border border-white/5 rounded-2xl p-8 text-center">
+        <p className="text-sm text-white font-semibold">Billing is not available for this login.</p>
+        <p className="text-xs text-gray-400 mt-2">
+          Invoices are visible to administrators, and to a site login for its own site only.
+        </p>
+      </div>
+    );
+  }
+
   const where: any = { periodKey };
-  if (isSiteUser(session.role) && session.projectId) {
-    where.projectId = session.projectId;
+  if (scope.kind === "project") {
+    where.projectId = scope.projectId;
   } else if (siteFilter === "unassigned") {
     where.projectId = null;
   } else if (siteFilter !== "all") {
@@ -107,7 +122,7 @@ export default async function BillingPage(props: PageProps) {
             className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
           />
         </div>
-        {!isSiteUser(session.role) && (
+        {scope.kind === "all" && (
           <div>
             <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Site</label>
             <select
@@ -185,7 +200,7 @@ export default async function BillingPage(props: PageProps) {
       </div>
 
       {/* Receivables aging (all unpaid invoices, across months) */}
-      <AgingReport projectId={isSiteUser(session.role) ? session.projectId : null} />
+      <AgingReport projectId={scope.kind === "project" ? scope.projectId : null} />
 
       {/* Admin generate panels */}
       {isAdmin && <ReadinessReport year={y || cur.year} month={m || cur.month} />}

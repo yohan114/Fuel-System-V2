@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 // Hire ("rented-in") fleet management. A HIRED asset is owned by a third party
 // and rented in by E&C; these actions capture what E&C pays the owner. They are
@@ -112,9 +113,9 @@ export async function createHiredAssetAction(formData: FormData) {
     revalidatePath("/hire");
     revalidatePath("/fleet");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create hired asset error:", err);
-    return { error: err.message || "Failed to add hired machine" };
+    return { error: errorMessage(err) || "Failed to add hired machine" };
   }
 }
 
@@ -149,9 +150,9 @@ export async function markAssetHiredAction(assetId: string, formData: FormData) 
     revalidatePath("/hire");
     revalidatePath("/fleet");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Mark asset hired error:", err);
-    return { error: err.message || "Failed to update asset" };
+    return { error: errorMessage(err) || "Failed to update asset" };
   }
 }
 
@@ -186,9 +187,9 @@ export async function updateHireAction(assetId: string, formData: FormData) {
     revalidatePath("/hire");
     revalidatePath("/fleet");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update hire error:", err);
-    return { error: err.message || "Failed to update hire terms" };
+    return { error: errorMessage(err) || "Failed to update hire terms" };
   }
 }
 
@@ -221,8 +222,8 @@ export async function endHireAction(assetId: string) {
     revalidatePath("/hire");
     revalidatePath("/fleet");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("End hire error:", err);
-    return { error: err.message || "Failed to end hire" };
+    return { error: errorMessage(err) || "Failed to end hire" };
   }
 }

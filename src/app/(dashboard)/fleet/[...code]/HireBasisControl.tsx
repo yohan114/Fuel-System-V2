@@ -37,7 +37,7 @@ export default function HireBasisControl({ assetId, current }: { assetId: string
       <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-1 flex items-center gap-2">
         {sel === "d" ? <DropletOff className="w-4 h-4 text-amber-400" /> : <Droplet className="w-4 h-4 text-sky-400" />} Hire Basis
       </h3>
-      <p className="text-[11px] text-gray-500 mb-4">Default basis new bills use for this vehicle. Dry = rental only (customer self-fuels); Wet = rental + the vehicle's fuel total.</p>
+      <p className="text-[11px] text-gray-500 mb-4">Default basis new bills use for this vehicle. Dry = rental only (customer self-fuels); Wet = rental + the vehicle&apos;s fuel total.</p>
       <div className="flex flex-wrap gap-2">
         {OPTIONS.map((o) => (
           <button
@@ -57,7 +57,7 @@ export default function HireBasisControl({ assetId, current }: { assetId: string
       </div>
       <label className="flex items-center gap-2 text-[11px] text-gray-400 mt-3 select-none">
         <input type="checkbox" checked={applyDrafts} onChange={(e) => setApplyDrafts(e.target.checked)} className="accent-amber-500" />
-        Also re-cost this vehicle's open draft bills now
+        Also re-cost this vehicle&apos;s open draft bills now
         {pending && <Loader2 className="w-3 h-3 animate-spin ml-1" />}
       </label>
       {msg && <p className={`text-[11px] mt-2 ${msg.ok ? "text-emerald-400" : "text-rose-400"}`}>{msg.text}</p>}

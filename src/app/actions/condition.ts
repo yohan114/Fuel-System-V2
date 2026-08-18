@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 export async function logDailyConditionAction(assetId: string, status: string, note: string | null = null) {
   let user;
@@ -103,8 +104,8 @@ export async function logDailyConditionAction(assetId: string, status: string, n
     revalidatePath("/fleet");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Log daily condition error:", err);
-    return { error: err.message || "Failed to log daily machine condition" };
+    return { error: errorMessage(err) || "Failed to log daily machine condition" };
   }
 }

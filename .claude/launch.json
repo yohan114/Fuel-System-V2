@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fuelsystem",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 3300
+    },
+    {
+      "name": "fuelsystem-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3300
+    }
+  ]
+}

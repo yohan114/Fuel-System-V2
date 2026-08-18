@@ -5,6 +5,7 @@ import React, { useState } from "react";
 import { submitRequestAction, recordDirectIssueAction } from "@/app/actions/fuel";
 import { addReadingAction } from "@/app/actions/readings";
 import { Plus, X, Fuel, FileText, Gauge, AlertCircle, CheckCircle } from "lucide-react";
+import { errorMessageOr } from "@/lib/errors";
 
 interface AssetProp {
   id: string;
@@ -61,9 +62,9 @@ export default function QuickActions({ assets, isAdmin, isLocked }: QuickActions
           closeModal();
         }, 1500);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setLoading(false);
-      setError(err?.message || "An unexpected network or system error occurred.");
+      setError(errorMessageOr(err, "An unexpected network or system error occurred."));
     }
   };
 
@@ -85,9 +86,9 @@ export default function QuickActions({ assets, isAdmin, isLocked }: QuickActions
           closeModal();
         }, 1500);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setLoading(false);
-      setError(err?.message || "An unexpected network or system error occurred.");
+      setError(errorMessageOr(err, "An unexpected network or system error occurred."));
     }
   };
 
@@ -116,9 +117,9 @@ export default function QuickActions({ assets, isAdmin, isLocked }: QuickActions
           closeModal();
         }, 1500);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setLoading(false);
-      setError(err?.message || "An unexpected network or system error occurred.");
+      setError(errorMessageOr(err, "An unexpected network or system error occurred."));
     }
   };
 

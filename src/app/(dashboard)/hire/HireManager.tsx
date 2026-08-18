@@ -70,7 +70,7 @@ export default function HireManager({ hired, categories, ownedAssets }: Props) {
         if (!id) { setAddErr(`No owned asset with code "${code}"`); return; }
         res = await markAssetHiredAction(id, fd);
       }
-      if (res?.error) { setAddErr(res.error); }
+      if (res && "error" in res) { setAddErr(res.error); }
       else {
         setAddOk(true);
         form.reset();
@@ -90,7 +90,7 @@ export default function HireManager({ hired, categories, ownedAssets }: Props) {
     const id = editing.id;
     startTransition(async () => {
       const res = await updateHireAction(id, fd);
-      if (res?.error) setEditErr(res.error);
+      if (res && "error" in res) setEditErr(res.error);
       else { setEditing(null); router.refresh(); }
     });
   };

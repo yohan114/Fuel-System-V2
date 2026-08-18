@@ -40,7 +40,7 @@ export async function loginAction(prevState: any, formData: FormData) {
         summary: `User ${user.username} logged in successfully`,
       },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Login error:", err);
     return { error: "Something went wrong. Please try again." };
   }

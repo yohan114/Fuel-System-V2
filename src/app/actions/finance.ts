@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -49,9 +50,9 @@ export async function setBudgetAction(formData: FormData) {
     });
     revalidatePath("/admin/budgets");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Set budget error:", err);
-    return { error: err.message || "Failed to set budget" };
+    return { error: errorMessage(err) || "Failed to set budget" };
   }
 }
 
@@ -94,9 +95,9 @@ export async function createCreditNoteAction(formData: FormData) {
     });
     revalidatePath(`/billing/${billId}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create credit note error:", err);
-    return { error: err.message || "Failed to create credit note" };
+    return { error: errorMessage(err) || "Failed to create credit note" };
   }
 }
 
@@ -139,8 +140,8 @@ export async function issueCreditNoteAction(creditNoteId: string) {
     revalidatePath(`/billing/${result.billId}`);
     revalidatePath("/billing/aging");
     return { success: true, number: result.number };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Issue credit note error:", err);
-    return { error: err.message || "Failed to issue credit note" };
+    return { error: errorMessage(err) || "Failed to issue credit note" };
   }
 }

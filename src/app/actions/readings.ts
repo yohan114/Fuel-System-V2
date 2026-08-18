@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 export async function addReadingAction(formData: FormData) {
   let user;
@@ -135,8 +136,8 @@ export async function addReadingAction(formData: FormData) {
     revalidatePath("/readings");
 
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Add reading error:", err);
-    return { error: err.message || "Failed to add meter reading" };
+    return { error: errorMessage(err) || "Failed to add meter reading" };
   }
 }

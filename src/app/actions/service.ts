@@ -5,6 +5,7 @@ import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { computeServiceCost, lineAmountCents, type CostItem } from "@/lib/service/cost";
 import { getServiceConfig } from "@/lib/service/config";
+import { errorMessage } from "@/lib/errors";
 
 interface SheetLine {
   slot?: string;
@@ -145,9 +146,9 @@ export async function logServiceSheetAction(formData: FormData) {
     revalidatePath("/service");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true, id: rec.id };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Log service sheet error:", err);
-    return { error: err.message || "Failed to log service" };
+    return { error: errorMessage(err) || "Failed to log service" };
   }
 }
 
@@ -219,9 +220,9 @@ export async function logServiceAction(formData: FormData) {
     revalidatePath("/service");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Log service error:", err);
-    return { error: err.message || "Failed to log service" };
+    return { error: errorMessage(err) || "Failed to log service" };
   }
 }
 
@@ -278,9 +279,9 @@ export async function addPMTaskAction(formData: FormData) {
     });
     if (assetCode) revalidatePath(`/service/plan/${assetCode}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Add PM task error:", err);
-    return { error: err.message || "Failed to add PM task" };
+    return { error: errorMessage(err) || "Failed to add PM task" };
   }
 }
 
@@ -305,9 +306,9 @@ export async function deletePMTaskAction(taskId: string, assetCode: string) {
     });
     if (assetCode) revalidatePath(`/service/plan/${assetCode}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Delete PM task error:", err);
-    return { error: err.message || "Failed to delete PM task" };
+    return { error: errorMessage(err) || "Failed to delete PM task" };
   }
 }
 
@@ -367,8 +368,8 @@ export async function setServiceIntervalAction(formData: FormData) {
     revalidatePath("/service");
     if (revalidateCode) revalidatePath(`/fleet/${revalidateCode}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Set service interval error:", err);
-    return { error: err.message || "Failed to set service interval" };
+    return { error: errorMessage(err) || "Failed to set service interval" };
   }
 }

@@ -1,4 +1,4 @@
-import { isSiteUser } from "@/lib/roles";
+import { billingScope } from "@/lib/roles";
 import React from "react";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
@@ -13,7 +13,21 @@ export default async function AgingPage() {
   const session = await getSession();
   if (!session) return null;
 
-  const projectId = isSiteUser(session.role) ? session.projectId ?? undefined : undefined;
+  // Receivables are billing data, so the same allow-list applies: administrators
+  // company-wide, a site login for its own site, everyone else nothing. The old
+  // rule left WORKSHOP and unscoped site logins reading the whole ledger.
+  const scope = billingScope(session);
+  if (scope.kind === "none") {
+    return (
+      <div className="bg-[#121420] border border-white/5 rounded-2xl p-8 text-center">
+        <p className="text-sm text-white font-semibold">Receivables are not available for this login.</p>
+        <p className="text-xs text-gray-400 mt-2">
+          Visible to administrators, and to a site login for its own site only.
+        </p>
+      </div>
+    );
+  }
+  const projectId = scope.kind === "project" ? scope.projectId : undefined;
   const report = await getAgingReport({ projectId });
 
   return (

@@ -3,6 +3,7 @@
 import React, { useState, useTransition } from "react";
 import { logDailyConditionAction } from "@/app/actions/condition";
 import { Gauge, CheckCircle, AlertTriangle, Clock, Search, ShieldCheck } from "lucide-react";
+import { errorMessageOr } from "@/lib/errors";
 
 interface AssetConditionProp {
   id: string;
@@ -62,9 +63,9 @@ export default function ConditionWidget({
             )
           );
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         setUpdatingId(null);
-        setError(err?.message || "An unexpected network or system error occurred.");
+        setError(errorMessageOr(err, "An unexpected network or system error occurred."));
       }
     });
   };

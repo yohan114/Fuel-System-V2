@@ -104,7 +104,7 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="fuel_audit_${fromStr}_to_${toStr}.xlsx"`,
       },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Excel generation error:", err);
     return new NextResponse("Failed to compile excel workbook.", { status: 500 });
   }

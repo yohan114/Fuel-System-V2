@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 // Parses an "YYYY-MM-DD" form value into a Colombo local-midnight Date, matching
 // the day-granular convention used by billing/periods/assignments. Returns null
@@ -189,9 +190,9 @@ export async function createAssignmentAction(formData: FormData) {
     revalidatePath("/readings");
     revalidatePath("/");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create assignment error:", err);
-    return { error: err.message || "Failed to assign vehicle" };
+    return { error: errorMessage(err) || "Failed to assign vehicle" };
   }
 }
 
@@ -234,9 +235,9 @@ export async function endAssignmentAction(assignmentId: string, endDateStr: stri
     revalidatePath("/fleet");
     revalidatePath("/");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("End assignment error:", err);
-    return { error: err.message || "Failed to update assignment" };
+    return { error: errorMessage(err) || "Failed to update assignment" };
   }
 }
 
@@ -273,8 +274,8 @@ export async function deleteAssignmentAction(assignmentId: string) {
     revalidatePath("/fleet");
     revalidatePath("/");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Delete assignment error:", err);
-    return { error: err.message || "Failed to delete assignment" };
+    return { error: errorMessage(err) || "Failed to delete assignment" };
   }
 }

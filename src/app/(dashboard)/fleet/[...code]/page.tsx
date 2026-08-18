@@ -10,7 +10,9 @@ import AssetEditor from "./components/AssetEditor";
 import FuelConsumptionEditor from "./components/FuelConsumptionEditor";
 import HireBasisControl from "./HireBasisControl";
 import { recommendedUnits, varianceFlag, formatVariancePct } from "@/lib/reports/recommended";
-import { classifyConsumption } from "@/lib/analytics/consumption";
+import ConsumptionBandChart from "./components/ConsumptionBandChart";
+import { getConsumptionSeries } from "@/lib/analytics/consumption-series";
+import { BAND_REASON_LABEL, resolveBand, toDisplay } from "@/lib/consumption/band";
 import { computeServiceStatus } from "@/lib/service/compute";
 import { getBreakdownEpisodes } from "@/lib/breakdowns";
 import { logServiceAction, setServiceIntervalAction } from "@/app/actions/service";
@@ -28,7 +30,14 @@ import {
 } from "lucide-react";
 
 interface PageProps {
-  params: Promise<{ code: string }>;
+  // Catch-all, not a single segment. Some machine codes contain a forward
+  // slash — "VR-14/VR-65", "ASP /GE06", "General / Cleaning" — and the ~28
+  // places that link here build the href by interpolation without encoding it.
+  // A raw slash splits into extra path segments, so a single [code] segment
+  // never matched and those machines returned 404 from every link in the app.
+  // Collecting the segments and re-joining them reconstructs the real code
+  // without having to encode at all 28 call sites.
+  params: Promise<{ code: string[] }>;
   searchParams: Promise<{ tab?: string }>;
 }
 
@@ -38,16 +47,36 @@ export default async function AssetDetailPage(props: PageProps) {
 
   const params = await props.params;
   const searchParams = await props.searchParams;
-  
-  const code = params.code;
+
+  // Next.js already percent-decodes each segment, so no decodeURIComponent here.
+  const code = (Array.isArray(params.code) ? params.code : [params.code]).join("/");
   const activeTab = searchParams.tab || "issues";
   const isAdmin = session.role === "ADMIN";
 
   // 1. Query the asset
-  const asset = await prisma.asset.findUnique({
+  let asset = await prisma.asset.findUnique({
     where: { code },
     include: { category: true, rentalRate: true },
   });
+
+  // Codes are entered by hand across a dozen import sheets, so spacing around a
+  // slash varies ("VR-14/VR-65" vs "VR-14 / VR-65"). Fall back to an
+  // whitespace-insensitive match before giving up, rather than 404 on a link
+  // the app generated itself.
+  if (!asset) {
+    const squash = (s: string) => s.replace(/\s+/g, "").toUpperCase();
+    const candidates = await prisma.asset.findMany({
+      where: { status: { in: ["ACTIVE", "INACTIVE"] } },
+      select: { code: true },
+    });
+    const hit = candidates.find((c) => squash(c.code) === squash(code));
+    if (hit) {
+      asset = await prisma.asset.findUnique({
+        where: { code: hit.code },
+        include: { category: true, rentalRate: true },
+      });
+    }
+  }
 
   if (!asset || asset.status === "DISPOSED") {
     notFound();
@@ -134,6 +163,23 @@ export default async function AssetDetailPage(props: PageProps) {
       efficiency = `${value.toFixed(2)} L/hr`;
     }
   }
+
+  // The standard band, and this machine's measured burn fill-to-fill. The band
+  // is resolved rather than read raw so an hour band on a km meter is reported
+  // as not comparable instead of producing a nonsense verdict.
+  const band = resolveBand(asset.rentalRate, asset.meterType);
+  const consumptionSeries = (await getConsumptionSeries({ assetIds: [asset.id] })).get(asset.id) ?? null;
+  const bandPoints = (consumptionSeries?.points ?? []).map((p) => ({
+    date: p.date,
+    actual: toDisplay(p.rate, consumptionSeries!.basis) ?? 0,
+    litres: p.litres,
+    meterDelta: p.meterDelta,
+    days: p.days,
+  }));
+  const fmtBand = (v: number | null) => {
+    const d = toDisplay(v, band.basis ?? (asset.meterType === "KM" ? "km" : "hr"));
+    return d == null ? "—" : d.toFixed(1);
+  };
 
   // Lifetime fuel-derived recommendation vs the recorded meter (reuses the
   // totals already computed above — no extra query).
@@ -279,19 +325,32 @@ export default async function AssetDetailPage(props: PageProps) {
             </div>
             <div className="bg-[#1b1e30] border border-white/5 rounded-xl p-4">
               <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">Consumption Band</span>
+              {/* Shown in the unit the rate sheet quotes: km/L for road vehicles,
+                  L/hr for machinery. The efficiency tile above uses km/L too, so
+                  the two figures on this screen are now directly comparable. */}
               <span className="text-md font-bold text-white block mt-1">
-                {asset.rentalRate.fuelConsEcon ?? "—"} / {asset.rentalRate.fuelConsTyp} / {asset.rentalRate.fuelConsHeavy ?? "—"} L/{asset.meterType === "KM" ? "km" : "hr"}
+                {fmtBand(band.rawEcon)} / {fmtBand(band.rawTyp)} / {fmtBand(band.rawHeavy)} {band.displayUnit}
               </span>
               {(() => {
-                const rate = runGrowth > 0 && totalLitres > 0 ? totalLitres / runGrowth : null;
-                const st = classifyConsumption(rate, asset.rentalRate.fuelConsEcon, asset.rentalRate.fuelConsTyp, asset.rentalRate.fuelConsHeavy);
+                if (!band.comparable) {
+                  return (
+                    <span className="text-[10px] block mt-0.5 text-amber-400/90">
+                      {BAND_REASON_LABEL[band.reason]}
+                    </span>
+                  );
+                }
+                const st = consumptionSeries?.state ?? null;
                 const style =
                   st === "OVER" ? "text-rose-400" : st === "HEAVY" ? "text-amber-400" : st === "NORMAL" ? "text-emerald-400" : st === "BELOW_ECON" ? "text-sky-400" : "text-gray-500";
                 const label =
-                  st === "OVER" ? "over heavy — repair candidate" : st === "HEAVY" ? "heavy burn" : st === "NORMAL" ? "within band" : st === "BELOW_ECON" ? "below econ — check reporting" : "no meter data";
+                  st === "OVER" ? "over heavy — repair candidate" : st === "HEAVY" ? "above standard" : st === "NORMAL" ? "within band" : st === "BELOW_ECON" ? "below econ — check reporting"
+                    : consumptionSeries && consumptionSeries.points.length > 0
+                      ? `${consumptionSeries.points.length} measured interval${consumptionSeries.points.length === 1 ? "" : "s"} — 3 needed for a verdict`
+                      : "not measured yet";
+                const actual = consumptionSeries?.actualRate != null ? toDisplay(consumptionSeries.actualRate, consumptionSeries.basis) : null;
                 return (
                   <span className={`text-[10px] block mt-0.5 ${style}`}>
-                    actual {rate != null ? rate.toFixed(2) : "—"} L/{asset.meterType === "KM" ? "km" : "hr"} — {label}
+                    actual {actual != null ? actual.toFixed(2) : "—"} {band.displayUnit} — {label}
                   </span>
                 );
               })()}
@@ -301,6 +360,20 @@ export default async function AssetDetailPage(props: PageProps) {
           <p className="text-xs text-gray-500">No typical consumption rate set{isAdmin ? " — add one above" : ""} to compute the fuel-derived recommendation.</p>
         )}
       </div>
+
+      {/* Actual burn against the standard band from the 2026 rate sheet. */}
+      <ConsumptionBandChart
+        points={bandPoints}
+        econ={toDisplay(band.rawEcon, band.basis ?? (asset.meterType === "KM" ? "km" : "hr"))}
+        typ={toDisplay(band.rawTyp, band.basis ?? (asset.meterType === "KM" ? "km" : "hr"))}
+        heavy={toDisplay(band.rawHeavy, band.basis ?? (asset.meterType === "KM" ? "km" : "hr"))}
+        unit={band.displayUnit}
+        higherIsBetter={band.displayUnit === "km/L"}
+        comparable={band.comparable}
+        bandReason={band.reason}
+        emptyReason={consumptionSeries?.emptyReason ?? null}
+        intervals={bandPoints.length}
+      />
 
       {/* Visual Analytics */}
       <AssetCharts

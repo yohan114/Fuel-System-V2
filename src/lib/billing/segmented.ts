@@ -23,6 +23,16 @@ export interface SegmentInput {
   // re-attributed by source. Defaults to fuelLitres when omitted so single-site
   // and legacy callers are unaffected.
   derivLitres?: number;
+  // The hire basis THIS SITE was allocated on ("fw" | "w" | "d"), taken from the
+  // allocation's Dry/Wet type. A vehicle can be allocated Dry to one site and Wet
+  // to another within one month; each site must then be billed on its own terms —
+  // its own rate tier, and fuel charged only where that allocation says Wet.
+  // Undefined means "use the bill-level basis", which is what every single-site
+  // and legacy caller relies on.
+  rateBasis?: RateBasis;
+  // The rate-card tier for this segment's basis. Null = the card has no tier for
+  // this mode/basis pair, so the segment prices at zero and the line says so.
+  rateCents?: number | null;
 }
 
 export interface SegmentedConfig {
@@ -79,7 +89,10 @@ export interface SegmentedResult {
 export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedConfig): SegmentedResult {
   const unit = unitLabel(cfg.billingMode);
   const isMeter = cfg.billingMode === "hourly" || cfg.billingMode === "perkm";
-  const chargesFuel = cfg.fuelOnly || cfg.rateBasis === "fw" || cfg.rateBasis === "w";
+  // Whether a given hire basis includes the fuel. Evaluated PER SEGMENT below,
+  // because a vehicle can be allocated Dry to one site and Wet to another in the
+  // same month and each site must be billed on the terms it was allocated on.
+  const chargesFuelOn = (basis: RateBasis) => !!cfg.fuelOnly || basis === "fw" || basis === "w";
   // The guaranteed minimum is prorated by AVAILABILITY: each assigned day is
   // worth (monthly minimum ÷ calendar days), so a vehicle posted for only part
   // of the month (e.g. it arrived mid-month) owes only its share, and a vehicle
@@ -118,19 +131,24 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
     let dStd: number | null = null;
     let dEcon: number | null = null;
     let segDerived = false;
-    if (isMeter && derivLitres > 0 && cfg.fuelConsTyp != null && cfg.fuelConsTyp > 0) {
-      dStd = derivLitres / cfg.fuelConsTyp;
+    // Same precedence as the single-site path: the standard band leads and the
+    // meter is the fallback, but only when the band is quoted in the unit being
+    // billed. A litres-per-hour figure divided into litres does not produce
+    // kilometres. Magnitude identifies the basis — litres-per-km values are all
+    // below 1 across the fleet, litres-per-hour all above.
+    const bandUsable =
+      cfg.fuelConsTyp != null &&
+      cfg.fuelConsTyp > 0 &&
+      (cfg.billingMode === "hourly" ? cfg.fuelConsTyp >= 1 : cfg.fuelConsTyp < 1);
+
+    if (isMeter && derivLitres > 0 && bandUsable) {
+      dStd = derivLitres / cfg.fuelConsTyp!;
       if (cfg.fuelConsEcon && cfg.fuelConsEcon > 0) dEcon = derivLitres / cfg.fuelConsEcon;
 
-      const tolerance = cfg.billingMode === "hourly" ? 10 : 50;
-      if (Math.abs(actualSeg - dStd) <= tolerance) {
-        // within tolerance — keep the recorded units
-      } else {
-        actualSeg = dStd;
-        segDerived = true;
-        derivedFromFuel = true;
-        fuelConsMidRate = cfg.fuelConsTyp;
-      }
+      actualSeg = dStd;
+      segDerived = true;
+      derivedFromFuel = true;
+      fuelConsMidRate = cfg.fuelConsTyp;
     }
 
     if (cfg.billingMode === "hourly") {
@@ -142,9 +160,17 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
       if (actualSeg > maxSegKm) actualSeg = maxSegKm;
     }
 
+    // This site's own hire terms. When the allocation named a Dry/Wet type the
+    // segment carries its own basis and its own rate-card tier; otherwise it
+    // falls back to the bill-level basis, which is what single-site bills use.
+    const segBasis: RateBasis = seg.rateBasis ?? cfg.rateBasis;
+    const segPicked = seg.rateBasis != null ? seg.rateCents ?? null : cfg.pickedRate;
+    const segRateCents = segPicked ?? 0;
+    const segChargesFuel = chargesFuelOn(segBasis);
+
     const billableSeg = Math.max(actualSeg, minShare);
     // Fuel-only vehicles are not rented — no rental accrues for any segment.
-    const rentalSeg = cfg.fuelOnly ? 0 : Math.round(billableSeg * cfg.rateCents);
+    const rentalSeg = cfg.fuelOnly ? 0 : Math.round(billableSeg * segRateCents);
 
     rawMeterSum += rawSeg;
     actualUnitsSum += actualSeg;
@@ -154,30 +180,33 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
     billableSum += billableSeg;
     rentalSum += rentalSeg;
     litresSum += seg.fuelLitres;
-    fuelCostSum += seg.fuelCostCents;
+    // Only fuel on a Wet-allocated segment is charged. A Dry segment's litres
+    // still appear on the bill header (the vehicle did burn them) but cost the
+    // client nothing — that is what Dry means.
+    if (segChargesFuel) fuelCostSum += seg.fuelCostCents;
 
     if (!cfg.fuelOnly) {
       rentalLines.push({
         kind: "RENTAL",
         description:
-          cfg.pickedRate == null
-            ? `Machine rental — ${seg.projectCode} (no rate tier for ${cfg.billingMode}/${cfg.rateBasis})`
-            : `Machine rental — ${seg.projectCode} · ${cfg.billingMode} (${cfg.rateBasis.toUpperCase()}) · ${seg.days} day${seg.days !== 1 ? "s" : ""}${segDerived ? " [units incl. fuel]" : ""}`,
+          segPicked == null
+            ? `Machine rental — ${seg.projectCode} (no rate tier for ${cfg.billingMode}/${segBasis})`
+            : `Machine rental — ${seg.projectCode} · ${cfg.billingMode} (${segBasis.toUpperCase()}) · ${seg.days} day${seg.days !== 1 ? "s" : ""}${segDerived ? " [units incl. fuel]" : ""}`,
         quantity: billableSeg,
         unit,
-        unitRateCents: cfg.rateCents,
+        unitRateCents: segRateCents,
         amountCents: rentalSeg,
         projectId: seg.projectId,
         projectName: seg.projectName,
       });
     }
 
-    if (chargesFuel && seg.fuelLitres > 0) {
+    if (segChargesFuel && seg.fuelLitres > 0) {
       fuelLines.push({
         kind: "FUEL",
         description: cfg.fuelOnly
           ? `Fuel issued — ${seg.projectCode} (E&C-supplied, fuel only)`
-          : `Fuel issued — ${seg.projectCode} (${basisLabel(cfg.rateBasis)})`,
+          : `Fuel issued — ${seg.projectCode} (${basisLabel(segBasis)})`,
         quantity: seg.fuelLitres,
         unit: "L",
         unitRateCents: Math.round(seg.fuelCostCents / seg.fuelLitres),
@@ -189,7 +218,10 @@ export function computeSegmentedTotals(segments: SegmentInput[], cfg: SegmentedC
   }
 
   const lineItems: SegmentedLine[] = [...rentalLines, ...fuelLines];
-  const fuelChargedCents = chargesFuel ? fuelCostSum : 0;
+  // fuelCostSum already only accumulated the segments whose own basis charges
+  // fuel, so a Dry segment contributes nothing here while its litres still show
+  // on the header.
+  const fuelChargedCents = fuelCostSum;
 
   // Breakdown deduction is an informational line only — it is not subtracted
   // from the subtotal (mirrors the single-site path).

@@ -37,3 +37,41 @@ export function isScopedSiteUser(
 ): boolean {
   return !!u && isSiteUser(u.role) && !!u.projectId;
 }
+
+/**
+ * Who may see which invoices.
+ *
+ * Billing is money, so it is scoped by an allow-list rather than by exclusion.
+ * The previous rule — "narrow the query IF the user is a site user AND has a
+ * site" — failed open twice: WORKSHOP is not a site role, so a workshop operator
+ * saw every site's invoices; and a site user whose site had not been set fell
+ * through the same gap. Issuing fuel for any vehicle (which WORKSHOP legitimately
+ * does) is not a reason to read another site's financials.
+ *
+ *   "all"     — ADMIN and ALLOCATOR see the whole company.
+ *   projectId — a site user sees exactly their own site.
+ *   "none"    — everyone else, including a site user with no site set.
+ */
+export type BillingScope = { kind: "all" } | { kind: "project"; projectId: string } | { kind: "none" };
+
+const BILLING_ALL_ROLES = new Set(["ADMIN", "ALLOCATOR"]);
+
+export function billingScope(
+  u: { role: string | null | undefined; projectId?: string | null | undefined } | null | undefined,
+): BillingScope {
+  if (!u || !u.role) return { kind: "none" };
+  if (BILLING_ALL_ROLES.has(u.role)) return { kind: "all" };
+  if (isSiteUser(u.role) && u.projectId) return { kind: "project", projectId: u.projectId };
+  return { kind: "none" };
+}
+
+/** May this session read this bill's site at all? */
+export function canReadBillFor(
+  u: { role: string | null | undefined; projectId?: string | null | undefined } | null | undefined,
+  billProjectId: string | null | undefined,
+): boolean {
+  const scope = billingScope(u);
+  if (scope.kind === "all") return true;
+  if (scope.kind === "none") return false;
+  return billProjectId === scope.projectId;
+}

@@ -1,4 +1,3 @@
-/* eslint-disable */
 // One-shot restore of the site user accounts that the full data reset removed.
 // Source: the Jul-8 live backup (EXTERNALDATA app.db, passed as argv). Restores
 // every ACTIVE account except the already-present `admin` (so: malinga [admin],

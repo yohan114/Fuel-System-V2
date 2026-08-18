@@ -135,7 +135,7 @@ export async function GET(request: NextRequest) {
     response.headers.set("Content-Type", "application/pdf");
     response.headers.set("Content-Disposition", `attachment; filename="fuel_audit_${fromStr}_to_${toStr}.pdf"`);
     return response;
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("PDF generation error:", err);
     return new NextResponse("Failed to compile PDF document.", { status: 500 });
   }

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getBillingConfig } from "@/lib/billing/config";
 import { previousMonthPeriod, resolvePeriod } from "@/lib/billing/period";
 import { generateBillsForMonth, sweepOverdueBills } from "@/lib/billing/generate";
+import { errorMessage } from "@/lib/errors";
 
 // Monthly bill generation, triggered by an external scheduler per the
 // `billing.cron` setting. Authorized with CRON_SECRET (header `x-cron-secret`
@@ -51,9 +52,9 @@ async function handle(request: NextRequest) {
     });
 
     return NextResponse.json({ ok: true, period: period.periodKey, result, overdue });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Cron billing error:", err);
-    return NextResponse.json({ error: err.message || "Cron failed" }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(err) || "Cron failed" }, { status: 500 });
   }
 }
 

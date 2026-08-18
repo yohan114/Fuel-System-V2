@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { syncCeypetcoPrices } from "@/lib/prices/sync";
 import { colomboParts, parseRunHour, shouldSyncNow } from "@/lib/prices/schedule-timing";
+import { errorMessage } from "@/lib/errors";
 
 // In-app daily scheduler for the Ceypetco price sync. The app is a long-running
 // server (`next start`), so a timer started from instrumentation.ts is a
@@ -38,8 +39,8 @@ async function tick(): Promise<void> {
     const res = await syncCeypetcoPrices();
     await setSetting("scraper.lastSync", day); // only on success, so failures retry next tick
     console.log(`[price-scheduler] ${day}: stored ${res.stored.length}, skipped ${res.skippedExisting.length} (effective ${res.effectiveFrom})`);
-  } catch (err: any) {
-    console.error("[price-scheduler] sync failed, will retry:", err?.message ?? err);
+  } catch (err: unknown) {
+    console.error("[price-scheduler] sync failed, will retry:", errorMessage(err));
   }
 }
 

@@ -12,6 +12,7 @@ import {
   generateBillForAsset,
   sweepOverdueBills,
 } from "@/lib/billing/generate";
+import { errorMessage } from "@/lib/errors";
 
 const MODES = ["hourly", "perkm", "perday"];
 const BASES = ["fw", "w", "d"];
@@ -42,9 +43,9 @@ export async function generateBillsForMonthAction(formData: FormData) {
     const result = await generateBillsForMonth({ year, month, regenerate: regenerate || !!basis, actorId: admin.id, basis });
     revalidatePath("/billing");
     return { success: true, result };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Generate bills error:", err);
-    return { error: err.message || "Failed to generate bills" };
+    return { error: errorMessage(err) || "Failed to generate bills" };
   }
 }
 
@@ -68,9 +69,9 @@ export async function regenerateBillAction(billId: string) {
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Regenerate bill error:", err);
-    return { error: err.message || "Failed to regenerate bill" };
+    return { error: errorMessage(err) || "Failed to regenerate bill" };
   }
 }
 
@@ -111,9 +112,9 @@ export async function updateBillDraftAction(billId: string, formData: FormData) 
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update bill draft error:", err);
-    return { error: err.message || "Failed to update bill" };
+    return { error: errorMessage(err) || "Failed to update bill" };
   }
 }
 
@@ -148,9 +149,9 @@ export async function setVehicleBasisAction(assetId: string, basis: string, appl
     revalidatePath(`/fleet/${rate.asset.code}`);
     revalidatePath("/billing");
     return { success: true, regenerated };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Set vehicle basis error:", err);
-    return { error: err.message || "Failed to set hire basis" };
+    return { error: errorMessage(err) || "Failed to set hire basis" };
   }
 }
 
@@ -176,8 +177,8 @@ export async function bulkSetBillBasisAction(billIds: string[], basis: string) {
       await prisma.bill.update({ where: { id: billId }, data: { rateBasis: basis } });
       await generateBillForAsset(bill.assetId, resolvePeriod(bill.year, bill.month), { regenerate: true, actorId: admin.id });
       updated++;
-    } catch (err: any) {
-      errors.push({ billId, message: err.message || "error" });
+    } catch (err: unknown) {
+      errors.push({ billId, message: errorMessage(err) || "error" });
     }
   }
   await prisma.auditLog.create({
@@ -258,9 +259,9 @@ export async function finalizeBillAction(billId: string, overrideReason?: string
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
     return { success: true, invoiceNumber, emailedTo };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Finalize bill error:", err);
-    return { error: err.message || "Failed to issue invoice" };
+    return { error: errorMessage(err) || "Failed to issue invoice" };
   }
 }
 
@@ -331,9 +332,9 @@ export async function markBillPaidAction(billId: string, formData: FormData) {
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
     return { success: true, fullyPaid: result.fullyPaid };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Record payment error:", err);
-    return { error: err.message || "Failed to record payment" };
+    return { error: errorMessage(err) || "Failed to record payment" };
   }
 }
 
@@ -390,8 +391,8 @@ export async function bulkFinalizeBillsAction(billIds: string[]) {
         });
         finalized++;
       });
-    } catch (err: any) {
-      errors.push({ billId, message: err.message || "error" });
+    } catch (err: unknown) {
+      errors.push({ billId, message: errorMessage(err) || "error" });
     }
   }
 
@@ -450,8 +451,8 @@ export async function bulkMarkPaidAction(billIds: string[]) {
         });
       });
       paid++;
-    } catch (err: any) {
-      errors.push({ billId, message: err.message || "error" });
+    } catch (err: unknown) {
+      errors.push({ billId, message: errorMessage(err) || "error" });
     }
   }
 
@@ -538,9 +539,9 @@ async function deliverInvoiceEmail(
     });
 
     return { sentTo: toEmail };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Email invoice error:", err);
-    return { error: err.message || "Failed to email invoice" };
+    return { error: errorMessage(err) || "Failed to email invoice" };
   }
 }
 
@@ -572,9 +573,9 @@ export async function markOverdueAction() {
     const count = await sweepOverdueBills();
     revalidatePath("/billing");
     return { success: true, count };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Mark overdue error:", err);
-    return { error: err.message || "Failed to update overdue invoices" };
+    return { error: errorMessage(err) || "Failed to update overdue invoices" };
   }
 }
 
@@ -625,9 +626,9 @@ export async function updateFuelConsumptionAction(assetId: string, formData: For
     revalidatePath(`/fleet/${asset.code}`);
     revalidatePath("/billing");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update fuel consumption error:", err);
-    return { error: err.message || "Failed to update fuel consumption rate" };
+    return { error: errorMessage(err) || "Failed to update fuel consumption rate" };
   }
 }
 
@@ -687,8 +688,8 @@ export async function updateBillingSettingsAction(formData: FormData) {
     });
     revalidatePath("/admin/billing");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update billing settings error:", err);
-    return { error: err.message || "Failed to update billing settings" };
+    return { error: errorMessage(err) || "Failed to update billing settings" };
   }
 }

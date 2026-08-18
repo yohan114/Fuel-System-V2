@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Load Badalgama Plant/Workshop fuel from scripts/data/badalgama_fuel.json — the
 // Badalgama fuel issues extracted from the archived app.db (Jun-27 snapshot,
 // 2026-03-01..2026-06-23, 1,064 issues / 80,286 L). This is more complete than

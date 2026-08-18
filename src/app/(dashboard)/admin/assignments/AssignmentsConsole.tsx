@@ -284,7 +284,7 @@ export default function AssignmentsConsole({
               <option value="DRY">Dry — hire + driver, no fuel</option>
             </select>
             <p className="text-[10px] text-gray-600 mt-2 leading-relaxed">
-              <span className="text-gray-400">Wet</span> adds the month's fuel cost to the bill;{" "}
+              <span className="text-gray-400">Wet</span> adds the month&apos;s fuel cost to the bill;{" "}
               <span className="text-gray-400">Dry</span> bills hire + driver only, with fuel excluded.
             </p>
           </div>

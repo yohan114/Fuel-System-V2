@@ -299,7 +299,7 @@ export default function AssetEditor({ asset }: AssetEditorProps) {
                       className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-3 text-white text-xs focus:outline-none focus:border-indigo-500/50"
                     />
                     <p className="text-[10px] text-gray-500 mt-1.5">
-                      Leave blank for no limit. Blocks issues once the day's total would exceed this.
+                      Leave blank for no limit. Blocks issues once the day&apos;s total would exceed this.
                     </p>
                   </div>
 

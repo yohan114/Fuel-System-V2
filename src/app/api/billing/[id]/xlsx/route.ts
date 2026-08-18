@@ -1,4 +1,4 @@
-import { isSiteUser } from "@/lib/roles";
+import { canReadBillFor } from "@/lib/roles";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -12,7 +12,9 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
   const bill = await prisma.bill.findUnique({ where: { id }, include: { lineItems: true } });
   if (!bill) return new NextResponse("Not found", { status: 404 });
 
-  if (isSiteUser(session.role) && session.projectId && bill.projectId !== session.projectId) {
+  // Allow-list check: administrators see everything, a site login sees only its
+  // own site, and every other role — including WORKSHOP — sees nothing.
+  if (!canReadBillFor(session, bill.projectId)) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 
@@ -68,7 +70,7 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
         "Content-Disposition": `attachment; filename="invoice_${bill.assetCode}_${bill.periodKey}.xlsx"`,
       },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Bill XLSX error:", err);
     return new NextResponse("Failed to compile invoice workbook.", { status: 500 });
   }

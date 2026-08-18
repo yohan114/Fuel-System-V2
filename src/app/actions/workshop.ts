@@ -7,6 +7,7 @@ import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
 import { getPriceForDate } from "@/lib/pricing";
 import { extractFileField } from "@/lib/upload";
+import { errorMessage } from "@/lib/errors";
 
 // 1. Create Bulk Tank (Admin only)
 export async function createBulkTankAction(formData: FormData) {
@@ -82,9 +83,9 @@ export async function createBulkTankAction(formData: FormData) {
 
     revalidatePath("/admin/projects");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create bulk tank error:", err);
-    return { error: err.message || "Failed to create bulk tank" };
+    return { error: errorMessage(err) || "Failed to create bulk tank" };
   }
 }
 
@@ -145,9 +146,9 @@ export async function updateBulkTankAction(bulkTankId: string, formData: FormDat
     revalidatePath("/admin/projects");
     revalidatePath("/workshop");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update bulk tank error:", err);
-    return { error: err.message || "Failed to update bulk tank" };
+    return { error: errorMessage(err) || "Failed to update bulk tank" };
   }
 }
 
@@ -223,9 +224,9 @@ export async function submitBulkRequestAction(formData: FormData) {
 
     revalidatePath("/workshop");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Submit bulk request error:", err);
-    return { error: err.message || "Failed to submit request" };
+    return { error: errorMessage(err) || "Failed to submit request" };
   }
 }
 
@@ -316,9 +317,9 @@ export async function recordBulkRefuelAction(formData: FormData) {
     revalidatePath("/site");
     revalidatePath("/workshop");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Record bulk refuel error:", err);
-    return { error: err.message || "Failed to record the refuel" };
+    return { error: errorMessage(err) || "Failed to record the refuel" };
   }
 }
 
@@ -409,9 +410,9 @@ export async function approveBulkRequestAction(requestId: string, reviewNote: st
       // Ignore Next.js runtime static generation store errors in CLI tests
     }
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Approve bulk request error:", err);
-    return { error: err.message || "Failed to approve request" };
+    return { error: errorMessage(err) || "Failed to approve request" };
   }
 }
 
@@ -460,9 +461,9 @@ export async function rejectBulkRequestAction(requestId: string, reviewNote: str
     revalidatePath("/admin/projects");
     revalidatePath("/workshop");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Reject bulk request error:", err);
-    return { error: err.message || "Failed to reject request" };
+    return { error: errorMessage(err) || "Failed to reject request" };
   }
 }
 
@@ -690,9 +691,9 @@ export async function workshopIssueFuelAction(formData: FormData) {
     revalidatePath(`/fleet/${asset.code}`);
     revalidatePath("/fuel/issues");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Workshop issue fuel error:", err);
-    return { error: err.message || "Failed to log fuel dispatch." };
+    return { error: errorMessage(err) || "Failed to log fuel dispatch." };
   }
 }
 
@@ -751,9 +752,9 @@ export async function deleteBulkTankAction(bulkTankId: string) {
     revalidatePath("/admin/projects");
     revalidatePath("/workshop");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Delete bulk tank error:", err);
-    return { error: err.message || "Failed to delete storage pump" };
+    return { error: errorMessage(err) || "Failed to delete storage pump" };
   }
 }
 

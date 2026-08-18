@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Import the CEP-03 A,B & C monthly "Vehicle Running Summary" workbooks (one file
 // per month: Jan/Feb/Mar 2026). Unlike the daily site sheets, these carry only a
 // MONTHLY fuel total per vehicle (no day grid), so — per the owner's decision —

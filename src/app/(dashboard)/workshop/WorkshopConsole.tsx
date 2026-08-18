@@ -19,6 +19,7 @@ import {
   Gauge,
   X
 } from "lucide-react";
+import { errorMessageOr } from "@/lib/errors";
 
 interface TankProp {
   id: string;
@@ -198,8 +199,8 @@ export default function WorkshopConsole({
 
           setTimeout(() => closeModal(), 1500);
         }
-      } catch (err: any) {
-        setError(err?.message || "An unexpected network or system error occurred.");
+      } catch (err: unknown) {
+        setError(errorMessageOr(err, "An unexpected network or system error occurred."));
       }
     });
   };
@@ -251,8 +252,8 @@ export default function WorkshopConsole({
           ]);
           setTimeout(() => closeModal(), 1500);
         }
-      } catch (err: any) {
-        setError(err?.message || "An unexpected network or system error occurred.");
+      } catch (err: unknown) {
+        setError(errorMessageOr(err, "An unexpected network or system error occurred."));
       }
     });
   };
@@ -301,8 +302,8 @@ export default function WorkshopConsole({
 
           setTimeout(() => closeModal(), 1500);
         }
-      } catch (err: any) {
-        setError(err?.message || "An unexpected network or system error occurred.");
+      } catch (err: unknown) {
+        setError(errorMessageOr(err, "An unexpected network or system error occurred."));
       }
     });
   };

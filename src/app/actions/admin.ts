@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
+import { errorMessage } from "@/lib/errors";
 
 // 1. Update Settings
 export async function updateSettingsAction(formData: FormData) {
@@ -58,9 +59,9 @@ export async function updateSettingsAction(formData: FormData) {
 
     revalidatePath("/admin/settings");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update settings error:", err);
-    return { error: err.message || "Failed to update settings" };
+    return { error: errorMessage(err) || "Failed to update settings" };
   }
 }
 
@@ -125,9 +126,9 @@ export async function createUserAction(formData: FormData) {
 
     revalidatePath("/admin/users");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create user error:", err);
-    return { error: err.message || "Failed to create user account" };
+    return { error: errorMessage(err) || "Failed to create user account" };
   }
 }
 
@@ -170,9 +171,9 @@ export async function toggleUserStatusAction(targetUserId: string, active: boole
 
     revalidatePath("/admin/users");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Toggle user status error:", err);
-    return { error: err.message || "Failed to update user status" };
+    return { error: errorMessage(err) || "Failed to update user status" };
   }
 }
 
@@ -245,9 +246,9 @@ export async function runOnDemandBackupAction() {
 
     revalidatePath("/admin/backups");
     return { success: true, filename: backupFilename };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Manual backup error:", err);
-    return { error: err.message || "Failed to complete database backup" };
+    return { error: errorMessage(err) || "Failed to complete database backup" };
   }
 }
 
@@ -316,9 +317,9 @@ export async function addManualPriceAction(formData: FormData) {
     revalidatePath("/admin/prices");
     revalidatePath("/fuel/issues");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Add manual price error:", err);
-    return { error: err.message || "Failed to register manual price entry" };
+    return { error: errorMessage(err) || "Failed to register manual price entry" };
   }
 }
 
@@ -375,9 +376,9 @@ export async function updateUserAssignmentAction(targetUserId: string, formData:
 
     revalidatePath("/admin/users");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update user assignment error:", err);
-    return { error: err.message || "Failed to update user assignment" };
+    return { error: errorMessage(err) || "Failed to update user assignment" };
   }
 }
 
@@ -424,9 +425,9 @@ export async function resetUserPasswordAction(targetUserId: string, formData: Fo
 
     revalidatePath("/admin/users");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Reset user password error:", err);
-    return { error: err.message || "Failed to reset user password" };
+    return { error: errorMessage(err) || "Failed to reset user password" };
   }
 }
 
@@ -521,9 +522,9 @@ export async function deleteUserAction(targetUserId: string) {
 
     revalidatePath("/admin/users");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Delete user error:", err);
-    return { error: err.message || "Failed to delete user account" };
+    return { error: errorMessage(err) || "Failed to delete user account" };
   }
 }
 

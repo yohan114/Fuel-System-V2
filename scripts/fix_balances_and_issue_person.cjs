@@ -1,4 +1,3 @@
-/* eslint-disable */
 // Workstream B — validate/fix tank balances and stamp an accountable issue
 // person on every fuel issue.
 //

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { syncCeypetcoPrices } from "@/lib/prices/sync";
+import { errorMessage } from "@/lib/errors";
 
 // Daily Ceypetco price sync. The app now also runs this automatically on a
 // timer (see src/instrumentation.ts); this endpoint stays so an external
@@ -21,9 +22,9 @@ async function handle(request: NextRequest) {
   try {
     const result = await syncCeypetcoPrices();
     return NextResponse.json({ ok: true, ...result });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Cron fuel-prices error:", err);
-    return NextResponse.json({ error: err.message || "Price sync failed" }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(err) || "Price sync failed" }, { status: 500 });
   }
 }
 

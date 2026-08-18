@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 // Create/edit for the filter master. The /filters page was read-only (search +
 // cross-reference); these let an admin add a new filter or fix its part numbers
@@ -48,9 +49,9 @@ export async function createFilterAction(formData: FormData) {
     });
     revalidatePath("/filters");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create filter error:", err);
-    return { error: err.message || "Failed to add filter" };
+    return { error: errorMessage(err) || "Failed to add filter" };
   }
 }
 
@@ -81,8 +82,8 @@ export async function updateFilterAction(id: string, formData: FormData) {
     });
     revalidatePath("/filters");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update filter error:", err);
-    return { error: err.message || "Failed to update filter" };
+    return { error: errorMessage(err) || "Failed to update filter" };
   }
 }

@@ -33,10 +33,14 @@ export default function ManageTanksClient({ initialTanks, projects }: ManageTank
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
 
-  // Sync prop changes (if any)
-  React.useEffect(() => {
+  // Re-sync when the server sends a fresh list (after router.refresh()), while
+  // keeping the optimistic edits below. Adjusting during render rather than in
+  // an effect re-renders before paint instead of after committing stale rows.
+  const [syncedTanks, setSyncedTanks] = useState<BulkTankProp[]>(initialTanks);
+  if (syncedTanks !== initialTanks) {
+    setSyncedTanks(initialTanks);
     setTanks(initialTanks);
-  }, [initialTanks]);
+  }
 
   const openEditModal = (tank: BulkTankProp) => {
     setEditingTank(tank);

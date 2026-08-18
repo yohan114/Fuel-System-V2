@@ -46,6 +46,26 @@ describe("parseCeypetcoPrices", () => {
   it("returns empty for a page without a recognisable table", () => {
     expect(parseCeypetcoPrices("<html><body>maintenance</body></html>").prices).toEqual([]);
   });
+
+  // Ceypetco switched the published table to abbreviated headers; the old
+  // full-name patterns matched nothing and the daily sync failed with
+  // "no price table recognised". LIK (Lanka Industrial Kerosene) sits beside
+  // LK (Lanka Kerosene) and must not be mistaken for it.
+  it("reads the abbreviated header format (LAD / LSD / LP 92 / LP 95 / LK)", () => {
+    const html = `<table>
+      <tr><th>Date</th><th>LP 95</th><th>LP 92</th><th>LAD</th><th>LSD</th><th>LK</th><th>LIK</th><th>FUR. 800</th></tr>
+      <tr><td>30.06.2026</td><td>495</td><td>414</td><td>382</td><td>478</td><td>285</td><td>434</td><td>332</td></tr>
+      <tr><td>31.05.2026</td><td>495</td><td>434</td><td>407</td><td>478</td><td>285</td><td>434</td><td>332</td></tr>
+    </table>`;
+    const out = parseCeypetcoPrices(html);
+    expect(out.effectiveFrom?.toISOString().slice(0, 10)).toBe("2026-06-30");
+    const by = Object.fromEntries(out.prices.map((p) => [p.code, p.priceCents]));
+    expect(by.PETROL_95).toBe(49500);
+    expect(by.PETROL_92).toBe(41400);
+    expect(by.AUTO_DIESEL).toBe(38200);
+    expect(by.SUPER_DIESEL).toBe(47800);
+    expect(by.KEROSENE).toBe(28500); // LK, not LIK's 434
+  });
 });
 
 describe("parseEffectiveDate", () => {

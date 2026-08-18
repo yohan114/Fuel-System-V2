@@ -4,22 +4,17 @@ import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles, Loader2, CheckCircle2, XCircle, Lock, AlertTriangle, SkipForward } from "lucide-react";
 import { generateBillsForMonthAction } from "@/app/actions/billing";
+import type { AssetOutcome } from "@/lib/billing/generate";
 
 interface Props {
   defaultYear: number;
   defaultMonth: number;
 }
 
-type AssetStatus = "created" | "regenerated" | "skipped-existing" | "skipped-finalized" | "skipped-not-here" | "no-rate" | "error";
-
-interface AssetOutcome {
-  assetId: string;
-  assetCode: string;
-  assetLabel?: string;
-  status: AssetStatus;
-  message?: string;
-  billId?: string;
-}
+// Re-use the generator's own outcome types rather than a local copy: a local
+// duplicate silently fell behind when "skipped-billed-direct" was added, and
+// the missing STATUS_META entry crashed this panel on `meta.cls`.
+type AssetStatus = AssetOutcome["status"];
 
 const STATUS_META: Record<AssetStatus, { icon: React.ReactNode; label: string; cls: string }> = {
   created:           { icon: <CheckCircle2 className="w-3.5 h-3.5" />, label: "Created",   cls: "text-emerald-400" },
@@ -27,6 +22,7 @@ const STATUS_META: Record<AssetStatus, { icon: React.ReactNode; label: string; c
   "skipped-existing":   { icon: <SkipForward className="w-3.5 h-3.5" />,   label: "Existing",   cls: "text-gray-400" },
   "skipped-finalized":  { icon: <Lock className="w-3.5 h-3.5" />,          label: "Locked",     cls: "text-amber-400" },
   "skipped-not-here":   { icon: <SkipForward className="w-3.5 h-3.5" />,   label: "Not on site", cls: "text-gray-400" },
+  "skipped-billed-direct": { icon: <SkipForward className="w-3.5 h-3.5" />, label: "Billed direct", cls: "text-sky-400" },
   "no-rate":         { icon: <AlertTriangle className="w-3.5 h-3.5" />, label: "No rate",  cls: "text-orange-400" },
   error:             { icon: <XCircle className="w-3.5 h-3.5" />,       label: "Error",    cls: "text-red-400" },
 };
@@ -53,10 +49,10 @@ export default function GenerateBillsPanel({ defaultYear, defaultMonth }: Props)
     if (basis) fd.set("basis", basis);
     startTransition(async () => {
       const res = await generateBillsForMonthAction(fd);
-      if ((res as any).error) {
-        setError((res as any).error);
+      if (res.error || !res.result) {
+        setError(res.error ?? "Failed to generate bills");
       } else {
-        const r = (res as any).result;
+        const r = res.result;
         setAssets(r.assets ?? []);
         setSummary(`${r.periodKey}: ${r.created} created, ${r.regenerated} regenerated, ${r.skippedExisting} existing, ${r.skippedFinalized} locked, ${r.noRate} no rate${r.errors?.length ? `, ${r.errors.length} errors` : ""}.`);
         router.refresh();

@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 // Records a physical bulk-tank dip and snapshots the system balance so the
 // variance (shrinkage/overage) is captured at the moment of measurement.
@@ -57,8 +58,8 @@ export async function recordTankDipAction(formData: FormData) {
 
     revalidatePath("/admin/tanks");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Record tank dip error:", err);
-    return { error: err.message || "Failed to record tank dip" };
+    return { error: errorMessage(err) || "Failed to record tank dip" };
   }
 }

@@ -94,7 +94,8 @@ async function main() {
   const catCode = new Map<string, string>();
   for (const [cat, info] of catInfo) {
     let code = [...info.prefixes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || acronym(cat);
-    let base = code, n = 2;
+    const base = code;
+    let n = 2;
     while (usedCodes.has(code)) code = `${base}${n++}`;
     usedCodes.add(code);
     catCode.set(cat, code);
@@ -119,7 +120,8 @@ async function main() {
     let code = (m.ec || "").trim().toUpperCase();
     if (!code) code = (m.reg || "").trim().toUpperCase();
     if (!code) code = `M-${m.id}`;
-    let base = code, n = 2;
+    const base = code;
+    let n = 2;
     while (usedAssetCodes.has(code)) code = `${base}#${n++}`;
     usedAssetCodes.add(code);
 

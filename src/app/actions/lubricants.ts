@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 // Master-data CRUD for the lubricant catalogue (oils/greases used on services).
 // Price is entered in LKR and stored as cents per unit.
@@ -44,9 +45,9 @@ export async function createLubricantAction(formData: FormData) {
     });
     revalidatePath("/lubricants");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create lubricant error:", err);
-    return { error: err.message || "Failed to add lubricant" };
+    return { error: errorMessage(err) || "Failed to add lubricant" };
   }
 }
 
@@ -78,9 +79,9 @@ export async function updateLubricantAction(id: string, formData: FormData) {
     });
     revalidatePath("/lubricants");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update lubricant error:", err);
-    return { error: err.message || "Failed to update lubricant" };
+    return { error: errorMessage(err) || "Failed to update lubricant" };
   }
 }
 
@@ -98,8 +99,8 @@ export async function deleteLubricantAction(id: string) {
     });
     revalidatePath("/lubricants");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Delete lubricant error:", err);
-    return { error: err.message || "Failed to delete lubricant" };
+    return { error: errorMessage(err) || "Failed to delete lubricant" };
   }
 }

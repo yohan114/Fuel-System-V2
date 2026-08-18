@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
+import { errorMessage } from "@/lib/errors";
 
 export async function createAssetAction(formData: FormData) {
   let admin;
@@ -87,9 +88,9 @@ export async function createAssetAction(formData: FormData) {
 
     revalidatePath("/fleet");
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Create asset error:", err);
-    return { error: err.message || "Failed to create asset" };
+    return { error: errorMessage(err) || "Failed to create asset" };
   }
 }
 
@@ -163,9 +164,9 @@ export async function updateAssetAction(assetId: string, formData: FormData) {
     revalidatePath("/fleet");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Update asset error:", err);
-    return { error: err.message || "Failed to update asset" };
+    return { error: errorMessage(err) || "Failed to update asset" };
   }
 }
 
@@ -205,8 +206,8 @@ export async function deleteAssetAction(assetId: string) {
     revalidatePath("/fleet");
     revalidatePath(`/fleet/${asset.code}`);
     return { success: true };
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Delete asset error:", err);
-    return { error: err.message || "Failed to dispose asset" };
+    return { error: errorMessage(err) || "Failed to dispose asset" };
   }
 }

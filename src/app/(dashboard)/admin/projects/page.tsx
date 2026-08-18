@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import ManageTanksClient from "./ManageTanksClient";
 import ManageProjectsClient from "./ManageProjectsClient";
+import CreateProjectForm from "./CreateProjectForm";
 
 export default async function AdminProjectsPage() {
   const session = await getSession();
@@ -74,70 +75,8 @@ export default async function AdminProjectsPage() {
               Register Project Site
             </h3>
 
-            <form
-              action={async (formData) => {
-                "use server";
-                await createProjectAction(formData);
-              }}
-              className="space-y-4"
-            >
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                  Project Name
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  required
-                  placeholder="e.g. Ruwanwella Water Project"
-                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
-                />
-              </div>
+            <CreateProjectForm />
 
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                  Project Code
-                </label>
-                <input
-                  type="text"
-                  name="code"
-                  required
-                  placeholder="e.g. RWP"
-                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50 font-bold tracking-wide"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                  Billing Contact Name
-                </label>
-                <input
-                  type="text"
-                  name="contactName"
-                  placeholder="e.g. Site Accounts Officer"
-                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                  Billing Contact Email
-                </label>
-                <input
-                  type="email"
-                  name="contactEmail"
-                  placeholder="invoices@site.example"
-                  className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs py-2.5 rounded-xl active:scale-95 transition-all shadow-md"
-              >
-                Register Project
-              </button>
-            </form>
           </div>
 
           {/* Projects List */}

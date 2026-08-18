@@ -21,8 +21,8 @@ function EmailInvoiceButton({ billId }: { billId: string }) {
           startTransition(async () => {
             setMsg(null);
             const res = await emailInvoiceAction(billId);
-            if ((res as any).error) setMsg({ ok: false, text: (res as any).error });
-            else setMsg({ ok: true, text: `Invoice emailed to ${(res as any).sentTo}.` });
+            if (res.error) setMsg({ ok: false, text: res.error });
+            else setMsg({ ok: true, text: `Invoice emailed to ${res.sentTo}.` });
           })
         }
         disabled={pending}
@@ -69,7 +69,7 @@ export default function BillActions({ bill }: { bill: BillSnapshot }) {
   const [clarify, setClarify] = useState<string[] | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
 
-  function refreshAfter(promise: Promise<any>) {
+  function refreshAfter(promise: Promise<{ error?: string }>) {
     setErr(null);
     startTransition(async () => {
       const res = await promise;
@@ -84,10 +84,10 @@ export default function BillActions({ bill }: { bill: BillSnapshot }) {
     setErr(null);
     startTransition(async () => {
       const res = await finalizeBillAction(bill.id, reason);
-      if ((res as any).blocked) {
-        setClarify((res as any).reasons);
-      } else if ((res as any).error) {
-        setErr((res as any).error);
+      if (res.blocked) {
+        setClarify(res.reasons);
+      } else if (res.error) {
+        setErr(res.error);
       } else {
         setClarify(null);
         setOverrideReason("");

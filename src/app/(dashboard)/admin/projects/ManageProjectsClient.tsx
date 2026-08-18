@@ -28,10 +28,14 @@ export default function ManageProjectsClient({ initialProjects }: ManageProjects
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
 
-  // Sync prop changes (if any)
-  React.useEffect(() => {
+  // Re-sync when the server sends a fresh list (after router.refresh()), while
+  // keeping the optimistic edits below. Adjusting during render rather than in
+  // an effect re-renders before paint instead of after committing stale rows.
+  const [syncedProjects, setSyncedProjects] = useState<ProjectProp[]>(initialProjects);
+  if (syncedProjects !== initialProjects) {
+    setSyncedProjects(initialProjects);
     setProjects(initialProjects);
-  }, [initialProjects]);
+  }
 
   const openEditModal = (proj: ProjectProp) => {
     setEditingProject(proj);

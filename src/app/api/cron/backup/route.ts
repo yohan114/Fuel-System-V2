@@ -4,6 +4,7 @@ import { snapshotDatabase } from "@/lib/backup/snapshot";
 import { driveConfigured, uploadToDrive, pruneOldBackups, backupFolderId } from "@/lib/backup/drive";
 import fs from "fs";
 import path from "path";
+import { errorMessage } from "@/lib/errors";
 
 // Daily database backup, triggered by an external scheduler (e.g. 03:00:
 // `0 3 * * *  curl -s "https://<host>/api/cron/backup?secret=$CRON_SECRET"`).
@@ -37,10 +38,10 @@ async function handle(request: NextRequest) {
         driveFileId = await uploadToDrive(snap.fileName, snap.bytes);
         const keepDays = parseInt(request.nextUrl.searchParams.get("keepDays") || "30", 10);
         pruned = await pruneOldBackups(isNaN(keepDays) ? 30 : keepDays);
-      } catch (err: any) {
+      } catch (err: unknown) {
         // Keep the local backup a success even when the upload fails; surface
         // the Drive problem in the response and the audit log.
-        driveError = err.message || "Drive upload failed";
+        driveError = errorMessage(err) || "Drive upload failed";
         console.error("Drive backup error:", err);
       }
     }
@@ -61,9 +62,9 @@ async function handle(request: NextRequest) {
       rawBytes: snap.rawBytes,
       drive: driveFileId ? { fileId: driveFileId, pruned } : { configured: driveConfigured(), error: driveError },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Cron backup error:", err);
-    return NextResponse.json({ error: err.message || "Backup failed" }, { status: 500 });
+    return NextResponse.json({ error: errorMessage(err) || "Backup failed" }, { status: 500 });
   }
 }
 

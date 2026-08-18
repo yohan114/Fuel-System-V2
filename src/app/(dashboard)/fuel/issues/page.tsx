@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import React from "react";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
@@ -8,6 +9,7 @@ import { isSiteUser } from "@/lib/roles";
 import CorrectionButton from "./CorrectionButton";
 import Link from "next/link";
 import { Search, MapPin } from "lucide-react";
+import { assetSearchClause } from "@/lib/fleet/asset-search";
 
 interface PageProps {
   searchParams: Promise<{ q?: string; fuelKind?: string; site?: string; issuedBy?: string; source?: string; tank?: string }>;
@@ -36,11 +38,14 @@ export default async function FuelIssuesPage(props: PageProps) {
   const tankFilter = searchParams.tank || "";
 
   // 1. Build where query
-  const where: any = {};
+  const where: Prisma.FuelIssueWhereInput = {};
   if (fuelKindFilter) where.fuelKind = fuelKindFilter;
   if (issuedByFilter) where.issuedById = issuedByFilter;
   if (sourceFilter) where.source = sourceFilter;
-  if (q) where.asset = { code: { contains: q.trim().toUpperCase() } };
+  // Matches the E&C number, the registration/vehicle number and the make/model
+  // — searching the number on the vehicle used to return nothing.
+  const assetSearch = assetSearchClause(q);
+  if (assetSearch) where.asset = assetSearch;
   // Which PUMP dispensed the fuel — a different question from which site the
   // vehicle was allocated to, and the one the pump overview asks. A vehicle
   // posted to Marawila can still be fuelled at the workshop, so filtering by the
@@ -69,12 +74,20 @@ export default async function FuelIssuesPage(props: PageProps) {
     omit: { photoData: true },
     include: { asset: { include: { project: true } }, issuedBy: true },
     orderBy: { issueDate: "desc" },
-    take: tankFilter ? PUMP_LIMIT : ISSUE_LIMIT,
+    // A site filter is applied in memory below, after attribution — so the cap
+    // has to cover the site's whole candidate pool or older rows silently
+    // vanish from the filtered list. Nine sites draw on more than a thousand
+    // candidate issues (Wadakada 4,700), which made "show me this site's fuel"
+    // quietly return only the recent part of it.
+    take: tankFilter || effectiveSite ? PUMP_LIMIT : ISSUE_LIMIT,
   });
 
   // The true number behind the cap, so a truncated list says so rather than
   // looking like the whole story.
-  const matchingTotal = await prisma.fuelIssue.count({ where });
+  // Counted from the query, so it only means "the whole matching set" while no
+  // site filter is on — a site is resolved per issue in memory below, and the
+  // exact figure for that case is set after filtering.
+  let matchingTotal = await prisma.fuelIssue.count({ where });
   const selectedTank = tankFilter
     ? await prisma.bulkTank.findUnique({
         where: { id: tankFilter },
@@ -92,14 +105,27 @@ export default async function FuelIssuesPage(props: PageProps) {
   const idx = indexAssignments(assignments);
   const projects = await prisma.project.findMany({ select: { id: true, name: true, code: true }, orderBy: { name: "asc" } });
   const projById = new Map(projects.map((p) => [p.id, p]));
+  // Same cascade as the site-wise fuel report, so the two screens agree:
+  // the posting on the day, then the site that owns the pump the fuel came out
+  // of, then the vehicle's current site. Without the tank step 973 issues
+  // (133,533 L) showed no site at all and could not be found by site filter,
+  // even though the pump identifies every one of them.
+  const tanks = await prisma.bulkTank.findMany({ select: { id: true, projectId: true } });
+  const tankProject = new Map(tanks.map((t) => [t.id, t.projectId]));
   const siteOfIssue = (i: (typeof issues)[number]) => {
-    const pid = assignedSiteOn(idx, i.assetId, i.issueDate) ?? i.asset.projectId;
+    const pid =
+      assignedSiteOn(idx, i.assetId, i.issueDate) ??
+      (i.bulkTankId ? tankProject.get(i.bulkTankId) ?? null : null) ??
+      i.asset.projectId;
     return pid ? projById.get(pid) ?? (i.asset.project ? { id: pid, name: i.asset.project.name, code: i.asset.project.code } : null) : null;
   };
 
   // Apply the exact allocated-site filter in memory (site users are pinned to
   // their own site; privileged roles to the site they picked).
-  if (effectiveSite) issues = issues.filter((i) => siteOfIssue(i)?.id === effectiveSite);
+  if (effectiveSite) {
+    issues = issues.filter((i) => siteOfIssue(i)?.id === effectiveSite);
+    matchingTotal = issues.length; // the pre-attribution count would overstate it
+  }
 
   // Dropdown option sources.
   const [issuerRows, sourceRows] = await Promise.all([
@@ -162,7 +188,7 @@ export default async function FuelIssuesPage(props: PageProps) {
                 type="text"
                 name="q"
                 defaultValue={q}
-                placeholder="Vehicle e.g. DT-01"
+                placeholder="E&C or vehicle no. e.g. LB-23 / ZB-2587"
                 className="w-full bg-[#1b1e30] border border-white/5 rounded-xl pl-10 pr-3 py-2.5 text-white placeholder-gray-500 text-xs focus:outline-none"
               />
             </div>

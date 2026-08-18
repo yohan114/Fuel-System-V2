@@ -225,7 +225,7 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="consolidated_billing_${fileSuffix}.xlsx"`,
       },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Consolidated XLSX error:", err);
     return new NextResponse("Failed to compile consolidated workbook.", { status: 500 });
   }

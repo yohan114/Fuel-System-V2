@@ -67,12 +67,11 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
     setMsg(null);
     startTransition(async () => {
       const res = await bulkFinalizeBillsAction(selectedDrafts);
-      if ((res as any).error) setMsg({ ok: false, text: (res as any).error });
+      if (res.error) setMsg({ ok: false, text: res.error });
       else {
-        const r = res as any;
         setMsg({
           ok: true,
-          text: `Finalized ${r.finalized}${r.needsClarify ? `, ${r.needsClarify} left for clarification (open them to review)` : ""}${r.skipped ? `, skipped ${r.skipped}` : ""}${r.errors?.length ? `, ${r.errors.length} errors` : ""}.`,
+          text: `Finalized ${res.finalized}${res.needsClarify ? `, ${res.needsClarify} left for clarification (open them to review)` : ""}${res.skipped ? `, skipped ${res.skipped}` : ""}${res.errors?.length ? `, ${res.errors.length} errors` : ""}.`,
         });
         setSelected(new Set());
         router.refresh();
@@ -87,10 +86,9 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
     setMsg(null);
     startTransition(async () => {
       const res = await bulkSetBillBasisAction(selectedDrafts, basis);
-      if ((res as any).error) setMsg({ ok: false, text: (res as any).error });
+      if (res.error) setMsg({ ok: false, text: res.error });
       else {
-        const r = res as any;
-        setMsg({ ok: true, text: `Re-costed ${r.updated} draft(s) as ${label}${r.skipped ? `, skipped ${r.skipped}` : ""}.` });
+        setMsg({ ok: true, text: `Re-costed ${res.updated} draft(s) as ${label}${res.skipped ? `, skipped ${res.skipped}` : ""}.` });
         setSelected(new Set());
         router.refresh();
       }
@@ -103,10 +101,9 @@ export default function BillsTable({ bills, isAdmin }: { bills: BillRow[]; isAdm
     setMsg(null);
     startTransition(async () => {
       const res = await bulkMarkPaidAction(selectedPayable);
-      if ((res as any).error) setMsg({ ok: false, text: (res as any).error });
+      if (res.error) setMsg({ ok: false, text: res.error });
       else {
-        const r = res as any;
-        setMsg({ ok: true, text: `Marked ${r.paid} paid, skipped ${r.skipped}${r.errors?.length ? `, ${r.errors.length} errors` : ""}.` });
+        setMsg({ ok: true, text: `Marked ${res.paid} paid, skipped ${res.skipped}${res.errors?.length ? `, ${res.errors.length} errors` : ""}.` });
         setSelected(new Set());
         router.refresh();
       }

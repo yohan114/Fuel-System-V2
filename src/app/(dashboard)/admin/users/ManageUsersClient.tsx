@@ -59,10 +59,14 @@ export default function ManageUsersClient({
   const [resetSuccess, setResetSuccess] = useState<boolean>(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Synchronize initial users prop
-  React.useEffect(() => {
+  // Re-sync when the server sends a fresh list (after router.refresh()), while
+  // keeping the optimistic edits below. Adjusting during render rather than in
+  // an effect re-renders before paint instead of after committing stale rows.
+  const [syncedUsers, setSyncedUsers] = useState<UserProp[]>(initialUsers);
+  if (syncedUsers !== initialUsers) {
+    setSyncedUsers(initialUsers);
     setUsers(initialUsers);
-  }, [initialUsers]);
+  }
 
   const openEditModal = (user: UserProp) => {
     setEditingUser(user);
