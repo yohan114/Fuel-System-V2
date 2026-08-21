@@ -271,11 +271,27 @@ export async function generateBillForAsset(
     });
   }
 
-  // Dynamically resolve the project assignment for this specific billing month.
+  // Which site owns this month, resolved from the postings alone.
+  //
+  // This used to fall back to `asset.projectId` — a "site pin" kept on the
+  // vehicle record, a second and quietly competing source of truth. When no
+  // posting covered the month the engine billed to the pin instead, which is how
+  // three generators that have never drawn a litre of diesel in the life of the
+  // system came to be invoiced to Wadakada. Across the fleet the pin disagreed
+  // with the open posting on 98 vehicles and existed without any posting at all
+  // on 34 more.
+  //
+  // A vehicle now belongs to a site because fuel came out of that site's tank,
+  // or because somebody said so and it is recorded as a MANUAL posting. Absent
+  // either, it belongs nowhere and is not billed — a machine that genuinely sits
+  // on site without drawing diesel is billed by allocating it, not by guessing.
   const resolvedProject = await resolveProjectForAssetMonth(assetId, period.year, period.month, asset.project);
-  const projectId = resolvedProject?.id ?? asset.projectId;
-  const projectCode = resolvedProject?.code ?? asset.project?.code;
-  const projectName = resolvedProject?.name ?? asset.project?.name;
+  if (!resolvedProject) {
+    return { status: "skipped-not-here", billId: existing?.id };
+  }
+  const projectId = resolvedProject.id;
+  const projectCode = resolvedProject.code;
+  const projectName = resolvedProject.name;
 
   // Derive actual usage for the month.
   let openingMeter: number | null = null;

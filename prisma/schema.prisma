@@ -180,6 +180,19 @@ model AssetAssignment {
   endDate     DateTime? // inclusive last day; null = ongoing
   note        String?
 
+  // Where this posting came from: "FUEL" — derived from fuel issues by
+  // apply-fuel-driven-attachment, and rebuilt (deleted and rewritten) every time
+  // that runs; or "MANUAL" — a person put the vehicle on this site, and the
+  // rebuild must leave it alone.
+  //
+  // This used to be inferred by reading the free-text `note` for a "Drew from "
+  // prefix, so a control flag lived in a comment field and every rebuild wiped
+  // every hand-made correction. A machine that sits on site and never draws
+  // diesel — client-fuelled, electric, or simply idle — can only be billed
+  // through a MANUAL posting, which makes this the difference between billable
+  // and invisible.
+  origin      String    @default("FUEL")
+
   // Driver/operator assigned to the vehicle for this posting (shown on the bill).
   driverName  String?
   // Hire type for this allocation: "DRY" | "WET". DRY bills the vehicle + driver

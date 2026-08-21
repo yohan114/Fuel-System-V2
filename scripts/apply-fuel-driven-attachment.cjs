@@ -125,16 +125,50 @@ if (!APPLY) { L(`\n(DRY-RUN) nothing written — re-run with --apply.`); db.clos
 
 const out = db.transaction(() => {
   const before = db.prepare("SELECT COUNT(*) n FROM AssetAssignment").get().n;
-  db.prepare("DELETE FROM AssetAssignment").run();
-  const ins = db.prepare(`INSERT INTO AssetAssignment
-    (id, assetId, projectId, startDate, endDate, note, driverName, billingType, createdAt, updatedAt, createdById)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
-  for (const a of attachments) {
-    ins.run(crypto.randomUUID(), a.assetId, a.projectId,
-      atColombo(a.start), a.end ? atColombo(a.end) : null,
-      `Attached from fuel — first issue ${a.start}${a.end ? `, closed the day before the next site` : ", still active"}`,
-      a.driverName ?? null, a.billingType ?? null, NOW, NOW, admin.id);
+
+  // Only the fuel-derived postings are rebuilt. A MANUAL posting is somebody's
+  // decision — most often the only way a machine that never draws diesel gets
+  // billed at all — and this script used to delete every row, so every hand-made
+  // correction survived exactly until the next run.
+  const manual = db.prepare(`
+    SELECT aa.assetId, aa.projectId, ${cd("aa.startDate")} s,
+           CASE WHEN aa.endDate IS NULL THEN NULL ELSE ${cd("aa.endDate")} END e
+    FROM AssetAssignment aa WHERE aa.origin = 'MANUAL'`).all();
+  const manualBy = new Map();
+  for (const m of manual) {
+    if (!manualBy.has(m.assetId)) manualBy.set(m.assetId, []);
+    manualBy.get(m.assetId).push(m);
   }
+  db.prepare("DELETE FROM AssetAssignment WHERE origin = 'FUEL'").run();
+
+  const ins = db.prepare(`INSERT INTO AssetAssignment
+    (id, assetId, projectId, startDate, endDate, note, driverName, billingType, origin, createdAt, updatedAt, createdById)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  let clipped = 0, dropped = 0;
+  for (const a of attachments) {
+    // Fuel still wins over a stale manual posting — diesel coming out of another
+    // site's tank proves the machine moved — but where a MANUAL span covers the
+    // same days at the SAME site there is nothing to add, and where it covers a
+    // different site the fuel span is trimmed clear of it rather than overlapping.
+    let start = a.start, end = a.end;
+    const mine = manualBy.get(a.assetId) ?? [];
+    let skip = false;
+    for (const m of mine) {
+      const mEnd = m.e ?? "9999-12-31";
+      const aEnd = end ?? "9999-12-31";
+      if (m.s > aEnd || mEnd < start) continue;           // no overlap
+      if (m.projectId === a.projectId) { skip = true; break; } // already stated by hand
+      if (m.s <= start && mEnd >= aEnd) { skip = true; break; } // fully covered by a manual span
+      if (m.s > start) { end = addDays(m.s, -1); clipped++; }   // trim back before it
+      else { start = addDays(mEnd, 1); clipped++; }             // or start after it
+    }
+    if (skip || (end !== null && end < start)) { dropped++; continue; }
+    ins.run(crypto.randomUUID(), a.assetId, a.projectId,
+      atColombo(start), end ? atColombo(end) : null,
+      `Attached from fuel — first issue ${a.start}${end ? `, closed the day before the next site` : ", still active"}`,
+      a.driverName ?? null, a.billingType ?? null, "FUEL", NOW, NOW, admin.id);
+  }
+  if (manual.length) L(`\n  manual postings preserved     ${manual.length}   (fuel spans clipped around them: ${clipped}, dropped as already covered: ${dropped})`);
 
   db.prepare(`INSERT INTO AuditLog (id,action,entity,entityId,summary,metaJson,createdAt,actorId)
               VALUES (?,?,?,?,?,?,?,?)`).run(

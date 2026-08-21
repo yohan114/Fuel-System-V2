@@ -166,6 +166,11 @@ export async function createAssignmentAction(formData: FormData) {
         note,
         driverName,
         billingType,
+        // A person put this vehicle on this site, so the fuel-driven rebuild
+        // must leave it alone. This is also the only way to bill a machine that
+        // sits on site and never draws diesel — client-fuelled, electric, or
+        // simply idle — now that billing no longer guesses from the site pin.
+        origin: "MANUAL",
         createdById: actor.id,
       },
     });
@@ -218,7 +223,9 @@ export async function endAssignmentAction(assignmentId: string, endDateStr: stri
       return { error: "End date cannot be before the start date" };
     }
 
-    await prisma.assetAssignment.update({ where: { id: assignmentId }, data: { endDate } });
+    // Closing a posting by hand is a decision too: once a person has set its end
+    // date the rebuild must not overwrite it, so the row becomes MANUAL.
+    await prisma.assetAssignment.update({ where: { id: assignmentId }, data: { endDate, origin: "MANUAL" } });
     await syncAssetCurrentProject(assignment.assetId);
 
     await prisma.auditLog.create({
