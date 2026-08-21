@@ -119,6 +119,21 @@ export async function computeRunningDelta(
     }
   }
 
+  // A closing reading below its opening cannot describe one machine's month: a
+  // meter counts up. The charge was already safe — delta stayed 0 and the bill
+  // fell to the guaranteed minimum — but the pair was still returned, so eleven
+  // draft invoices printed things like "opening 2,641,740, closing 265,980" for
+  // a client to read. An unusable meter must report nothing rather than a figure
+  // nobody can defend across a table.
+  //
+  // The cause is almost always a keying slip in the source sheet — a digit added
+  // (SC-10's 2,641,740 for 264,174) or dropped (HCC-07's 33,972 for 383,xxx) —
+  // or a meter that was physically replaced and restarted low. None of those are
+  // measurements of this month's work.
+  if (opening && closing && closing.value < opening.value) {
+    return { opening: null, closing: null, delta: 0 };
+  }
+
   let delta = 0;
   if (opening && closing && closing.value > opening.value) {
     delta = closing.value - opening.value;
@@ -189,6 +204,13 @@ export async function computeWindowDelta(
     if (fallback) {
       opening = fallback;
     }
+  }
+
+  // Same rule as computeRunningDelta: a meter that reads lower at the end of the
+  // window than at the start is not a measurement, so report nothing rather than
+  // a pair a client would query.
+  if (opening && closing && closing.value < opening.value) {
+    return { opening: null, closing: null, delta: 0 };
   }
 
   let delta = 0;

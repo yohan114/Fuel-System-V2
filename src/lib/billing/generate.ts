@@ -589,6 +589,18 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     });
   }
 
+  // The month's opening comes from the first segment and its closing from the
+  // last, so the pair can still end up reversed even when every segment was
+  // individually coherent — a machine whose meter was replaced, or mis-keyed,
+  // partway through the month. One meter cannot end a month below where it
+  // started, so print neither figure rather than a pair the client can pick
+  // apart. The charge is unaffected: each segment's delta was computed and
+  // floored on its own.
+  if (openingMeter != null && closingMeter != null && closingMeter < openingMeter) {
+    openingMeter = null;
+    closingMeter = null;
+  }
+
   // Fuel stays exactly where sumFuelForWindow put it above: on the segment whose
   // DATE WINDOW contains the issue. That is the rule the owner specified — fuel
   // is charged to the site the vehicle was allocated to on the issue date — and

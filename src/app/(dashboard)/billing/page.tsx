@@ -11,9 +11,13 @@ import ReadinessReport from "./components/ReadinessReport";
 import ConsolidatedBillPanel from "./components/ConsolidatedBillPanel";
 import BillsTable from "./components/BillsTable";
 import AgingReport from "./components/AgingReport";
+import VehicleBillPanel, { type VehicleBillView } from "./components/VehicleBillPanel";
+import { matchesVehicle } from "@/lib/vehicle-search";
+import { computeSiteSplit } from "@/lib/billing/site-split";
+import { apportionCents } from "@/lib/billing/site-explode";
 
 interface PageProps {
-  searchParams: Promise<{ month?: string; site?: string; status?: string; check?: string }>;
+  searchParams: Promise<{ month?: string; site?: string; status?: string; check?: string; q?: string }>;
 }
 
 // Fuel-implied units vs the running-chart units, from the bill's snapshots
@@ -96,6 +100,91 @@ export default async function BillingPage(props: PageProps) {
   const [y, m] = periodKey.split("-").map(Number);
   const monthLabel = new Date(y, (m || 1) - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
 
+  // ── single-vehicle view ────────────────────────────────────────────────────
+  // When a search narrows the month to exactly one vehicle, show what that bill
+  // costs each site. The split needs the bill's line items, which the list query
+  // deliberately does not load — fetching them for two hundred bills to render a
+  // table that shows none of them would be wasteful. So it is loaded only here,
+  // for the one bill in question.
+  const search = (searchParams.q || "").trim();
+  const keepFilters = (q: string) => {
+    const p = new URLSearchParams();
+    p.set("month", periodKey);
+    if (siteFilter !== "all") p.set("site", siteFilter);
+    if (statusFilter !== "all") p.set("status", statusFilter);
+    if (checkFilter) p.set("check", "clarify");
+    if (q) p.set("q", q);
+    return `/billing?${p.toString()}`;
+  };
+
+  let vehicleView: VehicleBillView | null = null;
+  if (search) {
+    const hits = bills.filter((b) =>
+      matchesVehicle({ code: b.assetCode, regNo: b.assetRegNo, label: b.assetLabel }, search)
+    );
+    if (hits.length === 1) {
+      const hit = hits[0];
+      const [full, others] = await Promise.all([
+        prisma.bill.findUnique({ where: { id: hit.id }, include: { lineItems: true } }),
+        prisma.bill.findMany({
+          where: { assetId: hit.assetId },
+          select: { periodKey: true, year: true, month: true, grandTotalCents: true },
+          orderBy: { periodKey: "asc" },
+        }),
+      ]);
+      if (full) {
+        const split = computeSiteSplit(full.lineItems, full.minimumUnits);
+        // Tax follows the value it was charged on, and the residual goes to the
+        // largest share, so the site rows add back to the grand total exactly.
+        const payable = split
+          ? apportionCents(full.grandTotalCents, split.rows.map((r) => r.totalCents))
+          : [];
+        vehicleView = {
+          billId: full.id,
+          assetCode: full.assetCode,
+          assetRegNo: full.assetRegNo,
+          assetLabel: full.assetLabel,
+          projectName: full.projectName,
+          status: full.status,
+          billingMode: full.billingMode,
+          rateBasis: full.rateBasis,
+          unit: full.billingMode === "perkm" ? "km" : full.billingMode === "perday" ? "days" : "hr",
+          billableUnits: full.billableUnits,
+          minimumUnits: full.minimumUnits,
+          rentalAmountCents: full.rentalAmountCents,
+          fuelCostCents: full.fuelCostCents,
+          fuelLitres: full.fuelLitres || 0,
+          subtotalCents: full.subtotalCents,
+          ssclCents: full.ssclCents,
+          vatCents: full.vatCents,
+          grandTotalCents: full.grandTotalCents,
+          monthLabel,
+          totalDays: split?.totalDays ?? 0,
+          siteCosts:
+            split && split.rows.length > 1
+              ? split.rows.map((r, i) => ({
+                  projectKey: r.projectKey,
+                  projectName: r.projectName,
+                  days: r.days,
+                  billableUnits: r.billableUnits,
+                  rentalCents: r.rentalCents,
+                  fuelCents: r.fuelCents,
+                  totalCents: r.totalCents,
+                  payableCents: payable[i],
+                }))
+              : null,
+          months: others.map((o) => ({
+            periodKey: o.periodKey,
+            label: new Date(o.year, o.month - 1, 1).toLocaleString("en-US", { month: "short", year: "2-digit" }),
+            grandTotalCents: o.grandTotalCents,
+            isCurrent: o.periodKey === periodKey,
+            href: `/billing?month=${o.periodKey}&q=${encodeURIComponent(search)}`,
+          })),
+        };
+      }
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -113,6 +202,8 @@ export default async function BillingPage(props: PageProps) {
 
       {/* Filters */}
       <form method="get" className="bg-[#121420] border border-white/5 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
+        {/* Changing the month must not throw away the vehicle you were looking at. */}
+        {search && <input type="hidden" name="q" value={search} />}
         <div>
           <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Billing Month</label>
           <input
@@ -178,7 +269,7 @@ export default async function BillingPage(props: PageProps) {
           <div className="text-lg font-bold text-white mt-1">{bills.length}</div>
         </div>
         <Link
-          href={`/billing?month=${periodKey}${siteFilter !== "all" ? `&site=${siteFilter}` : ""}&check=clarify`}
+          href={`/billing?month=${periodKey}${siteFilter !== "all" ? `&site=${siteFilter}` : ""}&check=clarify${search ? `&q=${encodeURIComponent(search)}` : ""}`}
           className={`bg-[#121420] border p-4 rounded-2xl transition-colors ${checkFilter ? "border-amber-500/40" : "border-white/5 hover:border-amber-500/30"}`}
           title="Fuel-implied hours/km differ from the running chart by 20% or more — clarify these vehicles with the site"
         >
@@ -213,6 +304,9 @@ export default async function BillingPage(props: PageProps) {
         />
       )}
 
+      {/* One vehicle, and what it costs each site it worked */}
+      {vehicleView && <VehicleBillPanel v={vehicleView} />}
+
       {/* Bills table */}
       {bills.length === 0 ? (
         <div className="text-center py-16 text-sm text-gray-500 bg-[#121420] border border-white/5 rounded-2xl">
@@ -221,11 +315,14 @@ export default async function BillingPage(props: PageProps) {
       ) : (
         <BillsTable
           isAdmin={isAdmin}
+          initialSearch={search}
+          searchBaseHref={keepFilters("")}
           bills={bills.map((b) => {
             const v = meterVsFuelVariance(b);
             return {
               id: b.id,
               assetCode: b.assetCode,
+              assetRegNo: b.assetRegNo,
               assetLabel: b.assetLabel,
               projectName: b.projectName,
               billingMode: b.billingMode,
