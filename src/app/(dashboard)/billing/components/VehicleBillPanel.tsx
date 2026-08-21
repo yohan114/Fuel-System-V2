@@ -45,6 +45,8 @@ export interface VehicleBillView {
   unit: string;
   billableUnits: number;
   minimumUnits: number;
+  /** The rate this bill was priced at, per hour/km/day. */
+  rateCents: number;
   rentalAmountCents: number;
   fuelCostCents: number;
   fuelLitres: number;
@@ -103,9 +105,10 @@ export default function VehicleBillPanel({ v }: { v: VehicleBillView }) {
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-white/5 border-b border-white/5">
+      <div className="grid grid-cols-2 sm:grid-cols-6 divide-x divide-white/5 border-b border-white/5">
         {[
           { label: `Billed (${v.unit})`, value: num(v.billableUnits), note: atMinimum ? `at the ${num(v.minimumUnits, 0)} minimum` : "above the minimum" },
+          { label: `Unit rate / ${v.unit}`, value: v.rateCents > 0 ? rs(v.rateCents) : "—", note: v.rateCents > 0 ? basisLabel : "no rate card" },
           { label: "Rental", value: rs(v.rentalAmountCents), note: null },
           { label: "Fuel", value: v.fuelCostCents > 0 ? rs(v.fuelCostCents) : "—", note: v.fuelLitres > 0 ? `${num(v.fuelLitres, 0)} L` : "not charged" },
           { label: "SSCL + VAT", value: rs(v.ssclCents + v.vatCents), note: null },

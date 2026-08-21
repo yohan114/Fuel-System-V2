@@ -255,6 +255,10 @@ export default async function BillDetailPage(props: PageProps) {
           <div>
             <p className="text-[10px] text-gray-500 uppercase tracking-wider">Vehicle</p>
             <p className="text-sm font-bold text-white mt-1">{bill.assetCode}</p>
+            {/* Labelled, so it is shown even when it matches the E&C code — for a
+                good part of the fleet the code IS the plate, and hiding it would
+                imply the registration is unknown. */}
+            <p className="text-xs text-gray-300">Reg No: {bill.assetRegNo || "—"}</p>
             <p className="text-xs text-gray-500">{bill.assetLabel}</p>
             {bill.driverName && <p className="text-xs text-gray-500 mt-0.5">Driver: <span className="text-gray-300">{bill.driverName}</span></p>}
           </div>

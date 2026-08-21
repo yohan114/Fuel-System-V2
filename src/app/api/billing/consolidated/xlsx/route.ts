@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
 
     const header = [
       "E&C No", "Vehicle", "Reg No", "Driver", "Mode", "Basis", "Days on Site",
-      "Fuel (L)", "Actual Meter", "Billable Units",
+      "Fuel (L)", "Actual Meter", "Billable Units", "Unit Rate (LKR)",
       "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)",
       "SSCL (LKR)", "VAT (LKR)", "Grand Total (LKR)", "Status", "Invoice No",
       "Recommended (fuel)",
@@ -93,6 +93,7 @@ export async function GET(request: NextRequest) {
           round1(b.fuelLitres || 0),
           fuelOnly ? "" : (b.actualMeterUnits != null ? round1(b.actualMeterUnits) : ""),
           fuelOnly ? "" : round1(b.billableUnits),
+          fuelOnly || !b.rateCents ? "" : lkr(b.rateCents),
           lkr(b.rentalAmountCents), lkr(b.fuelCostCents), lkr(b.subtotalCents),
           lkr(b.ssclCents), lkr(b.vatCents), lkr(b.grandTotalCents), b.status, b.invoiceNumber || "",
           b.derivedStandardUnits != null ? round1(b.derivedStandardUnits) : "",
@@ -100,14 +101,14 @@ export async function GET(request: NextRequest) {
       }
       sheet1.push([
         "SITE TOTAL", "", "", "", "", "", round1(g.bills.reduce((n, b: any) => n + (b.assignedDays || 0), 0)),
-        round1(st.litres), "", "",
+        round1(st.litres), "", "", "",
         lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "", "",
       ]);
       sheet1.push([]);
     }
     sheet1.push([
       "GRAND TOTAL (ALL SITES)", "", "", "", "", "", round1(bills.reduce((n, b: any) => n + (b.assignedDays || 0), 0)),
-      round1(tot.litres), "", "",
+      round1(tot.litres), "", "", "",
       lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "", "",
     ]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet1), "By Site");

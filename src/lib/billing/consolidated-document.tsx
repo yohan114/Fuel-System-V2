@@ -66,15 +66,20 @@ const styles = StyleSheet.create({
   tRow: { flexDirection: "row", borderBottomWidth: 0.75, borderBottomColor: LINE, paddingVertical: 4.5, paddingHorizontal: 6, alignItems: "center" },
   tRowAlt: { backgroundColor: PANEL },
 
-  cCode:   { width: "9%", flexDirection: "row", alignItems: "center", gap: 3 },
-  cLabel:  { width: "16%" },
-  cMode:   { width: "9%" },
-  cFuelL:  { width: "9%", textAlign: "right" },
-  cActual: { width: "10%", textAlign: "right" },
-  cBill:   { width: "10%", textAlign: "right" },
-  cRental: { width: "12%", textAlign: "right" },
-  cFuelRs: { width: "11%", textAlign: "right" },
-  cGrand:  { width: "14%", textAlign: "right" },
+  // Widths total 100. Reg No and Rate were added at the owner's request: a site
+  // clerk reconciles against the plate painted on the machine, not the E&C code,
+  // and a client asked which rate a line was charged at.
+  cCode:   { width: "8%", flexDirection: "row", alignItems: "center", gap: 3 },
+  cReg:    { width: "9%" },
+  cLabel:  { width: "13%" },
+  cMode:   { width: "7%" },
+  cFuelL:  { width: "7%", textAlign: "right" },
+  cActual: { width: "8%", textAlign: "right" },
+  cBill:   { width: "8%", textAlign: "right" },
+  cRate:   { width: "9%", textAlign: "right" },
+  cRental: { width: "11%", textAlign: "right" },
+  cFuelRs: { width: "9%", textAlign: "right" },
+  cGrand:  { width: "11%", textAlign: "right" },
 
   statusDot: { width: 5, height: 5, borderRadius: 2.5 },
   tCell: { fontSize: 7, color: SLATE },
@@ -87,7 +92,7 @@ const styles = StyleSheet.create({
   fuelFlag: { color: AMBER_DEEP, fontFamily: "Helvetica-Bold" },
 
   siteSub: { flexDirection: "row", borderTopWidth: 1.25, borderTopColor: NAVY_SOFT, paddingVertical: 5, paddingHorizontal: 6, backgroundColor: PANEL, borderBottomLeftRadius: 5, borderBottomRightRadius: 5 },
-  siteSubLabelCell: { width: "34%", flexDirection: "row", alignItems: "center", gap: 4 },
+  siteSubLabelCell: { width: "37%", flexDirection: "row", alignItems: "center", gap: 4 },
   siteSubLabel: { fontSize: 7, fontFamily: "Helvetica-Bold", color: MUTE, textTransform: "uppercase", letterSpacing: 0.3 },
 
   totalsOuter: { flexDirection: "row", justifyContent: "flex-end", marginTop: 14 },
@@ -163,7 +168,12 @@ function isFuelOnly(b: any) {
   return b.rentalAmountCents === 0 && b.fuelCostCents > 0;
 }
 
-export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements, stmtTotals }: { bills: any[]; periodKey: string; generatedAt: string; statements: SiteStatement[]; stmtTotals: StatementTotals }) {
+// `statements` and `stmtTotals` are still accepted so every existing caller keeps
+// compiling, but the Statement of Account section and the explanatory footnotes
+// were removed from this document at the owner's request — the consolidated bill
+// is what goes to a client, and the receivables position is his business, not
+// theirs. The statement is still produced in the XLSX export.
+export function ConsolidatedDocument({ bills, periodKey, generatedAt }: { bills: any[]; periodKey: string; generatedAt: string; statements?: SiteStatement[]; stmtTotals?: StatementTotals }) {
   const monthLabel = (() => {
     const [y, mo] = periodKey.split("-").map(Number);
     return new Date(y, mo - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
@@ -179,7 +189,6 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
 
   // A split vehicle contributes one row per site; count the machines behind them.
   const vehicleCount = new Set(bills.map((b) => b.sourceBillId ?? b.id)).size;
-  const splitVehicleCount = new Set(bills.filter((b) => b.isSitePortion).map((b) => b.sourceBillId)).size;
 
   const total = sumBills(bills);
   const totalLitres = total.litres;
@@ -281,11 +290,13 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
                 <View style={styles.table}>
                   <View style={styles.tHead}>
                     <Text style={[styles.tHeadCell, styles.cCode]}>E&C No</Text>
+                    <Text style={[styles.tHeadCell, styles.cReg]}>Reg No</Text>
                     <Text style={[styles.tHeadCell, styles.cLabel]}>Vehicle</Text>
                     <Text style={[styles.tHeadCell, styles.cMode]}>Mode</Text>
                     <Text style={[styles.tHeadCell, styles.cFuelL]}>Fuel (L)</Text>
                     <Text style={[styles.tHeadCell, styles.cActual]}>Actual</Text>
                     <Text style={[styles.tHeadCell, styles.cBill]}>Billed</Text>
+                    <Text style={[styles.tHeadCell, styles.cRate]}>Rate</Text>
                     <Text style={[styles.tHeadCell, styles.cRental]}>Rental (Rs)</Text>
                     <Text style={[styles.tHeadCell, styles.cFuelRs]}>Fuel (Rs)</Text>
                     <Text style={[styles.tHeadCell, styles.cGrand]}>Grand (Rs)</Text>
@@ -302,6 +313,12 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
                           <View style={[styles.statusDot, { backgroundColor: STATUS_COLORS[b.status] || MUTE }]} />
                           <Text style={styles.tCellCode}>{b.assetCode}</Text>
                         </View>
+                        {/* Shown even when it equals the E&C code: for 218 machines
+                            the code IS the plate (LO-7855, 57-3062, PD-7049), so
+                            blanking it would tell the reader the plate is unknown
+                            when it is right there. Under a labelled column the
+                            repetition is informative; only inline does it read wrong. */}
+                        <Text style={[styles.tCell, styles.cReg]}>{b.assetRegNo || "—"}</Text>
                         <View style={styles.cLabel}>
                           <Text style={styles.tCell}>{b.assetLabel || "—"}</Text>
                           {b.driverName ? <Text style={styles.tCellMute}>Driver: {b.driverName}</Text> : null}
@@ -313,6 +330,9 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
                         </Text>
                         <Text style={styles.cBill}>
                           {fo ? <Text style={styles.tCellMute}>—</Text> : <><Text style={styles.billStrong}>{num(b.billableUnits, 0)}</Text><Text style={styles.unitTag}> {unit}</Text></>}
+                        </Text>
+                        <Text style={[fo ? styles.tCellMute : styles.tCellNum, styles.cRate]}>
+                          {fo || !b.rateCents ? "—" : m(b.rateCents)}
                         </Text>
                         <Text style={[fo ? styles.tCellMute : styles.tCellNum, styles.cRental]}>{fo ? "—" : m(b.rentalAmountCents)}</Text>
                         <Text style={[b.fuelCostCents > 0 ? styles.tCellNum : styles.tCellMute, styles.cFuelRs]}>{b.fuelCostCents > 0 ? m(b.fuelCostCents) : "—"}</Text>
@@ -328,6 +348,7 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
                     <Text style={[styles.tCellNum, styles.cFuelL]}>{num(st.litres, 0)}</Text>
                     <Text style={[styles.tCellMute, styles.cActual]}></Text>
                     <Text style={[styles.tCellMute, styles.cBill]}></Text>
+                    <Text style={[styles.tCellMute, styles.cRate]}></Text>
                     <Text style={[styles.tCellGrand, styles.cRental]}>{m(st.rental)}</Text>
                     <Text style={[styles.tCellGrand, styles.cFuelRs]}>{m(st.fuel)}</Text>
                     <Text style={[styles.tCellGrand, styles.cGrand, { color: AMBER_DEEP }]}>{m(st.grand)}</Text>
@@ -362,49 +383,6 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
             </View>
           </View>
 
-          <Text style={styles.note}>
-            Fuel (L) = fuel issued for the month. Actual = recorded meter movement (hrs/km). Billed = units actually charged — the greater of
-            the recorded/fuel-derived usage and the availability-prorated guaranteed minimum. A 0 actual with a billed figure means the vehicle
-            had no meter reading and was billed the minimum. Fuel-only rows are privately-owned vehicles E&amp;C fuels but does not rent.
-          </Text>
-
-          {splitVehicleCount > 0 && (
-            <Text style={styles.note}>
-              {splitVehicleCount} vehicle(s) worked more than one site this month. Each appears under every site it worked, charged only for
-              the days it was there — rental, fuel and the tax on them. The site totals therefore add up to the grand total exactly, and no
-              site is charged for days another site had the machine.
-            </Text>
-          )}
-
-          {statements.length > 0 && (
-            <View wrap={false}>
-              <Text style={styles.stmtHeading}>Statement of Account</Text>
-              <Text style={styles.stmtSub}>Invoiced this period, less issued credits and payments received, equals the amount outstanding.</Text>
-              <View style={styles.stmtHead}>
-                <Text style={[styles.stmtHeadCell, styles.sSite]}>Site</Text>
-                <Text style={[styles.stmtHeadCell, styles.sNum]}>Invoiced</Text>
-                <Text style={[styles.stmtHeadCell, styles.sNum]}>Credits</Text>
-                <Text style={[styles.stmtHeadCell, styles.sNum]}>Paid</Text>
-                <Text style={[styles.stmtHeadCell, styles.sNum]}>Outstanding</Text>
-              </View>
-              {statements.map((s, i) => (
-                <View key={s.projectKey} style={[styles.stmtRow, i % 2 === 1 ? styles.tRowAlt : {}]}>
-                  <Text style={[styles.stmtCell, styles.sSite, styles.stmtCellBold]}>{s.projectName}</Text>
-                  <Text style={[styles.stmtCell, styles.sNum]}>{rs(s.invoicedCents)}</Text>
-                  <Text style={[styles.stmtCell, styles.sNum]}>{s.creditedCents > 0 ? "−" + rs(s.creditedCents) : "—"}</Text>
-                  <Text style={[styles.stmtCell, styles.sNum]}>{s.paidCents > 0 ? "−" + rs(s.paidCents) : "—"}</Text>
-                  <Text style={[styles.stmtCell, styles.sNum, styles.stmtCellBold]}>{rs(s.outstandingCents)}</Text>
-                </View>
-              ))}
-              <View style={styles.stmtTotRow}>
-                <Text style={[styles.stmtTotCell, styles.sSite]}>ALL SITES</Text>
-                <Text style={[styles.stmtTotCell, styles.sNum]}>{rs(stmtTotals.invoicedCents)}</Text>
-                <Text style={[styles.stmtTotCell, styles.sNum]}>{stmtTotals.creditedCents > 0 ? "−" + rs(stmtTotals.creditedCents) : "—"}</Text>
-                <Text style={[styles.stmtTotCell, styles.sNum]}>{stmtTotals.paidCents > 0 ? "−" + rs(stmtTotals.paidCents) : "—"}</Text>
-                <Text style={[styles.stmtTotCell, styles.sNum, { color: AMBER }]}>{rs(stmtTotals.outstandingCents)}</Text>
-              </View>
-            </View>
-          )}
         </View>
 
         <View style={styles.footer} fixed>

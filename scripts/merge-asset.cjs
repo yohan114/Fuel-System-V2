@@ -192,7 +192,25 @@ const out = db.transaction(() => {
     for (const a of assigns) if (a.id !== keep.id) db.prepare("DELETE FROM AssetAssignment WHERE id = ?").run(a.id);
     if (keep.assetId !== keeper.id) db.prepare("UPDATE AssetAssignment SET assetId = ? WHERE id = ?").run(keeper.id, keep.id);
   } else {
+    // Different sites: the machine moved. Re-pointing both records' attachments
+    // as they stand would leave two open-ended spans and put one machine at two
+    // sites at once. Chain them instead — each site holds the vehicle until the
+    // day before it turns up at the next, which is the same rule the fuel-driven
+    // attachment uses. The last one stays open.
     db.prepare("UPDATE AssetAssignment SET assetId = ? WHERE assetId = ?").run(keeper.id, loser.id);
+    const chain = db
+      .prepare(
+        `SELECT id, ${cd("startDate")} s, CASE WHEN endDate IS NULL THEN NULL ELSE ${cd("endDate")} END e
+         FROM AssetAssignment WHERE assetId = ? ORDER BY startDate, createdAt`
+      )
+      .all(keeper.id);
+    for (let i = 0; i < chain.length - 1; i++) {
+      const dayBefore = new Date(Date.parse(`${chain[i + 1].s}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+      if (dayBefore < chain[i].s) continue; // two sites starting the same day — leave for a human
+      if (chain[i].e === null || chain[i].e > dayBefore) {
+        db.prepare("UPDATE AssetAssignment SET endDate = ?, updatedAt = ? WHERE id = ?").run(atColombo(dayBefore), NOW, chain[i].id);
+      }
+    }
   }
 
   // A rate card belongs to the surviving record; the loser's would duplicate it.

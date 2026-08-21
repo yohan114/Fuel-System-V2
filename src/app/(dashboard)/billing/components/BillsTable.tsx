@@ -28,6 +28,8 @@ export interface BillRow {
   billingMode: string;
   rateBasis: string;
   billableUnits: number;
+  /** The rate the bill was priced at, per hour/km/day. */
+  rateCents: number;
   rentalAmountCents: number;
   fuelCostCents: number;
   grandTotalCents: number;
@@ -246,6 +248,7 @@ export default function BillsTable({
               <th className="px-4 py-3">Site</th>
               <th className="px-4 py-3">Mode / Basis</th>
               <th className="px-4 py-3 text-right">Billable</th>
+              <th className="px-4 py-3 text-right">Unit rate</th>
               <th className="px-4 py-3 text-right">Rental</th>
               <th className="px-4 py-3 text-right">Fuel</th>
               <th className="px-4 py-3 text-right">Grand Total</th>
@@ -285,6 +288,7 @@ export default function BillsTable({
                 <td className="px-4 py-3 text-right text-gray-300">
                   {b.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}
                 </td>
+                <td className="px-4 py-3 text-right text-gray-400">{b.rateCents > 0 ? rs(b.rateCents) : "—"}</td>
                 <td className="px-4 py-3 text-right text-gray-300">{rs(b.rentalAmountCents)}</td>
                 <td className="px-4 py-3 text-right text-gray-300">{b.fuelCostCents > 0 ? rs(b.fuelCostCents) : "—"}</td>
                 <td className="px-4 py-3 text-right font-bold text-white">{rs(b.grandTotalCents)}</td>
