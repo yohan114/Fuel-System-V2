@@ -1,7 +1,8 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, renderToBuffer, Svg, Path, Line } from "@react-pdf/renderer";
 import { formatVariancePct } from "../reports/recommended";
-import { effectiveMinimumUnits, assignedDaysFromLines } from "./site-split";
+import { computeSiteSplit, effectiveMinimumUnits, assignedDaysFromLines } from "./site-split";
+import { apportionCents } from "./site-explode";
 
 const NAVY = "#1e3a5f";
 const AMBER = "#f59e0b";
@@ -70,6 +71,19 @@ const styles = StyleSheet.create({
   tCellBold: { fontFamily: "Helvetica-Bold", color: NAVY },
   tCellFuel: { color: "#b45309" },
   tCellAdj: { color: "#b91c1c" },
+
+  // Site split — a machine that moved during the month is charged to each site
+  // for the days it was there. These columns must add back to the invoice total.
+  ssNote: { fontSize: 7, color: GRAY, marginBottom: 4 },
+  ssCellText: { fontSize: 7.5, color: "#334155" },
+  ssSite:  { width: "26%" },
+  ssDays:  { width: "8%",  textAlign: "right" },
+  ssUnits: { width: "11%", textAlign: "right" },
+  ssRent:  { width: "14%", textAlign: "right" },
+  ssFuel:  { width: "14%", textAlign: "right" },
+  ssSub:   { width: "13%", textAlign: "right" },
+  ssPay:   { width: "14%", textAlign: "right" },
+  ssTotalRow: { backgroundColor: LIGHT, borderBottomWidth: 0, borderTopWidth: 1, borderTopColor: NAVY },
 
   totalsOuter: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginTop: 10 },
   totalsBox: { width: "44%", borderWidth: 1, borderColor: GRAY_LIGHT, borderRadius: 4, overflow: "hidden" },
@@ -144,6 +158,17 @@ export function InvoiceDocument({ bill }: { bill: any }) {
   const daysOnSite = assignedDaysFromLines(bill.lineItems || []);
   const effMinimumUnits = effectiveMinimumUnits(bill.lineItems || [], bill.minimumUnits, daysInBillMonth);
   const isProrated = daysOnSite > 0 && daysOnSite < daysInBillMonth;
+
+  // Where this invoice's value belongs. A machine that moved between sites is
+  // still one invoice, but each site owes only for the days it had the machine —
+  // so the charge, and the tax on it, are split by the site's share of the
+  // value. The rounding residual goes to the largest share, which keeps the
+  // split adding back to the grand total exactly.
+  const siteSplit = computeSiteSplit(bill.lineItems || [], bill.minimumUnits);
+  const splitRows = siteSplit && siteSplit.rows.length > 1 ? siteSplit.rows : null;
+  const splitPayable = splitRows
+    ? apportionCents(bill.grandTotalCents, splitRows.map((r) => r.totalCents))
+    : [];
 
   // Hire type + whether fuel is billed. A Dry hire ("d") charges the machine +
   // driver only (fuel excluded); Wet/Fully-Wet ("w"/"fw") add the month's fuel.
@@ -328,6 +353,61 @@ export function InvoiceDocument({ bill }: { bill: any }) {
               );
             })}
           </View>
+
+          {splitRows && (
+            <>
+              <Text style={styles.secHeading}>Site Split — where this bill belongs</Text>
+              <Text style={styles.ssNote}>
+                This machine worked {splitRows.length} sites over {siteSplit!.totalDays} allocated days. Each site
+                is charged for the days it had the machine, and the tax follows the charge. The amounts payable
+                below add up to the invoice total.
+              </Text>
+              <View style={styles.table}>
+                <View style={styles.tHead}>
+                  <Text style={[styles.tHeadCell, styles.ssSite]}>Site</Text>
+                  <Text style={[styles.tHeadCell, styles.ssDays]}>Days</Text>
+                  <Text style={[styles.tHeadCell, styles.ssUnits]}>Billed ({unit})</Text>
+                  <Text style={[styles.tHeadCell, styles.ssRent]}>Rental</Text>
+                  <Text style={[styles.tHeadCell, styles.ssFuel]}>Fuel</Text>
+                  <Text style={[styles.tHeadCell, styles.ssSub]}>Subtotal</Text>
+                  <Text style={[styles.tHeadCell, styles.ssPay]}>Payable</Text>
+                </View>
+                {splitRows.map((r, i) => (
+                  <View key={r.projectKey} style={[styles.tRow, i % 2 === 1 ? styles.tRowAlt : {}]}>
+                    <Text style={[styles.ssCellText, styles.ssSite, styles.tCellBold]}>{r.projectName}</Text>
+                    <Text style={[styles.ssCellText, styles.ssDays]}>{r.days}</Text>
+                    <Text style={[styles.ssCellText, styles.ssUnits]}>
+                      {r.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}
+                      {r.atMinimum ? " *" : ""}
+                    </Text>
+                    <Text style={[styles.ssCellText, styles.ssRent]}>{rs(r.rentalCents)}</Text>
+                    <Text style={[styles.ssCellText, styles.ssFuel, styles.tCellFuel]}>
+                      {r.fuelCents > 0 ? rs(r.fuelCents) : "—"}
+                    </Text>
+                    <Text style={[styles.ssCellText, styles.ssSub]}>{rs(r.totalCents)}</Text>
+                    <Text style={[styles.ssCellText, styles.ssPay, styles.tCellBold]}>{rs(splitPayable[i])}</Text>
+                  </View>
+                ))}
+                <View style={[styles.tRow, styles.ssTotalRow]}>
+                  <Text style={[styles.ssCellText, styles.ssSite, styles.tCellBold]}>ALL SITES</Text>
+                  <Text style={[styles.ssCellText, styles.ssDays, styles.tCellBold]}>{siteSplit!.totalDays}</Text>
+                  <Text style={[styles.ssCellText, styles.ssUnits, styles.tCellBold]}>
+                    {bill.billableUnits.toLocaleString("en-LK", { maximumFractionDigits: 1 })}
+                  </Text>
+                  <Text style={[styles.ssCellText, styles.ssRent, styles.tCellBold]}>{rs(bill.rentalAmountCents)}</Text>
+                  <Text style={[styles.ssCellText, styles.ssFuel, styles.tCellBold]}>{rs(bill.fuelCostCents)}</Text>
+                  <Text style={[styles.ssCellText, styles.ssSub, styles.tCellBold]}>{rs(bill.subtotalCents)}</Text>
+                  <Text style={[styles.ssCellText, styles.ssPay, styles.tCellBold]}>{rs(bill.grandTotalCents)}</Text>
+                </View>
+              </View>
+              {splitRows.some((r) => r.atMinimum) && (
+                <Text style={styles.ssNote}>
+                  * billed at that site&apos;s share of the {siteSplit!.minimumUnits.toLocaleString("en-LK")} {unit} guaranteed
+                  minimum, because the machine ran less than the guarantee while it was there.
+                </Text>
+              )}
+            </>
+          )}
 
           <View style={styles.totalsOuter}>
             <View style={styles.vatBox}>

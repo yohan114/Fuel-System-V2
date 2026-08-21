@@ -1,10 +1,9 @@
 import React from "react";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { prisma } from "@/lib/db";
 import { renderToStream } from "@react-pdf/renderer";
 import { ConsolidatedDocument } from "@/lib/billing/consolidated-document";
-import { buildSiteStatements, totalStatement } from "@/lib/billing/statement";
+import { loadConsolidatedBilling } from "@/lib/billing/consolidated-data";
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -23,33 +22,19 @@ export async function GET(request: NextRequest) {
   const periodKey = `${year}-${String(month).padStart(2, "0")}`;
   const siteCode = searchParams.get("site")?.trim() || null; // optional: filter to one site (project code)
 
-  const where: any = { year, month };
-  if (siteCode) where.projectCode = siteCode;
-
-  const bills = await prisma.bill.findMany({
-    where,
-    orderBy: [{ projectName: "asc" }, { grandTotalCents: "desc" }],
-  });
+  // Bills arrive already distributed to the sites that earned them: a vehicle
+  // that worked three sites this month appears under all three, for its portion
+  // at each, instead of billing its last site for the whole month.
+  const { bills, statements, stmtTotals } = await loadConsolidatedBilling(year, month, siteCode);
 
   if (bills.length === 0) {
     return new NextResponse(`No bills found for ${periodKey}${siteCode ? ` at site ${siteCode}` : ""}`, { status: 404 });
   }
 
-  // Statement of account: reconcile invoices with credit notes + payments.
-  const billIds = bills.map((b) => b.id);
-  const [creditRows, paymentRows] = await Promise.all([
-    prisma.creditNote.findMany({ where: { billId: { in: billIds } } }),
-    prisma.payment.findMany({ where: { billId: { in: billIds } } }),
-  ]);
-  const statements = buildSiteStatements(
-    bills.map((b) => ({
-      billId: b.id, projectId: b.projectId, projectName: b.projectName, projectCode: b.projectCode,
-      assetCode: b.assetCode, invoiceNumber: b.invoiceNumber, status: b.status, grandTotalCents: b.grandTotalCents,
-    })),
-    creditRows.map((c) => ({ billId: c.billId, number: c.number, reason: c.reason, amountCents: c.amountCents, status: c.status })),
-    paymentRows.map((p) => ({ billId: p.billId, amountCents: p.amountCents, paidDate: p.paidDate, method: p.method, reference: p.reference })),
+  bills.sort(
+    (a, b) =>
+      (a.projectName || "").localeCompare(b.projectName || "") || b.grandTotalCents - a.grandTotalCents
   );
-  const stmtTotals = totalStatement(statements);
 
   const generatedAt = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   const fileSuffix = siteCode ? `${siteCode}_${periodKey}` : periodKey;

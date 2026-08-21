@@ -169,8 +169,21 @@ export async function generateBillForAsset(
   // sensible defaults from the asset. These do not depend on the site, so they
   // are resolved up front for both the per-site (assignment-driven) and the
   // legacy single-site billing paths.
-  const billingMode: BillingMode = (existing?.billingMode as BillingMode) ||
-    defaultModeForAsset(asset.meterType, asset.rentalRate?.equipType ?? "");
+  // How a machine is charged follows from the machine itself — an hour meter
+  // bills by the hour, an odometer by the kilometre, portable plant by the day.
+  //
+  // This used to be frozen at whatever the bill was first created with, exactly
+  // like the guaranteed minimum was. The effect was that correcting a machine's
+  // meter type never reached a bill that already existed: 96 machines were sitting
+  // on odometers with rate cards that only priced hours, so billing asked for a
+  // per-km rate, found none, and charged Rs 0 — and flipping them to hour meters
+  // changed nothing, because their drafts kept asking for kilometres. Reading it
+  // fresh is what lets a meter-type correction actually take effect. A bill that
+  // has left DRAFT is never regenerated, so an issued invoice cannot shift.
+  const billingMode: BillingMode = defaultModeForAsset(
+    asset.meterType,
+    asset.rentalRate?.equipType ?? ""
+  );
 
   // PER-SITE PATH: when the vehicle has saved assignments overlapping this month,
   // split the month into one segment per site and bill each site for its slice.
@@ -190,7 +203,18 @@ export async function generateBillForAsset(
   // A per-asset minimum working-hours floor (set on hired machines) overrides
   // the global billing.minHours for that machine's hourly bills.
   const assetMinHours = billingMode === "hourly" && asset.minBillHours != null && asset.minBillHours > 0 ? asset.minBillHours : null;
-  const minimumUnits = existing ? existing.minimumUnits : (assetMinHours ?? minimumForMode(cfg, billingMode));
+  // The guaranteed minimum is always taken from the contract terms — the
+  // machine's own override if it has one, else the company standard (120 running
+  // hours, 3,000 running kilometres, 26 day-hire days).
+  //
+  // It used to be frozen at whatever the bill was first created with, which meant
+  // changing the standard did nothing to existing months: after the owner
+  // confirmed 3,000 km, 104 August bills quietly kept the old minimum of 0 and
+  // regenerating them changed nothing. Reading it fresh is what makes a change to
+  // the terms reach every month that is still a draft, without anyone editing
+  // bills by hand. A bill that has left DRAFT is never regenerated at all
+  // (see the status gate above), so an issued invoice cannot move under a client.
+  const minimumUnits = assetMinHours ?? minimumForMode(cfg, billingMode);
 
   const pickedRate = asset.rentalRate ? pickRateCents(asset.rentalRate, billingMode, rateBasis) : null;
   const rateCents = pickedRate ?? 0;

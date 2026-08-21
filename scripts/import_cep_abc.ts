@@ -3,7 +3,8 @@
  *
  * For each spreadsheet (January, February, March 2026):
  *   1. Creates/Updates Project CEP-03-ABC (Name: CEP-03 A,B & C Package)
- *   2. Creates/Updates login User "CEP-03 A,B & C Package" with password "CEP-03 A,B & C Package@123"
+ *   2. Creates login User "CEP-03 A,B & C Package" with a randomly generated
+ *      password, printed once on creation. Re-runs never touch credentials.
  *   3. Matches each vehicle to an asset by code or regNo.
  *   4. Re-assigns asset to project CEP-03-ABC.
  *   5. Clears prior daily/running or summary fuel issues, conditions, and meter readings

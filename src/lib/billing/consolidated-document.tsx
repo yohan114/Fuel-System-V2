@@ -163,73 +163,6 @@ function isFuelOnly(b: any) {
   return b.rentalAmountCents === 0 && b.fuelCostCents > 0;
 }
 
-// Split each bill into one "virtual bill" per site it has line items at, so the
-// consolidated document (which groups by projectId) shows a multi-site vehicle
-// under EVERY site it worked at — its rental/fuel portion there — instead of only
-// its header site. Single-site bills pass through unchanged. Tax and grand total
-// are apportioned by each site's share of the bill subtotal, with the rounding
-// residual given to the largest portion, so the exploded portions still sum
-// EXACTLY to the original bill. `codeById` maps projectId → project code so each
-// portion carries the right site code for filtering.
-export function explodeBillsBySite(bills: any[], codeById?: Map<string, string>): any[] {
-  const out: any[] = [];
-  for (const b of bills) {
-    const items = (b.lineItems || []).filter((l: any) => l.kind === "RENTAL" || l.kind === "FUEL");
-    if (items.length === 0) { out.push(b); continue; }
-
-    const bySite = new Map<string, { projectId: string | null; projectName: string | null; rental: number; fuel: number; litres: number; billed: number }>();
-    for (const l of items) {
-      const key = l.projectId || l.projectName || "__none__";
-      if (!bySite.has(key)) bySite.set(key, { projectId: l.projectId ?? null, projectName: l.projectName ?? null, rental: 0, fuel: 0, litres: 0, billed: 0 });
-      const g = bySite.get(key)!;
-      if (l.kind === "RENTAL") { g.rental += l.amountCents; g.billed += l.quantity || 0; }
-      else { g.fuel += l.amountCents; g.litres += l.quantity || 0; }
-    }
-    const portions = [...bySite.values()];
-    if (portions.length === 1) { out.push(b); continue; }
-
-    const billSubtotal = b.subtotalCents || portions.reduce((s, p) => s + p.rental + p.fuel, 0);
-    let accS = 0, accV = 0, accG = 0;
-    const rows = portions.map((p) => {
-      const sub = p.rental + p.fuel;
-      const share = billSubtotal > 0 ? sub / billSubtotal : 1 / portions.length;
-      const sscl = Math.round((b.ssclCents || 0) * share);
-      const vat = Math.round((b.vatCents || 0) * share);
-      const grand = Math.round((b.grandTotalCents || 0) * share);
-      accS += sscl; accV += vat; accG += grand;
-      return { p, sub, sscl, vat, grand };
-    });
-    // residual → largest-subtotal portion, so totals reconcile to the cent
-    let mx = 0;
-    for (let i = 1; i < rows.length; i++) if (rows[i].sub > rows[mx].sub) mx = i;
-    rows[mx].sscl += (b.ssclCents || 0) - accS;
-    rows[mx].vat += (b.vatCents || 0) - accV;
-    rows[mx].grand += (b.grandTotalCents || 0) - accG;
-
-    for (const r of rows) {
-      out.push({
-        ...b,
-        id: `${b.id}__${r.p.projectId || r.p.projectName}`,
-        projectId: r.p.projectId,
-        projectName: r.p.projectName,
-        projectCode: (r.p.projectId && codeById?.get(r.p.projectId)) || b.projectCode,
-        rentalAmountCents: r.p.rental,
-        fuelCostCents: r.p.fuel,
-        fuelLitres: r.p.litres,
-        billableUnits: r.p.billed,
-        actualMeterUnits: 0, // per-site meter movement is not tracked for a split vehicle
-        actualUnits: 0,
-        subtotalCents: r.sub,
-        ssclCents: r.sscl,
-        vatCents: r.vat,
-        grandTotalCents: r.grand,
-        lineItems: undefined,
-      });
-    }
-  }
-  return out;
-}
-
 export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements, stmtTotals }: { bills: any[]; periodKey: string; generatedAt: string; statements: SiteStatement[]; stmtTotals: StatementTotals }) {
   const monthLabel = (() => {
     const [y, mo] = periodKey.split("-").map(Number);
@@ -243,6 +176,10 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
     groups.get(key)!.bills.push(b);
   }
   const siteGroups = [...groups.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  // A split vehicle contributes one row per site; count the machines behind them.
+  const vehicleCount = new Set(bills.map((b) => b.sourceBillId ?? b.id)).size;
+  const splitVehicleCount = new Set(bills.filter((b) => b.isSitePortion).map((b) => b.sourceBillId)).size;
 
   const total = sumBills(bills);
   const totalLitres = total.litres;
@@ -282,7 +219,9 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
           </View>
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Vehicles</Text>
-            <Text style={styles.infoVal}>{bills.length}</Text>
+            {/* Machines, not rows: one that moved between sites is listed under
+                each site it worked, so the row count overstates the fleet. */}
+            <Text style={styles.infoVal}>{vehicleCount}</Text>
           </View>
           <View style={styles.infoItem}>
             <Text style={styles.infoLabel}>Fuel Issued</Text>
@@ -428,6 +367,14 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt, statements
             the recorded/fuel-derived usage and the availability-prorated guaranteed minimum. A 0 actual with a billed figure means the vehicle
             had no meter reading and was billed the minimum. Fuel-only rows are privately-owned vehicles E&amp;C fuels but does not rent.
           </Text>
+
+          {splitVehicleCount > 0 && (
+            <Text style={styles.note}>
+              {splitVehicleCount} vehicle(s) worked more than one site this month. Each appears under every site it worked, charged only for
+              the days it was there — rental, fuel and the tax on them. The site totals therefore add up to the grand total exactly, and no
+              site is charged for days another site had the machine.
+            </Text>
+          )}
 
           {statements.length > 0 && (
             <View wrap={false}>

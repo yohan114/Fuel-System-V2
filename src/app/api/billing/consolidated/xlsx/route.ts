@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { prisma } from "@/lib/db";
-import { buildSiteStatements, totalStatement } from "@/lib/billing/statement";
+import { loadConsolidatedBilling } from "@/lib/billing/consolidated-data";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest) {
@@ -22,33 +21,15 @@ export async function GET(request: NextRequest) {
   const monthLabel = new Date(year, month - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   const siteCode = searchParams.get("site")?.trim() || null;
 
-  const where: any = { year, month };
-  if (siteCode) where.projectCode = siteCode;
-
-  const bills = await prisma.bill.findMany({
-    where,
-    orderBy: [{ projectName: "asc" }, { assetCode: "asc" }],
-  });
+  // Bills arrive already distributed to the sites that earned them — a vehicle
+  // that moved between sites contributes its own portion to each, rather than
+  // the whole month landing on the site it happened to finish at.
+  const { bills, statements, stmtTotals, sourceBillCount, splitBillCount } =
+    await loadConsolidatedBilling(year, month, siteCode);
 
   if (bills.length === 0) {
     return new NextResponse(`No bills found for ${periodKey}${siteCode ? ` at site ${siteCode}` : ""}`, { status: 404 });
   }
-
-  // Statement of account: credit notes + payments booked against these bills.
-  const billIds = bills.map((b) => b.id);
-  const [creditRows, paymentRows] = await Promise.all([
-    prisma.creditNote.findMany({ where: { billId: { in: billIds } } }),
-    prisma.payment.findMany({ where: { billId: { in: billIds } }, orderBy: { paidDate: "asc" } }),
-  ]);
-  const statements = buildSiteStatements(
-    bills.map((b) => ({
-      billId: b.id, projectId: b.projectId, projectName: b.projectName, projectCode: b.projectCode,
-      assetCode: b.assetCode, invoiceNumber: b.invoiceNumber, status: b.status, grandTotalCents: b.grandTotalCents,
-    })),
-    creditRows.map((c) => ({ billId: c.billId, number: c.number, reason: c.reason, amountCents: c.amountCents, status: c.status })),
-    paymentRows.map((p) => ({ billId: p.billId, amountCents: p.amountCents, paidDate: p.paidDate, method: p.method, reference: p.reference })),
-  );
-  const stmtTotals = totalStatement(statements);
 
   const lkr = (cents: number) => cents / 100;
   const sumBills = (list: typeof bills) =>
@@ -79,7 +60,7 @@ export async function GET(request: NextRequest) {
     const wb = XLSX.utils.book_new();
 
     const header = [
-      "E&C No", "Vehicle", "Reg No", "Driver", "Mode", "Basis",
+      "E&C No", "Vehicle", "Reg No", "Driver", "Mode", "Basis", "Days on Site",
       "Fuel (L)", "Actual Meter", "Billable Units",
       "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)",
       "SSCL (LKR)", "VAT (LKR)", "Grand Total (LKR)", "Status", "Invoice No",
@@ -108,6 +89,7 @@ export async function GET(request: NextRequest) {
         sheet1.push([
           b.assetCode, b.assetLabel || "", b.assetRegNo || "", b.driverName || "",
           fuelOnly ? "Fuel only" : b.billingMode, fuelOnly ? "Fuel only" : basisWithFuel(b.rateBasis),
+          b.assignedDays ? round1(b.assignedDays) : "",
           round1(b.fuelLitres || 0),
           fuelOnly ? "" : (b.actualMeterUnits != null ? round1(b.actualMeterUnits) : ""),
           fuelOnly ? "" : round1(b.billableUnits),
@@ -117,14 +99,14 @@ export async function GET(request: NextRequest) {
         ]);
       }
       sheet1.push([
-        "SITE TOTAL", "", "", "", "", "",
+        "SITE TOTAL", "", "", "", "", "", round1(g.bills.reduce((n, b: any) => n + (b.assignedDays || 0), 0)),
         round1(st.litres), "", "",
         lkr(st.rental), lkr(st.fuel), lkr(st.subtotal), lkr(st.sscl), lkr(st.vat), lkr(st.grand), "", "", "",
       ]);
       sheet1.push([]);
     }
     sheet1.push([
-      "GRAND TOTAL (ALL SITES)", "", "", "", "", "",
+      "GRAND TOTAL (ALL SITES)", "", "", "", "", "", round1(bills.reduce((n, b: any) => n + (b.assignedDays || 0), 0)),
       round1(tot.litres), "", "",
       lkr(tot.rental), lkr(tot.fuel), lkr(tot.subtotal), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand), "", "", "",
     ]);
@@ -135,7 +117,11 @@ export async function GET(request: NextRequest) {
       ["Consolidated Billing — Site Summary"],
       ["Period", monthLabel],
       ["Sites", siteGroups.length],
-      ["Total Vehicles", bills.length],
+      ["Total Vehicles", sourceBillCount],
+      // A machine that moved during the month is charged to each site for the
+      // days it was there, so it appears once per site below.
+      ["Vehicles split across sites", splitBillCount],
+      ["Site-wise rows", bills.length],
       [],
       ["Site", "Vehicles", "Rental (LKR)", "Fuel (LKR)", "SSCL (LKR)", "VAT (LKR)", "Grand Total (LKR)"],
     ];
@@ -143,7 +129,7 @@ export async function GET(request: NextRequest) {
       const st = sumBills(g.bills);
       siteSummary.push([g.name, g.bills.length, lkr(st.rental), lkr(st.fuel), lkr(st.sscl), lkr(st.vat), lkr(st.grand)]);
     }
-    siteSummary.push(["GRAND TOTAL", bills.length, lkr(tot.rental), lkr(tot.fuel), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand)]);
+    siteSummary.push(["GRAND TOTAL", sourceBillCount, lkr(tot.rental), lkr(tot.fuel), lkr(tot.sscl), lkr(tot.vat), lkr(tot.grand)]);
 
     // Dry vs Wet split — per site and overall.
     const dryBills = bills.filter((b) => isDry(b.rateBasis));

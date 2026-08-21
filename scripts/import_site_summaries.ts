@@ -10,8 +10,9 @@
  * days/machine hours", and Fuel (litres).
  *
  * For each site this:
- *   1. Creates the Project + a login user (username = project name,
- *      password = username + "@123").
+ *   1. Creates the Project + a login user (username = project name, with a
+ *      randomly generated password printed once on creation; re-runs never
+ *      touch existing credentials).
  *   2. Matches each vehicle to an asset by E&C code or reg no; creates the
  *      asset (mapped to a category by type) if missing, and assigns it to the
  *      project.
@@ -32,6 +33,7 @@ import XLSX from "xlsx";
 import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -231,15 +233,23 @@ async function main() {
 
     const project = await prisma.project.upsert({ where: { code: site.code }, update: { name: site.name }, create: { name: site.name, code: site.code } });
     stats.projects++;
+    // Password is generated randomly on first creation and printed once;
+    // re-imports never touch credentials.
+    //
+    // This used to be `${username}@123` and the update branch re-applied it, so
+    // re-running the import silently reset real staff back to a password anyone
+    // could guess from the username — and the pattern was published in this file.
+    // The three sibling importers already did it this way; this now matches them.
     const username = site.name;
-    const password = `${username}@123`;
+    const existingUser = await prisma.user.findUnique({ where: { username } });
+    const password = crypto.randomBytes(6).toString("base64url");
     await prisma.user.upsert({
       where: { username },
-      update: { passwordHash: bcrypt.hashSync(password, 10), projectId: project.id, name: `${site.name} Site User`, active: true },
+      update: { projectId: project.id, name: `${site.name} Site User`, active: true },
       create: { username, name: `${site.name} Site User`, role: "USER", passwordHash: bcrypt.hashSync(password, 10), projectId: project.id, createdById: sysId },
     });
     stats.users++;
-    console.log(`\n── ${site.name} [${site.code}] — user="${username}" password="${password}"`);
+    console.log(`\n── ${site.name} [${site.code}] — user="${username}" ${existingUser ? "(password unchanged)" : `password="${password}" (generated once — record it now)`}`);
 
     // Gather every monthly sheet across all of the site's workbooks, sorted
     // chronologically so cumulative hour readings line up.

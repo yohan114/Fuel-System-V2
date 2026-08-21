@@ -1,5 +1,6 @@
 import { prisma } from "../src/lib/db";
-import { ConsolidatedDocument, explodeBillsBySite } from "../src/lib/billing/consolidated-document";
+import { ConsolidatedDocument } from "../src/lib/billing/consolidated-document";
+import { explodeBillsBySite } from "../src/lib/billing/site-explode";
 import { buildSiteStatements, totalStatement } from "../src/lib/billing/statement";
 import { renderToBuffer } from "@react-pdf/renderer";
 import * as fs from "fs";

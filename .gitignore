@@ -69,3 +69,15 @@ data/app.db-wal
 
 # Generated invoices — the bill lives in the database, not in the repo.
 out/
+
+# Stray databases and data extracts must never be committed. dev.db carries an
+# admin password hash and july.csv carries client plates and rates; both sat
+# untracked and unignored, one `git add -A` away from being published.
+# NOTE: this does not untrack data/app.db or service-record-data.db — .gitignore
+# has no effect on files git already tracks. Removing those needs a history
+# rewrite, not an ignore rule.
+/dev.db
+/july.csv
+*.db
+*.sqlite
+*.sqlite3

@@ -2,6 +2,8 @@ import { canReadBillFor } from "@/lib/roles";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { computeSiteSplit } from "@/lib/billing/site-split";
+import { apportionCents } from "@/lib/billing/site-explode";
 import * as XLSX from "xlsx";
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -62,6 +64,37 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
       li.kind, li.description, li.quantity, li.unit, lkr(li.unitRateCents), lkr(li.amountCents),
     ]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([liHeader, ...liRows]), "Line Items");
+
+    // Site Split — for a machine that moved between sites, which site owes what.
+    // The invoice stays one document; this sheet is what each site is charged,
+    // tax included, and it adds back to the grand total exactly.
+    const split = computeSiteSplit(bill.lineItems, bill.minimumUnits);
+    if (split && split.rows.length > 1) {
+      const unit = bill.billingMode === "perkm" ? "km" : "hr";
+      const payable = apportionCents(bill.grandTotalCents, split.rows.map((r) => r.totalCents));
+      const sheet: any[][] = [
+        [`SITE SPLIT — ${bill.assetCode} — ${monthLabel}`],
+        [`Worked ${split.rows.length} sites over ${split.totalDays} allocated days. Each site is charged for the days it had the machine; tax follows the charge.`],
+        [],
+        ["Site", "Days", `Min share (${unit})`, `Billed (${unit})`, "At minimum",
+         "Rental (LKR)", "Fuel (LKR)", "Subtotal (LKR)", "Share of bill", "Payable incl. tax (LKR)"],
+      ];
+      split.rows.forEach((r, i) => {
+        sheet.push([
+          r.projectName, r.days, Math.round(r.minShareUnits * 10) / 10,
+          Math.round(r.billableUnits * 10) / 10, r.atMinimum ? "yes" : "",
+          lkr(r.rentalCents), lkr(r.fuelCents), lkr(r.totalCents),
+          bill.subtotalCents > 0 ? r.totalCents / bill.subtotalCents : 0,
+          lkr(payable[i]),
+        ]);
+      });
+      sheet.push([
+        "ALL SITES", split.totalDays, split.minimumUnits, Math.round(bill.billableUnits * 10) / 10, "",
+        lkr(bill.rentalAmountCents), lkr(bill.fuelCostCents), lkr(bill.subtotalCents), 1,
+        lkr(bill.grandTotalCents),
+      ]);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet), "Site Split");
+    }
 
     const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
     return new NextResponse(buffer, {

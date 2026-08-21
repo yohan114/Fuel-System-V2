@@ -4,8 +4,9 @@
  *
  *   1. Reads the PROJECT name from the sheet header (row ~4, e.g.
  *      "Central Expressway Project [CEP-03]") and creates the Project.
- *   2. Creates a login USER per project — username = project name,
- *      password = username + "@123" (role USER, scoped to the project).
+ *   2. Creates a login USER per project — username = project name, with a
+ *      randomly generated password printed once (role USER, scoped to the
+ *      project). Re-runs never touch existing credentials.
  *   3. Assigns every matched asset to that project.
  *   4. Imports day-by-day running:
  *        - DailyCondition WORKING for each active day
