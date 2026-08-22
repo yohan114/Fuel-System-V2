@@ -29,6 +29,54 @@ export interface RunningDelta {
   delta: number;
 }
 
+// What a machine can physically record in a day. The same bounds the asset
+// merge tool uses to decide whether two records could be one machine.
+const MAX_PER_DAY: Record<string, number> = { KM: 1500, HOURS: 24 };
+
+/**
+ * Meter movement across a series of readings, counting only the steps a machine
+ * could physically have made.
+ *
+ * First-to-last is not safe on this data. A digit slipped into one reading —
+ * SC-10's 2,641,740 for 264,174, TM-18's 462,531 against a meter reading 0 nine
+ * days earlier — makes the series climb by more than a machine can move, and
+ * subtracting the ends carries the whole slip into the answer. It is the same
+ * keying fault the opening/closing guard already refuses; that guard only sees
+ * it when the series comes back DOWN, and a slip in the last reading never does.
+ *
+ * So each consecutive step is judged on its own: a step is a measurement when it
+ * goes forward and stays inside a day's travel for the days it spans. Steps that
+ * do not are the slip, and the step back out of one is negative, so a spike
+ * contributes nothing from either side while genuine movement around it still
+ * counts.
+ *
+ * Returns null when no step survives — the meter is unread, which is a different
+ * thing from a meter that read zero movement.
+ */
+export function coherentMeterDelta(
+  readings: { value: number; readingDate: Date }[],
+  meterType: string | null | undefined,
+): number | null {
+  if (readings.length < 2) return null;
+  const perDay = MAX_PER_DAY[meterType ?? ""] ?? MAX_PER_DAY.HOURS;
+
+  const ordered = [...readings].sort((a, b) => a.readingDate.getTime() - b.readingDate.getTime());
+  let total = 0;
+  let accepted = 0;
+
+  for (let i = 1; i < ordered.length; i++) {
+    const step = ordered[i].value - ordered[i - 1].value;
+    if (step < 0) continue;
+    // Two readings on the same day still get one day's allowance between them.
+    const spanDays = Math.max(1, (ordered[i].readingDate.getTime() - ordered[i - 1].readingDate.getTime()) / 86_400_000);
+    if (step > perDay * spanDays) continue;
+    total += step;
+    accepted++;
+  }
+
+  return accepted > 0 ? total : null;
+}
+
 // Cumulative meter growth within [start, end] for a given meter type.
 // Opening = last reading on/before the period start (anchor), falling back to
 // the earliest reading inside the window. Closing = last reading on/before the

@@ -2,6 +2,7 @@ import { prisma } from "../db";
 import { resolvePeriod } from "./period";
 import { getMonthSegments } from "../assignments";
 import { getBillingConfig, minimumForMode } from "./config";
+import { coherentMeterDelta } from "./usage";
 
 // What one site owes for one month — counted from that site alone.
 //
@@ -166,9 +167,15 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     // billed a fraction of a day: WG-13 stood on site for one day and was
     // charged 0.8 of one, because 26 days ÷ 31 is 0.84. Days on site is the
     // figure, and the site can check it against the same Days column.
+    // Counted step by step rather than last-minus-first: a single mis-keyed
+    // reading otherwise lands whole in the answer. TM-18 read 0 on 3 June and
+    // 462,531 on the 26th, and this page charged 462,531 hours at Rs 3,050 —
+    // Rs 1.41 BILLION on one line of a sheet a site manager is asked to sign.
+    // The bill for the same machine said 120 hours, because the billing engine
+    // already refuses readings it cannot defend.
     const actualUnits = mode === "perday"
       ? daysHere
-      : inWindow.length >= 2 ? inWindow[inWindow.length - 1].value - inWindow[0].value : null;
+      : coherentMeterDelta(inWindow, a.meterType);
 
     // A second, independent read on the same question. The meter says what the
     // machine recorded; the fuel says what it must have burnt to do the work.
