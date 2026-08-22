@@ -151,7 +151,7 @@ export async function generateBillForAsset(
   if (asset.billedDirect) return { status: "skipped-billed-direct" };
   // A fuel-only vehicle (privately owned, E&C fuels but does not rent) bills its
   // issued fuel without a rate card, so it is allowed through the no-rate gate.
-  if (!asset.rentalRate && !asset.billFuelOnly) return { status: "no-rate" };
+  const unpriced = !asset.rentalRate && !asset.billFuelOnly;
   const fuelOnly = asset.billFuelOnly;
 
   const existing = await prisma.bill.findUnique({
@@ -188,6 +188,24 @@ export async function generateBillForAsset(
     return { status: "skipped-existing", billId: existing.id };
   }
 
+  // Nothing to price it at. Reported rather than thrown so the run can tell the
+  // operator which rate cards are missing.
+  //
+  // Deliberately checked HERE and not before `existing` is loaded. It used to
+  // return early, which meant a machine that LOST its rate card — or its
+  // fuel-only flag — kept the bill an earlier run had given it, at whatever
+  // figure that run decided, and no later regeneration ever revisited it. The
+  // same staleness notHere() was written to stop. A bill priced at nothing must
+  // not be left standing.
+  if (unpriced) {
+    if (existing && existing.status === "DRAFT") {
+      await prisma.billLineItem.deleteMany({ where: { billId: existing.id } });
+      await prisma.bill.delete({ where: { id: existing.id } });
+      return { status: "no-rate" };
+    }
+    return { status: "no-rate", billId: existing?.id };
+  }
+
   // A month's bill needs fuel drawn in that month. The owner's rule, and it
   // narrows what came before: a machine merely posted to a site used to earn its
   // guaranteed minimum whether or not it turned a wheel, on the reasoning that
@@ -205,10 +223,24 @@ export async function generateBillForAsset(
   // that left 9 bills sitting on a per-km mode months after their machines moved
   // to hours. Routing through notHere() means a regeneration both declines to
   // create the bill and removes any draft already there.
+  //
+  // The office can overrule this per vehicle, per site, per month — see
+  // BillingSiteOverride. An ADD bills a machine the records would have passed
+  // over (a small item nobody registered, plant that stood on a client's site
+  // all month at their request and burnt nothing); a REMOVE declines to bill one
+  // the records would have charged. Both are recorded decisions with a name
+  // against them, not edits to a draft that the next regeneration erases.
+  const overrides = await prisma.billingSiteOverride.findMany({
+    where: { assetId, periodKey: period.periodKey },
+    select: { action: true, projectId: true, reason: true },
+  });
+  const addedAt = overrides.find((o) => o.action === "ADD") ?? null;
+  const removedSites = new Set(overrides.filter((o) => o.action === "REMOVE").map((o) => o.projectId));
+
   const fuelThisPeriod = await prisma.fuelIssue.count({
     where: { assetId, voided: false, issueDate: { gte: period.start, lte: period.end } },
   });
-  if (fuelThisPeriod === 0) return notHere();
+  if (fuelThisPeriod === 0 && !addedAt) return notHere();
 
   // Structural choices: preserve an admin's overrides on regenerate, else derive
   // sensible defaults from the asset. These do not depend on the site, so they
@@ -234,7 +266,14 @@ export async function generateBillForAsset(
   // split the month into one segment per site and bill each site for its slice.
   // Fetched up front because an allocation can also carry a per-allocation
   // Dry/Wet hire type and a driver, which drive the bill basis below.
-  const segments = await getMonthSegments(asset.id, period.start, period.end);
+  const allSegments = await getMonthSegments(asset.id, period.start, period.end);
+  // A site that has said "this was never ours" drops out of the split, and the
+  // machine's other sites are billed as if it had never been posted here. If
+  // that empties the month, the bill goes with it.
+  const segments = removedSites.size
+    ? allSegments.filter((s) => !removedSites.has(s.projectId))
+    : allSegments;
+  if (allSegments.length > 0 && segments.length === 0) return notHere();
   // The allocation covering the most days in the month sets the hire type and
   // driver (a manually-allocated site is billed exactly as it was allocated).
   const dominant = [...segments].sort((a, b) => b.days - a.days)[0] ?? null;
@@ -280,7 +319,10 @@ export async function generateBillForAsset(
   // A machine that has moved sites before (it owns assignments, just none that
   // prove work this month) and shows no activity at all is not billed. Machines
   // that were never assigned anywhere stay exempt, preserving back-compat.
-  if (billingMode === "hourly" || billingMode === "perkm") {
+  //
+  // An ADD override is exactly the case this guard exists to catch, decided the
+  // other way by someone who knows more than the records do. It is skipped.
+  if (!addedAt && (billingMode === "hourly" || billingMode === "perkm")) {
     const [periodFuel, periodConditions] = await Promise.all([
       sumFuelForWindow(asset.id, period.start, period.end),
       prisma.dailyCondition.count({
@@ -330,8 +372,20 @@ export async function generateBillForAsset(
   // or because somebody said so and it is recorded as a MANUAL posting. Absent
   // either, it belongs nowhere and is not billed — a machine that genuinely sits
   // on site without drawing diesel is billed by allocating it, not by guessing.
-  const resolvedProject = await resolveProjectForAssetMonth(assetId, period.year, period.month, asset.project);
+  //
+  // An ADD override answers the question outright: the office has said this
+  // machine belongs on that site's bill this month, which is the only evidence
+  // there is for a small item nobody registered or plant that stood idle at a
+  // client's request.
+  const resolvedProject = addedAt
+    ? await prisma.project.findUnique({ where: { id: addedAt.projectId }, select: { id: true, code: true, name: true } })
+    : await resolveProjectForAssetMonth(assetId, period.year, period.month, asset.project);
   if (!resolvedProject) {
+    return notHere();
+  }
+  // Removed from the only site the records put it on, so there is nothing left
+  // to bill. An ADD is an explicit instruction and outranks a REMOVE elsewhere.
+  if (!addedAt && removedSites.has(resolvedProject.id)) {
     return notHere();
   }
   const projectId = resolvedProject.id;
@@ -370,7 +424,9 @@ export async function generateBillForAsset(
   // since left (e.g. arrives at a new site next month) from appearing on its
   // old site's consolidated invoice. Truly never-assigned vehicles are exempt,
   // preserving back-compat.
-  if (fuel.litres === 0 && actualUnits === 0 && (await assetHasAssignments(asset.id))) {
+  // Skipped for an ADD override, which is a person answering this exact
+  // question with knowledge the records do not hold.
+  if (!addedAt && fuel.litres === 0 && actualUnits === 0 && (await assetHasAssignments(asset.id))) {
     return notHere();
   }
 

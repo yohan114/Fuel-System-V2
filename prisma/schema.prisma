@@ -34,6 +34,7 @@ model User {
   meterReadings    MeterReading[] @relation("RecordedBy")
   dailyConditions  DailyCondition[] @relation("RecordedBy")
   auditLogs        AuditLog[]    @relation("Actor")
+  billingOverrides BillingSiteOverride[]
 
   bulkRequests     BulkRequest[] @relation("BulkRequestedBy")
   reviewedBulk     BulkRequest[] @relation("BulkReviewedBy")
@@ -157,6 +158,7 @@ model Asset {
   serviceIntervalOverride ServiceInterval?
   filters       AssetFilter[]
   allocations   VehicleAllocation[]
+  billingOverrides BillingSiteOverride[]
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -472,6 +474,62 @@ model Project {
   assignments AssetAssignment[]
   budgets     Budget[]
   allocations VehicleAllocation[]
+  billingOverrides BillingSiteOverride[]
+}
+
+// A hand-made decision about one vehicle on one site's bill for one month.
+//
+// The generator decides what to bill from the records — postings, fuel, rate
+// cards — and it is right nearly always. This is for when it is not, and the
+// office knows something the records do not: a small item that was never
+// registered, a machine that stood on site all month at the client's request
+// and burnt nothing, a vehicle the site says was never theirs.
+//
+// It has to be a record of its own rather than a hand-edited posting. Postings
+// are rebuilt from the fuel every time apply-fuel-driven-attachment runs, and
+// bills are regenerated constantly; anything expressed only as a posting or an
+// edited draft is erased by the next run. An override outlives both, and the
+// generator consults it.
+//
+// Deliberately scoped to ONE month. A standing arrangement typed once and
+// forgotten would go on quietly billing — or quietly suppressing — a machine
+// for as long as nobody looked.
+model BillingSiteOverride {
+  id        String   @id @default(uuid())
+
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  periodKey String   // "2026-07"
+
+  // "ADD"    — bill this vehicle to this site for this month even though the
+  //            records would not have: no fuel drawn here, or no posting.
+  // "REMOVE" — do not bill it here, whatever the records say.
+  action    String
+
+  // Why. Required for an ADD that overrides the fuel rule, because in six months
+  // nobody can otherwise tell why a machine with no diesel was charged a full
+  // month's minimum.
+  reason    String?
+
+  // True when this ADD is what flipped the machine to fuel-only. Undoing the
+  // override then puts that back too. Without it an undo silently left the flag
+  // standing, the machine went on billing its diesel every month, and the button
+  // that promised to reverse the decision had reversed half of it.
+  setFuelOnly Boolean @default(false)
+
+  createdById String?
+  createdBy   User?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // One decision per vehicle per site per month; re-deciding replaces it.
+  @@unique([projectId, periodKey, assetId])
+  @@index([periodKey, projectId])
+  @@index([assetId, periodKey])
 }
 
 model DailyCondition {

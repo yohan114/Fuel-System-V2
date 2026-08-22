@@ -15,6 +15,8 @@ import VehicleBillPanel, { type VehicleBillView } from "./components/VehicleBill
 import { matchesVehicle } from "@/lib/vehicle-search";
 import { computeSiteSplit, type SplitLineItem } from "@/lib/billing/site-split";
 import { apportionCents } from "@/lib/billing/site-explode";
+import { buildSiteRoster } from "@/lib/billing/site-roster";
+import SiteBillingAdvanced from "./components/SiteBillingAdvanced";
 
 interface PageProps {
   searchParams: Promise<{ month?: string; site?: string; status?: string; check?: string; q?: string }>;
@@ -127,6 +129,10 @@ export default async function BillingPage(props: PageProps) {
         .filter((b): b is NonNullable<typeof b> => b !== null)
         .sort((a, b) => b.grandTotalCents - a.grandTotalCents)
     : rawBills;
+
+  // What is on this site's bill and what arguably should be. Only when a site is
+  // actually chosen — the question has no meaning across the whole estate.
+  const roster = bySplit ? await buildSiteRoster(activeSite, periodKey) : null;
 
   // Meter-vs-fuel check across the (unfiltered) month for the tile count.
   const needsClarify = (v: number | null) => v != null && Math.abs(v) >= VARIANCE_THRESHOLD;
@@ -346,6 +352,10 @@ export default async function BillingPage(props: PageProps) {
           sites={projects.map((p) => ({ code: p.code, name: p.name }))}
         />
       )}
+
+      {/* Add and remove vehicles on one site's bill. Needs a site chosen: the
+          panel is about one site's month, and "all sites" is not one. */}
+      {isAdmin && roster && <SiteBillingAdvanced roster={roster} />}
 
       {/* One vehicle, and what it costs each site it worked */}
       {vehicleView && <VehicleBillPanel v={vehicleView} />}
