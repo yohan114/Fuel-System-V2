@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
 import { fuelDateTime } from "@/lib/colombo-date";
-import { isSiteUser } from "@/lib/roles";
+import { fuelViewScope } from "@/lib/fuel/view-scope";
 import CorrectionButton from "./CorrectionButton";
 import Link from "next/link";
 import { Search, MapPin } from "lucide-react";
@@ -24,10 +24,12 @@ const PUMP_LIMIT = 20000;
 export default async function FuelIssuesPage(props: PageProps) {
   const session = await getSession();
   if (!session) return null;
-  // ADMIN / ALLOCATOR see everything; WORKSHOP issues across all sites so it also
-  // sees the full log with filters. Site users (USER / SITE_PUMP) are scoped to
-  // their allocated site by visibleAssetIdsForUser below.
-  const isPrivileged = session.role === "ADMIN" || session.role === "ALLOCATOR" || session.role === "WORKSHOP";
+  // ADMIN and ALLOCATOR see the whole estate. Everyone who works a pump — the
+  // site pumps and the workshop pump alike — sees only what came out of their
+  // own tank. The workshop used to be privileged here on the reasoning that it
+  // fuels vehicles from every site, but that let one operator read every site's
+  // fuel book, and what a pump operator is accountable for is their own pump.
+  const isPrivileged = session.role === "ADMIN" || session.role === "ALLOCATOR";
 
   const searchParams = await props.searchParams;
   const q = searchParams.q || "";
@@ -52,21 +54,42 @@ export default async function FuelIssuesPage(props: PageProps) {
   // vehicle's site would miss exactly the rows this view is opened to see.
   if (tankFilter) where.bulkTankId = tankFilter;
 
-  // Visibility follows the vehicle's ALLOCATED site, not the pump it was drawn
-  // from. Site users (USER / SITE_PUMP) are locked to their own site; privileged
-  // roles (admin/allocator/workshop) may pick any site or see all. Restrict the
-  // query to assets ever posted to the site (or currently pinned to it); the
-  // exact per-issue attribution check runs below once each issue's site resolves.
-  const isSite = isSiteUser(session.role) && !!session.projectId;
-  const effectiveSite = isSite ? session.projectId! : siteFilter;
+  // Who may read what — see src/lib/fuel/view-scope.ts. A pump operator gets
+  // their own pump's book (scoped by tank), a site login without a pump gets the
+  // fuel its site is charged for (scoped by the vehicle's posting), and anything
+  // unresolvable gets nothing.
+  const scope = await fuelViewScope(session);
+  const pumpSite = scope.kind === "pump" ? scope.projectId : null;
+  // A privileged user's site dropdown means the allocation question, which is
+  // what the site filter has always meant for them.
+  const allocSite = scope.kind === "allocation" ? scope.projectId : scope.kind === "all" ? siteFilter : "";
+  const effectiveSite = pumpSite ?? allocSite;
 
-  let allowedIds: Set<string> | null = null;
-  if (effectiveSite) {
+  // How much the tank HOLDS is management's figure, and no operator needs it to
+  // do their job. What is in it right now is a different matter: the workshop
+  // operator is the one who calls for a delivery when the pump runs low, so they
+  // keep the balance. A site pump records the delivery it was given and does not
+  // carry the stock figure at all — the same rule the site console applies.
+  const showStock = isPrivileged || session.role === "WORKSHOP";
+  const showCapacity = isPrivileged;
+
+  // Held separately so every query on this page — the log, its count and the
+  // issuer dropdown — carries the same scope. A dropdown listing people the log
+  // will never show is a leak in miniature.
+  let scopeWhere: Prisma.FuelIssueWhereInput = {};
+  if (scope.kind === "none") {
+    scopeWhere = { id: { in: [] } };
+  } else if (pumpSite) {
+    scopeWhere = { bulkTank: { projectId: pumpSite } };
+  } else if (effectiveSite) {
+    // Restrict the query to assets ever posted to the site (or currently pinned
+    // to it); the exact per-issue attribution check runs below once each issue's
+    // site resolves.
     const spans = await prisma.assetAssignment.findMany({ where: { projectId: effectiveSite }, select: { assetId: true }, distinct: ["assetId"] });
     const pinned = await prisma.asset.findMany({ where: { projectId: effectiveSite }, select: { id: true } });
-    allowedIds = new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)]);
+    scopeWhere = { assetId: { in: [...new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)])] } };
   }
-  if (allowedIds) where.assetId = { in: [...allowedIds] };
+  Object.assign(where, scopeWhere);
 
   // 2. Query dispatches (most-recent first, capped)
   let issues = await prisma.fuelIssue.findMany({
@@ -88,12 +111,17 @@ export default async function FuelIssuesPage(props: PageProps) {
   // site filter is on — a site is resolved per issue in memory below, and the
   // exact figure for that case is set after filtering.
   let matchingTotal = await prisma.fuelIssue.count({ where });
-  const selectedTank = tankFilter
-    ? await prisma.bulkTank.findUnique({
-        where: { id: tankFilter },
-        select: { name: true, balance: true, capacity: true, project: { select: { name: true, code: true } } },
-      })
-    : null;
+  // ?tank= is scoped as well. The rows themselves already fail closed for another
+  // site's pump — the tank clause ANDs with the operator's — but the header reads
+  // the tank directly, so without this it would name a pump the operator has no
+  // rows from and print its stock beside an empty list.
+  const selectedTank =
+    tankFilter && (scope.kind === "all" || pumpSite)
+      ? await prisma.bulkTank.findFirst({
+          where: { id: tankFilter, ...(pumpSite ? { projectId: pumpSite } : {}) },
+          select: { name: true, balance: true, capacity: true, project: { select: { name: true, code: true } } },
+        })
+      : null;
 
   // 3. Resolve each issue's assigned site (assignment covering the issue date;
   // fall back to the vehicle's current project pointer).
@@ -120,16 +148,19 @@ export default async function FuelIssuesPage(props: PageProps) {
     return pid ? projById.get(pid) ?? (i.asset.project ? { id: pid, name: i.asset.project.name, code: i.asset.project.code } : null) : null;
   };
 
-  // Apply the exact allocated-site filter in memory (site users are pinned to
-  // their own site; privileged roles to the site they picked).
-  if (effectiveSite) {
+  // The allocated-site filter is for a privileged user who picked a site. It must
+  // NOT run for a pump operator: siteOfIssue resolves a visiting machine to the
+  // site it is posted to, so filtering on it would throw away the very rows the
+  // operator dispensed — already scoped correctly in SQL by their tank.
+  if (effectiveSite && !pumpSite) {
     issues = issues.filter((i) => siteOfIssue(i)?.id === effectiveSite);
     matchingTotal = issues.length; // the pre-attribution count would overstate it
   }
 
-  // Dropdown option sources.
+  // Dropdown option sources. The issuer list obeys the same scope as the log, so
+  // an operator's filter cannot name people at other sites.
   const [issuerRows, sourceRows] = await Promise.all([
-    prisma.fuelIssue.findMany({ where: allowedIds ? { assetId: { in: [...allowedIds] } } : {}, select: { issuedById: true, issuedBy: { select: { name: true } } }, distinct: ["issuedById"], orderBy: { issuedBy: { name: "asc" } } }),
+    prisma.fuelIssue.findMany({ where: scopeWhere, select: { issuedById: true, issuedBy: { select: { name: true } } }, distinct: ["issuedById"], orderBy: { issuedBy: { name: "asc" } } }),
     prisma.fuelIssue.findMany({ select: { source: true }, distinct: ["source"], orderBy: { source: "asc" } }),
   ]);
 
@@ -160,7 +191,8 @@ export default async function FuelIssuesPage(props: PageProps) {
         </h1>
         <p className="text-xs text-gray-400 mt-1">
           {selectedTank
-            ? <>Every fuel issue dispensed from this pump{selectedTank.project ? <> · {selectedTank.project.name} ({selectedTank.project.code})</> : null} · stock {selectedTank.balance.toLocaleString(undefined, { maximumFractionDigits: 1 })} L of {selectedTank.capacity.toLocaleString()} L</>
+            ? <>Every fuel issue dispensed from this pump{selectedTank.project ? <> · {selectedTank.project.name} ({selectedTank.project.code})</> : null}
+                {showStock && <> · stock {selectedTank.balance.toLocaleString(undefined, { maximumFractionDigits: 1 })} L{showCapacity && <> of {selectedTank.capacity.toLocaleString()} L</>}</>}</>
             : "Historical record of fuel dispatches, cost snapshots, and linked request references."}
         </p>
         {selectedTank && (

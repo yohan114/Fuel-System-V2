@@ -88,6 +88,11 @@ interface WorkshopConsoleProps {
   // management's number, and showing a running balance here invited operators to
   // reconcile against it rather than simply record what happened.
   hideStock?: boolean;
+  // The workshop operator keeps the balance — they are the one who calls for a
+  // delivery when the pump runs low — but not how much the tank holds. Hides the
+  // capacity, the fill bar, the percentage and the free space, since each of
+  // those gives the capacity back from the balance.
+  hideCapacity?: boolean;
 }
 
 export default function WorkshopConsole({
@@ -105,6 +110,7 @@ export default function WorkshopConsole({
   title = "Workshop Pump Console",
   immediateRefuel = false,
   hideStock = false,
+  hideCapacity = false,
 }: WorkshopConsoleProps) {
   // Held between "submit" and the confirmation, because an immediate refuel
   // cannot be undone and the operator should see the number before it is final.
@@ -398,20 +404,24 @@ export default function WorkshopConsole({
           <div className="space-y-2">
             <div className="flex justify-between items-baseline text-xs text-gray-400 font-semibold">
               <span className="text-xl font-bold text-white">{activeTank.balance.toLocaleString(undefined, { maximumFractionDigits: 1 })} L</span>
-              <span>Capacity: {activeTank.capacity.toLocaleString()} L</span>
-            </div>
-            
-            <div className="w-full bg-white/5 h-3.5 rounded-full overflow-hidden border border-white/5 shadow-inner">
-              <div 
-                className="bg-gradient-to-r from-indigo-500 to-indigo-600 h-full rounded-full transition-all duration-500 shadow" 
-                style={{ width: `${percent}%` }}
-              />
+              {hideCapacity ? <span>In tank now</span> : <span>Capacity: {activeTank.capacity.toLocaleString()} L</span>}
             </div>
 
-            <div className="flex justify-between text-[10px] text-gray-500 font-semibold pt-1">
-              <span>{percent.toFixed(0)}% full</span>
-              <span>Available Space: {(activeTank.capacity - activeTank.balance).toLocaleString(undefined, { maximumFractionDigits: 1 })} L</span>
-            </div>
+            {!hideCapacity && (
+              <>
+                <div className="w-full bg-white/5 h-3.5 rounded-full overflow-hidden border border-white/5 shadow-inner">
+                  <div
+                    className="bg-gradient-to-r from-indigo-500 to-indigo-600 h-full rounded-full transition-all duration-500 shadow"
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+
+                <div className="flex justify-between text-[10px] text-gray-500 font-semibold pt-1">
+                  <span>{percent.toFixed(0)}% full</span>
+                  <span>Available Space: {(activeTank.capacity - activeTank.balance).toLocaleString(undefined, { maximumFractionDigits: 1 })} L</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
         )}

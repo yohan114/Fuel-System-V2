@@ -150,6 +150,10 @@ export default async function WorkshopPage() {
       lockMessage={lockMessage}
       todayStr={colomboTodayStr}
       minDateStr={minDateStr}
+      // The operator keeps the balance — they are the one who notices the pump
+      // is running low and asks for a delivery — but how much the tank holds is
+      // management's figure. An admin looking at the same console still sees it.
+      hideCapacity={session.role === "WORKSHOP"}
     />
   );
 }

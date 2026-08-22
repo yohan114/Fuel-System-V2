@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { indexAssignments, assignedSiteOn } from "../fuel/site-attribution";
 import { colomboDayKey } from "../colombo-date";
+import type { FuelViewScope } from "../fuel/view-scope";
 
 // One row per refuel, for a date range and optionally one site, one vehicle or
 // one product.
@@ -23,6 +24,13 @@ export interface FuelIssueReportFilter {
   projectId?: string;   // the vehicle's allocated site
   vehicle?: string;     // fleet code or registration, partial
   fuelKind?: string;
+  // The site that owns the PUMP the fuel left, which is a different question
+  // from projectId above and the one a pump operator is entitled to ask: their
+  // own tank's book, including the visiting machines they fuelled.
+  pumpProjectId?: string;
+  // Resolve to nothing at all. Used where a login has no fuel scope, so the
+  // report fails closed instead of falling through to the whole company.
+  none?: boolean;
 }
 
 export interface FuelIssueReportRow {
@@ -50,6 +58,27 @@ export interface FuelIssueReport {
   truncated: boolean;
 }
 
+/**
+ * The reader's scope as filter fields, so the screen, the PDF and the Excel are
+ * scoped by one rule instead of three copies of it. The screen may pass the site
+ * the reader picked; it is honoured only for a reader entitled to all of them.
+ */
+export function reportFilterForScope(
+  scope: FuelViewScope,
+  requestedSiteId?: string,
+): Pick<FuelIssueReportFilter, "projectId" | "pumpProjectId" | "none"> {
+  switch (scope.kind) {
+    case "all":
+      return { projectId: requestedSiteId || undefined };
+    case "pump":
+      return { pumpProjectId: scope.projectId };
+    case "allocation":
+      return { projectId: scope.projectId };
+    case "none":
+      return { none: true };
+  }
+}
+
 // A range this size is a year of one busy site, or a month of the whole fleet.
 // Past it the page stops being readable and the browser starts to struggle, so
 // it is capped and says so rather than quietly showing part of the answer.
@@ -60,6 +89,8 @@ export async function buildFuelIssueReport(f: FuelIssueReportFilter): Promise<Fu
     voided: false,
     issueDate: { gte: f.from, lte: f.to },
   };
+  if (f.none) where.id = { in: [] };
+  if (f.pumpProjectId) where.bulkTank = { projectId: f.pumpProjectId };
   if (f.fuelKind) where.fuelKind = f.fuelKind;
   if (f.vehicle) {
     const v = f.vehicle.trim();

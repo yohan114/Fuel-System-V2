@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { isSiteUser } from "@/lib/roles";
-import { buildFuelIssueReport, parseReportParams } from "@/lib/reports/fuel-issue-report";
+import { fuelViewScope } from "@/lib/fuel/view-scope";
+import { buildFuelIssueReport, parseReportParams, reportFilterForScope } from "@/lib/reports/fuel-issue-report";
 import * as XLSX from "xlsx";
 
 // The Excel behind the Fuel Issue Report screen.
@@ -19,13 +19,14 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const p = parseReportParams((k) => searchParams.get(k));
 
-  // A site login exports its own site whatever the query asks for.
-  const pinned = isSiteUser(session.role) ? session.projectId ?? null : null;
-  const siteId = pinned ?? (p.site || undefined);
+  // The download carries the reader's scope, not the query string's. This route
+  // is a URL anyone logged in can type, so it is the scope's last line.
+  const scoped = reportFilterForScope(await fuelViewScope(session), p.site);
+  const siteId = scoped.projectId ?? scoped.pumpProjectId;
 
   try {
     const [report, site] = await Promise.all([
-      buildFuelIssueReport({ from: p.from, to: p.to, projectId: siteId, vehicle: p.vehicle, fuelKind: p.fuelKind }),
+      buildFuelIssueReport({ from: p.from, to: p.to, vehicle: p.vehicle, fuelKind: p.fuelKind, ...scoped }),
       siteId ? prisma.project.findUnique({ where: { id: siteId }, select: { code: true, name: true } }) : null,
     ]);
 
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
 
     const header = [
       ["EDWARD & CHRISTIE (PVT) LTD — FUEL ISSUE REPORT"],
-      [site ? `${site.name} (${site.code})` : "All sites"],
+      [site ? `${site.name} (${site.code})${scoped.pumpProjectId ? " — issued from this site's pump" : ""}` : "All sites"],
       [`${p.fromStr} to ${p.toStr}`],
       ...(p.vehicle ? [[`Vehicle filter: ${p.vehicle}`]] : []),
       ...(p.fuelKind ? [[`Fuel: ${p.fuelKind.replace(/_/g, " ")}`]] : []),

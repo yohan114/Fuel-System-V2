@@ -11,6 +11,10 @@
 // fuel for any site / any vehicle. The fuel cost still lands on the vehicle's
 // allocated site because attribution is by assignment, not by the issuing pump
 // (see src/lib/fuel/site-attribution.ts). ADMIN and ALLOCATOR are unrestricted.
+//
+// Issuing scope and READING scope are separate questions. Whom a pump operator
+// may fuel is above; what they may read back is their own pump's book — see the
+// fuel issues log, which scopes every pump role by tank.
 
 export type Role = "ADMIN" | "ALLOCATOR" | "USER" | "SITE_PUMP" | "WORKSHOP";
 

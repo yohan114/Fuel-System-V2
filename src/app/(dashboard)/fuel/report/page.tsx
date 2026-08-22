@@ -1,9 +1,9 @@
 import React from "react";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { isSiteUser } from "@/lib/roles";
+import { fuelViewScope } from "@/lib/fuel/view-scope";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
-import { buildFuelIssueReport, parseReportParams } from "@/lib/reports/fuel-issue-report";
+import { buildFuelIssueReport, parseReportParams, reportFilterForScope } from "@/lib/reports/fuel-issue-report";
 import { fuelDate } from "@/lib/colombo-date";
 import { FileText, FileSpreadsheet, Filter, Search } from "lucide-react";
 
@@ -28,22 +28,31 @@ export default async function FuelIssueReportPage(props: PageProps) {
   const sp = await props.searchParams;
   const p = parseReportParams((k) => (sp as Record<string, string | undefined>)[k]);
 
-  // A site login only ever reports on its own site, whatever the query says.
-  const pinned = isSiteUser(session.role) ? session.projectId ?? null : null;
-  const siteId = pinned ?? (p.site || undefined);
+  // The same scope the fuel issues log uses, so the two screens cannot disagree
+  // about what a login may read. A pump operator reports on their own pump's
+  // book; a site login on the fuel its site is charged for; anything the scope
+  // cannot resolve reports on nothing. Whatever the query string says.
+  const scope = await fuelViewScope(session);
+  const scoped = reportFilterForScope(scope, p.site);
+  const scopeSiteId = scoped.projectId ?? scoped.pumpProjectId;
+  const locked = scope.kind !== "all";
 
   const [projects, report] = await Promise.all([
     prisma.project.findMany({ select: { id: true, code: true, name: true }, orderBy: { name: "asc" } }),
-    buildFuelIssueReport({
-      from: p.from, to: p.to, projectId: siteId, vehicle: p.vehicle, fuelKind: p.fuelKind,
-    }),
+    buildFuelIssueReport({ from: p.from, to: p.to, vehicle: p.vehicle, fuelKind: p.fuelKind, ...scoped }),
   ]);
-  const siteName = siteId ? projects.find((x) => x.id === siteId)?.name ?? "Site" : "All sites";
+  const siteName = scopeSiteId
+    ? projects.find((x) => x.id === scopeSiteId)?.name ?? "Site"
+    : scope.kind === "none"
+      ? "No site assigned"
+      : "All sites";
 
-  // The downloads carry exactly what is on screen.
+  // The downloads carry exactly what is on screen. The site is passed for a
+  // reader who chose it; a scoped reader's own site is re-derived server-side, so
+  // editing it out of the link changes nothing.
   const qs = new URLSearchParams({
     from: p.fromStr, to: p.toStr,
-    ...(siteId ? { site: siteId } : {}),
+    ...(scoped.projectId ? { site: scoped.projectId } : {}),
     ...(p.vehicle ? { vehicle: p.vehicle } : {}),
     ...(p.fuelKind ? { fuelKind: p.fuelKind } : {}),
   }).toString();
@@ -58,8 +67,14 @@ export default async function FuelIssueReportPage(props: PageProps) {
           <FileText size={22} className="text-indigo-400" /> Fuel Issue Report
         </h1>
         <p className="text-xs text-gray-400 mt-1 max-w-4xl">
-          Every fuel issue for one vehicle or a whole site over a date range. Fuel is attributed to the
-          vehicle&apos;s allocated site on the day it was issued, not to the pump it was drawn from.
+          {scoped.pumpProjectId ? (
+            <>Every issue dispensed from your pump — {siteName} — including machines visiting from other
+            sites. The Site column shows whose fuel it is: the vehicle&apos;s allocated site on the day,
+            which is the site that gets charged for it.</>
+          ) : (
+            <>Every fuel issue for one vehicle or a whole site over a date range. Fuel is attributed to the
+            vehicle&apos;s allocated site on the day it was issued, not to the pump it was drawn from.</>
+          )}
         </p>
       </div>
 
@@ -75,8 +90,8 @@ export default async function FuelIssueReportPage(props: PageProps) {
           </div>
           <div>
             <label className={label}>Site</label>
-            <select name="site" defaultValue={p.site} className={field} disabled={!!pinned}>
-              <option value="">All sites</option>
+            <select name="site" defaultValue={scopeSiteId ?? p.site} className={field} disabled={locked}>
+              <option value="">{locked ? "—" : "All sites"}</option>
               {projects.map((x) => (
                 <option key={x.id} value={x.id}>{x.name} ({x.code})</option>
               ))}

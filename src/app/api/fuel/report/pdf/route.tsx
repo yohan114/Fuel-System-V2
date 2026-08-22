@@ -2,8 +2,8 @@ import React from "react";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { isSiteUser } from "@/lib/roles";
-import { buildFuelIssueReport, parseReportParams, type FuelIssueReport } from "@/lib/reports/fuel-issue-report";
+import { fuelViewScope } from "@/lib/fuel/view-scope";
+import { buildFuelIssueReport, parseReportParams, reportFilterForScope, type FuelIssueReport } from "@/lib/reports/fuel-issue-report";
 import { Document, Page, Text, View, StyleSheet, renderToStream } from "@react-pdf/renderer";
 
 // The printable Fuel Issue Report — the sheet that gets signed and handed over.
@@ -119,17 +119,20 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = request.nextUrl;
   const p = parseReportParams((k) => searchParams.get(k));
-  const pinned = isSiteUser(session.role) ? session.projectId ?? null : null;
-  const siteId = pinned ?? (p.site || undefined);
+  // The printout carries the reader's scope, not the query string's — this route
+  // is a URL anyone logged in can type.
+  const scoped = reportFilterForScope(await fuelViewScope(session), p.site);
+  const siteId = scoped.projectId ?? scoped.pumpProjectId;
 
   try {
     const [report, site] = await Promise.all([
-      buildFuelIssueReport({ from: p.from, to: p.to, projectId: siteId, vehicle: p.vehicle, fuelKind: p.fuelKind }),
+      buildFuelIssueReport({ from: p.from, to: p.to, vehicle: p.vehicle, fuelKind: p.fuelKind, ...scoped }),
       siteId ? prisma.project.findUnique({ where: { id: siteId }, select: { code: true, name: true } }) : null,
     ]);
 
     const stream = await renderToStream(
-      <Doc report={report} title={site ? `${site.name} (${site.code})` : "All sites"}
+      <Doc report={report}
+        title={site ? `${site.name} (${site.code})${scoped.pumpProjectId ? " — issued from this site's pump" : ""}` : "All sites"}
         from={p.fromStr} to={p.toStr} vehicle={p.vehicle} fuelKind={p.fuelKind} />
     );
     const name = `fuel-issues-${site?.code ?? "all-sites"}-${p.fromStr}-to-${p.toStr}.pdf`;
