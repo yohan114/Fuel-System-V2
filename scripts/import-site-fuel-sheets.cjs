@@ -82,6 +82,12 @@ const SOURCES = [
   { file: "CEP -03 E Package.xlsx", site: "CEP-03 E Package", format: "grid", fallbackYear: 2026 },
   { file: "Lot 02 (1).xlsx", site: "ICDP Batti Lot-02", format: "grid", fallbackYear: 2026 },
   { file: "LOT-04.xlsx", site: "EP I-Road Lot-04", format: "ledger", fallbackYear: 2026 },
+  // Wadakada's June/July book lives with the site, not in Downloads. It goes to
+  // CEP-03 Wadakada — the live project, holding the fuel, postings and bills.
+  // The two look-alikes are dead: CEP-03 Wadakada Plants has never held anything
+  // at all, and Wadakada CEP-3 is the older June project that never received a
+  // litre though 37 machines are still pinned to it.
+  { path: "D:/Projects sites/Wadakada/june & july fuel issued report.xlsx", site: "CEP-03 Wadakada", format: "grid", fallbackYear: 2026 },
 ];
 const REFUSED = [
   ["Inginimitiya Vehicle, Machinery summary.xlsx", "monthly running summary — vehicle/month totals, no issue dates"],
@@ -256,12 +262,13 @@ const skippedSheets = [];
 const seenInRun = new Set();
 
 for (const src of SOURCES) {
-  if (ONLY && src.file !== ONLY) continue;
-  const path = DIR + src.file;
+  const label = src.file || src.path.split(/[\/]/).pop();
+  if (ONLY && label !== ONLY) continue;
+  const path = src.path || DIR + src.file;
   if (!fs.existsSync(path)) { L(`\n  MISSING FILE: ${src.file}`); continue; }
   const project = db.prepare("SELECT id, name FROM Project WHERE name = ?").get(src.site);
   const tank = project ? db.prepare("SELECT id, name FROM BulkTank WHERE projectId = ? LIMIT 1").get(project.id) : null;
-  if (!project || !tank) { L(`\n  NO PROJECT/TANK for ${src.site} — skipping ${src.file}`); continue; }
+  if (!project || !tank) { L(`\n  NO PROJECT/TANK for ${src.site} — skipping ${label}`); continue; }
 
   const wb = XLSX.readFile(path);
   L(`\n── ${src.file}`);
@@ -269,22 +276,22 @@ for (const src of SOURCES) {
 
   for (const sheet of wb.SheetNames) {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { header: 1, blankrows: false, defval: null });
-    if (rows.length === 0) { skippedSheets.push(`${src.file} :: ${sheet} — empty`); continue; }
+    if (rows.length === 0) { skippedSheets.push(`${label} :: ${sheet} — empty`); continue; }
 
     let period = null;
     if (src.format === "grid") {
       period = periodFromSheet(sheet, src.fallbackYear);
-      if (!period) { skippedSheets.push(`${src.file} :: ${sheet} — no month in the sheet name`); continue; }
+      if (!period) { skippedSheets.push(`${label} :: ${sheet} — no month in the sheet name`); continue; }
       // A template for a month that has not happened cannot hold real issues.
       const today = new Date();
       if (period.y > today.getFullYear() || (period.y === today.getFullYear() && period.m > today.getMonth() + 1)) {
-        skippedSheets.push(`${src.file} :: ${sheet} — future month (${period.y}-${String(period.m).padStart(2, "0")})`);
+        skippedSheets.push(`${label} :: ${sheet} — future month (${period.y}-${String(period.m).padStart(2, "0")})`);
         continue;
       }
     }
 
     const { rows: parsed, note } = src.format === "grid" ? parseGrid(rows, period) : parseLedger(rows);
-    if (note) { skippedSheets.push(`${src.file} :: ${sheet} — ${note}`); continue; }
+    if (note) { skippedSheets.push(`${label} :: ${sheet} — ${note}`); continue; }
 
     let neu = 0, dup = 0, unk = 0, dupInRun = 0;
     for (const p of parsed) {
@@ -299,11 +306,11 @@ for (const src of SOURCES) {
       if (existing.has(key)) { dup++; continue; }
       if (seenInRun.has(key)) { dupInRun++; continue; }
       seenInRun.add(key);
-      planned.push({ ...p, assetId: asset.id, code: asset.code, tankId: tank.id, projectId: project.id, site: project.name, file: src.file, sheet });
+      planned.push({ ...p, assetId: asset.id, code: asset.code, tankId: tank.id, projectId: project.id, site: project.name, file: label, sheet });
       neu++;
     }
-    const label = src.format === "grid" ? `${period.y}-${String(period.m).padStart(2, "0")}` : "ledger";
-    L(`     ${pad(sheet, 20)} ${pad(label, 9)} parsed ${padL(parsed.length, 5)}   new ${padL(neu, 5)}   already in system ${padL(dup, 5)}   unknown vehicle ${padL(unk, 4)}${dupInRun ? `   repeated in file ${dupInRun}` : ""}`);
+    const periodLabel = src.format === "grid" ? `${period.y}-${String(period.m).padStart(2, "0")}` : "ledger";
+    L(`     ${pad(sheet, 20)} ${pad(periodLabel, 9)} parsed ${padL(parsed.length, 5)}   new ${padL(neu, 5)}   already in system ${padL(dup, 5)}   unknown vehicle ${padL(unk, 4)}${dupInRun ? `   repeated in file ${dupInRun}` : ""}`);
   }
 }
 
