@@ -188,6 +188,28 @@ export async function generateBillForAsset(
     return { status: "skipped-existing", billId: existing.id };
   }
 
+  // A month's bill needs fuel drawn in that month. The owner's rule, and it
+  // narrows what came before: a machine merely posted to a site used to earn its
+  // guaranteed minimum whether or not it turned a wheel, on the reasoning that
+  // an idle machine is still denied to anyone else.
+  //
+  // In practice that billed a great deal of portable plant — generators,
+  // compressors, welding sets, mixers — 26 days apiece on no evidence of use at
+  // all: 38 such bills across June and July 2026, Rs 9,633,933.60. Diesel out of
+  // a site's tank is the one thing that proves a machine was working there, so
+  // it is now the gate.
+  //
+  // Deliberately checked HERE rather than by narrowing the available-fleet query
+  // upstream. An asset filtered out of that query is never examined, so a bill
+  // raised for it by an earlier run would survive untouched — the exact staleness
+  // that left 9 bills sitting on a per-km mode months after their machines moved
+  // to hours. Routing through notHere() means a regeneration both declines to
+  // create the bill and removes any draft already there.
+  const fuelThisPeriod = await prisma.fuelIssue.count({
+    where: { assetId, voided: false, issueDate: { gte: period.start, lte: period.end } },
+  });
+  if (fuelThisPeriod === 0) return notHere();
+
   // Structural choices: preserve an admin's overrides on regenerate, else derive
   // sensible defaults from the asset. These do not depend on the site, so they
   // are resolved up front for both the per-site (assignment-driven) and the
