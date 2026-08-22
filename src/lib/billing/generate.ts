@@ -158,6 +158,29 @@ export async function generateBillForAsset(
     where: { assetId_year_month: { assetId, year: period.year, month: period.month } },
   });
 
+  /**
+   * The machine was not at this site this month, so any bill saying it was must
+   * go rather than be left behind.
+   *
+   * This used to return the existing bill untouched, which quietly preserved
+   * whatever a previous run had decided. 86 drafts worth Rs 30.9M ended up at
+   * sites no posting supported — TM-09 invoiced to CEP-03 Wadakada while its
+   * only posting was Ruwanwella, still carrying a per-km mode from when it was
+   * metered in KM, untouched since August because every later regeneration
+   * skipped it down this path and left the stale record standing.
+   *
+   * Issued invoices are never deleted: one has gone to a client and is a
+   * commercial fact, corrected by a credit note, not by disappearing.
+   */
+  async function notHere(): Promise<{ status: GenerateStatus; billId?: string }> {
+    if (existing && existing.status === "DRAFT") {
+      await prisma.billLineItem.deleteMany({ where: { billId: existing.id } });
+      await prisma.bill.delete({ where: { id: existing.id } });
+      return { status: "skipped-not-here" };
+    }
+    return { status: "skipped-not-here", billId: existing?.id };
+  }
+
   if (existing && existing.status !== "DRAFT") {
     return { status: "skipped-finalized", billId: existing.id };
   }
@@ -246,7 +269,7 @@ export async function generateBillForAsset(
       const meterType = billingMode === "perkm" ? "KM" : "HOURS";
       const rd = await computeRunningDelta(asset.id, meterType, period.start, period.end, undefined);
       if (rd.delta === 0 && (await assetHasAssignments(asset.id))) {
-        return { status: "skipped-not-here", billId: existing?.id };
+        return notHere();
       }
     }
   }
@@ -287,7 +310,7 @@ export async function generateBillForAsset(
   // on site without drawing diesel is billed by allocating it, not by guessing.
   const resolvedProject = await resolveProjectForAssetMonth(assetId, period.year, period.month, asset.project);
   if (!resolvedProject) {
-    return { status: "skipped-not-here", billId: existing?.id };
+    return notHere();
   }
   const projectId = resolvedProject.id;
   const projectCode = resolvedProject.code;
@@ -326,7 +349,7 @@ export async function generateBillForAsset(
   // old site's consolidated invoice. Truly never-assigned vehicles are exempt,
   // preserving back-compat.
   if (fuel.litres === 0 && actualUnits === 0 && (await assetHasAssignments(asset.id))) {
-    return { status: "skipped-not-here", billId: existing?.id };
+    return notHere();
   }
 
   const actualMeterUnits = actualUnits;
