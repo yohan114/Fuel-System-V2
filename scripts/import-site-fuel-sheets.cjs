@@ -98,12 +98,18 @@ for (const a of assets) {
     if (k && !byKey.has(k)) byKey.set(k, a);
   }
 }
-// Codes that have been merged away still appear on the sheets. DAC-6545 was
-// folded into DAH-6545 earlier today; a clerk's workbook does not know that, and
-// eighteen Ruwanwella issues would otherwise be dropped as an unknown vehicle.
-// The aliases are read from the merge audit trail rather than hard-coded, so
-// they stay correct as more duplicates are resolved.
-for (const r of db.prepare(`SELECT metaJson FROM AuditLog WHERE entity='Asset' AND summary LIKE 'Merged duplicate asset%'`).all()) {
+// Names a sheet uses that are not the machine's code. Two kinds, both read from
+// the audit trail rather than hard-coded here, so they stay correct as the fleet
+// is tidied up:
+//
+//   merges — DAC-6545 was folded into DAH-6545, but a clerk's workbook does not
+//   know that, and eighteen Ruwanwella issues would be dropped as unknown;
+//
+//   sheet aliases — CEP-03 E writes the Kobelco SK200-7 as "SK 200 7", its model
+//   rather than its fleet code HEX-23.
+for (const r of db.prepare(
+  `SELECT metaJson FROM AuditLog WHERE entity='Asset'
+     AND (summary LIKE 'Merged duplicate asset%' OR summary LIKE 'Sheet alias%')`).all()) {
   try {
     const m = JSON.parse(r.metaJson || "{}");
     if (!m.from || !m.into) continue;
