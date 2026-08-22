@@ -81,3 +81,8 @@ out/
 *.db
 *.sqlite
 *.sqlite3
+
+# Ad-hoc database snapshots taken before a bulk change. Useful locally, never
+# worth 30 MB in the history — and the repo is public.
+data/*.bak-*
+.next-server.log
