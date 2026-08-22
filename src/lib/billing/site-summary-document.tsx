@@ -174,8 +174,15 @@ export function SiteSummaryDocument({ summary, generatedAt }: { summary: SiteSum
             </View>
           </View>
 
-          {(summary.unrated.length > 0 || summary.billedDirect.length > 0) && (
+          {(summary.unrated.length > 0 || summary.billedDirect.length > 0 || summary.noFuelHere.length > 0) && (
             <View style={s.warn}>
+              {summary.noFuelHere.length > 0 && (
+                <Text style={s.warnText}>
+                  {summary.noFuelHere.join(", ")} {summary.noFuelHere.length === 1 ? "was" : "were"} posted
+                  here this month but drew no fuel from this site&apos;s pumps, so nothing is charged for{" "}
+                  {summary.noFuelHere.length === 1 ? "it" : "them"} — the same rule the monthly invoice uses.
+                </Text>
+              )}
               {summary.billedDirect.length > 0 && (
                 <Text style={s.warnText}>
                   {summary.billedDirect.join(", ")} {summary.billedDirect.length === 1 ? "was" : "were"} on

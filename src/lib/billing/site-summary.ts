@@ -75,6 +75,7 @@ export interface SiteSummary {
   grandTotalCents: number;
   unrated: string[];            // posted here but no rate card — bills no rental
   billedDirect: string[];       // posted here but settled direct — deliberately not billed
+  noFuelHere: string[];         // posted here but drew nothing from this site's pumps
 }
 
 function modeFor(meterType: string | null, equipType: string): "hourly" | "perkm" | "perday" {
@@ -122,6 +123,7 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
   const lines: SiteSummaryLine[] = [];
   const unrated: string[] = [];
   const billedDirect: string[] = [];
+  const noFuelHere: string[] = [];
   const prices = new Set<number>();
 
   for (const a of assets) {
@@ -136,13 +138,6 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     // see it was considered.
     if (a.billedDirect) { billedDirect.push(a.code); continue; }
 
-    const mode = modeFor(a.meterType, a.rentalRate?.equipType ?? "");
-    const basis = here[0]?.billingType === "DRY" ? "d" : (a.rentalRate?.defaultBasis ?? "w");
-    const minimumFull = mode === "hourly" && a.minBillHours ? a.minBillHours : minimumForMode(cfg, mode);
-    const minimumProrated = minimumFull * (daysHere / daysInMonth);
-    const rateCents = pickRate(a.rentalRate as Rate | null, mode, basis);
-    if (rateCents == null) unrated.push(a.code);
-
     // Only this site's own pumps, and only the days the machine was posted here.
     const fuel = await prisma.fuelIssue.findMany({
       where: { assetId: a.id, voided: false, bulkTankId: { in: tankIds },
@@ -150,9 +145,26 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
       select: { litres: true, totalCost: true, issueDate: true, pricePerLitre: true } });
     const onHereDays = fuel.filter((f) =>
       here.some((s) => f.issueDate >= s.start && f.issueDate <= s.end));
-    for (const f of onHereDays) prices.add(f.pricePerLitre);
     const fuelLitres = onHereDays.reduce((n, f) => n + f.litres, 0);
     const fuelCostCents = onHereDays.reduce((n, f) => n + f.totalCost, 0);
+
+    // Diesel out of this site's tank is what shows the machine worked here, and
+    // it is the same precondition the monthly bill applies. Without it the two
+    // documents contradicted each other in front of the client: June's summaries
+    // came to Rs 133.3M against Rs 77.1M invoiced, because a machine merely
+    // POSTED to a site earned its prorated minimum here while its invoice
+    // charged nothing. Marawila's July sheet asked for Rs 10.0M on 46 machines
+    // and its invoice was Rs 678,638. Named below rather than dropped quietly,
+    // so a site can see the machine was considered.
+    if (fuelLitres === 0) { noFuelHere.push(a.code); continue; }
+    for (const f of onHereDays) prices.add(f.pricePerLitre);
+
+    const mode = modeFor(a.meterType, a.rentalRate?.equipType ?? "");
+    const basis = here[0]?.billingType === "DRY" ? "d" : (a.rentalRate?.defaultBasis ?? "w");
+    const minimumFull = mode === "hourly" && a.minBillHours ? a.minBillHours : minimumForMode(cfg, mode);
+    const minimumProrated = minimumFull * (daysHere / daysInMonth);
+    const rateCents = pickRate(a.rentalRate as Rate | null, mode, basis);
+    if (rateCents == null) unrated.push(a.code);
 
     // Meter movement over the days at this site. A machine with no reading in
     // the window has no measured work — which is a different thing from zero,
@@ -250,6 +262,6 @@ export async function buildSiteSummary(siteCode: string, year: number, month: nu
     fuelRateBlended: prices.size > 1,
     ssclRate: cfg.ssclRate, ssclCents, vatRate: cfg.vatRate, vatCents,
     grandTotalCents: subtotalCents + ssclCents + vatCents,
-    unrated, billedDirect,
+    unrated, billedDirect, noFuelHere,
   };
 }

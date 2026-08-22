@@ -10,6 +10,10 @@
  * what the SITE can point at in its own register, which is not the same set as
  * the machines whose monthly invoice happens to be addressed here.
  *
+ * A machine earns a line only where it drew fuel from this site's own pumps —
+ * the same precondition the monthly bill applies. Anything posted here that did
+ * not is named at the foot of the page rather than charged.
+ *
  * Named the way the owner's folders are — sitesummary_CEP03F_202607.pdf.
  *
  *   npx tsx scripts/export-site-summaries.ts 2026 6 7
@@ -100,6 +104,7 @@ async function main() {
       );
       if (sum.unrated.length) console.log(`  ${" ".repeat(26)}no rate card: ${sum.unrated.join(", ")}`);
       if (sum.billedDirect.length) console.log(`  ${" ".repeat(26)}settled direct: ${sum.billedDirect.join(", ")}`);
+      if (sum.noFuelHere.length) console.log(`  ${" ".repeat(26)}posted here, no fuel from this pump (${sum.noFuelHere.length}): ${sum.noFuelHere.join(", ")}`);
     }
 
     console.log(`\n  ${written} site summaries · ${rs(grand)}`);
