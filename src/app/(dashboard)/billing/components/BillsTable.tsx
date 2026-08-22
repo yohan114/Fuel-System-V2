@@ -35,6 +35,12 @@ export interface BillRow {
   grandTotalCents: number;
   status: string;
   meterCheck: string | null; // formatted variance when fuel-implied units differ ≥20% from the chart
+  /**
+   * Set when a site filter is on and the vehicle worked more than one site, so
+   * the money in this row is THIS site's share of the invoice rather than the
+   * whole of it. Carries the whole so the row can say what it is a part of.
+   */
+  portion?: { days: number; totalDays: number; fullGrandCents: number } | null;
 }
 
 export default function BillsTable({
@@ -278,7 +284,17 @@ export default function BillsTable({
                   )}
                   <div className="text-gray-500">{b.assetLabel}</div>
                 </td>
-                <td className="px-4 py-3 text-gray-400">{b.projectName || "Unassigned"}</td>
+                <td className="px-4 py-3 text-gray-400">
+                  {b.projectName || "Unassigned"}
+                  {b.portion && (
+                    <div
+                      className="text-[10px] text-amber-400/90 mt-0.5"
+                      title={`Invoiced to ${b.projectName ?? "another site"} as one bill of ${rs(b.portion.fullGrandCents)}. This row is this site's share.`}
+                    >
+                      {b.portion.days} of {b.portion.totalDays} days here · share of {rs(b.portion.fullGrandCents)}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-gray-400">
                   {MODE_LABEL[b.billingMode]} <span className="text-gray-600">·</span>{" "}
                   <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${b.rateBasis === "d" ? "bg-amber-500/15 text-amber-400" : "bg-sky-500/15 text-sky-400"}`}>

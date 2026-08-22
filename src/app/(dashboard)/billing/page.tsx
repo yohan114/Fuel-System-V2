@@ -13,7 +13,7 @@ import BillsTable from "./components/BillsTable";
 import AgingReport from "./components/AgingReport";
 import VehicleBillPanel, { type VehicleBillView } from "./components/VehicleBillPanel";
 import { matchesVehicle } from "@/lib/vehicle-search";
-import { computeSiteSplit } from "@/lib/billing/site-split";
+import { computeSiteSplit, type SplitLineItem } from "@/lib/billing/site-split";
 import { apportionCents } from "@/lib/billing/site-explode";
 
 interface PageProps {
@@ -71,20 +71,62 @@ export default async function BillingPage(props: PageProps) {
     );
   }
 
+  // A bill is ADDRESSED to whichever site held the machine longest, but the work
+  // belongs to every site it touched. Filtering on projectId alone therefore
+  // answered the wrong question and answered it invisibly: Kotugoda had HEX-46
+  // for four days in July, Rs 131,087 of it, and picking Kotugoda showed an
+  // empty page — the bill is addressed to the site that had the other 27 days.
+  //
+  // So a site filter selects bills whose SPLIT touches the site, the same rule
+  // the consolidated PDFs use, and the figures shown are that site's portion
+  // rather than the whole invoice. Showing Kotugoda HEX-46's full Rs 10.8M would
+  // be worse than showing nothing.
+  const activeSite = scope.kind === "project" ? scope.projectId : siteFilter;
+  const bySplit = activeSite !== "all" && activeSite !== "unassigned";
+
   const where: any = { periodKey };
-  if (scope.kind === "project") {
-    where.projectId = scope.projectId;
-  } else if (siteFilter === "unassigned") {
-    where.projectId = null;
-  } else if (siteFilter !== "all") {
-    where.projectId = siteFilter;
-  }
+  if (activeSite === "unassigned") where.projectId = null;
   if (statusFilter !== "all") where.status = statusFilter;
 
-  const allBills = await prisma.bill.findMany({
+  // The split needs line items. Loading them for a whole month is only worth it
+  // when a site is actually selected; the all-sites list shows no line detail.
+  const rawBills = await prisma.bill.findMany({
     where,
     orderBy: [{ grandTotalCents: "desc" }],
+    ...(bySplit ? { include: { lineItems: true } } : {}),
   });
+
+  // Each bill reduced to this site's share, or left whole when no site is on.
+  type Portion = { days: number; totalDays: number; fullGrandCents: number } | null;
+  const allBills: ((typeof rawBills)[number] & { portion?: Portion })[] = bySplit
+    ? rawBills
+        .map((b) => {
+          const items = (b as { lineItems?: SplitLineItem[] }).lineItems ?? [];
+          const split = computeSiteSplit(items, b.minimumUnits);
+          // Single-site bills carry no split; they belong wholly to the site the
+          // invoice names.
+          if (!split) return b.projectId === activeSite ? { ...b, portion: null } : null;
+          const idx = split.rows.findIndex((r) => r.projectKey === activeSite);
+          if (idx < 0) return null;
+          // Tax follows the value it was charged on, residual to the largest
+          // share, so the site rows add back to the invoice exactly.
+          const weights = split.rows.map((r) => r.totalCents);
+          const grand = apportionCents(b.grandTotalCents, weights);
+          const rental = apportionCents(b.rentalAmountCents, weights);
+          const fuelCost = apportionCents(b.fuelCostCents, weights);
+          const row = split.rows[idx];
+          return {
+            ...b,
+            grandTotalCents: grand[idx],
+            rentalAmountCents: rental[idx],
+            fuelCostCents: fuelCost[idx],
+            billableUnits: row.billableUnits,
+            portion: { days: row.days, totalDays: split.totalDays, fullGrandCents: b.grandTotalCents },
+          };
+        })
+        .filter((b): b is NonNullable<typeof b> => b !== null)
+        .sort((a, b) => b.grandTotalCents - a.grandTotalCents)
+    : rawBills;
 
   // Meter-vs-fuel check across the (unfiltered) month for the tile count.
   const needsClarify = (v: number | null) => v != null && Math.abs(v) >= VARIANCE_THRESHOLD;
@@ -335,6 +377,7 @@ export default async function BillingPage(props: PageProps) {
               grandTotalCents: b.grandTotalCents,
               status: b.status,
               meterCheck: needsClarify(v) ? formatVariancePct(v) : null,
+              portion: b.portion ?? null,
             };
           })}
         />
