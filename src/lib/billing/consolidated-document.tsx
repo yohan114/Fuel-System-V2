@@ -69,17 +69,21 @@ const styles = StyleSheet.create({
   // Widths total 100. Reg No and Rate were added at the owner's request: a site
   // clerk reconciles against the plate painted on the machine, not the E&C code,
   // and a client asked which rate a line was charged at.
-  cCode:   { width: "8%", flexDirection: "row", alignItems: "center", gap: 3 },
-  cReg:    { width: "9%" },
-  cLabel:  { width: "13%" },
-  cMode:   { width: "7%" },
-  cFuelL:  { width: "7%", textAlign: "right" },
-  cActual: { width: "8%", textAlign: "right" },
-  cBill:   { width: "8%", textAlign: "right" },
-  cRate:   { width: "9%", textAlign: "right" },
-  cRental: { width: "11%", textAlign: "right" },
-  cFuelRs: { width: "9%", textAlign: "right" },
-  cGrand:  { width: "11%", textAlign: "right" },
+  // Twelve columns on A4 portrait. The money columns keep the widths they had —
+  // "1,385,290.00" needs every point of them — and the two new ones are paid for
+  // by the make-and-model column that came out.
+  cCode:    { width: "9%", flexDirection: "row", alignItems: "center", gap: 3 },
+  cReg:     { width: "9%" },
+  cDays:    { width: "5%", textAlign: "right" },
+  cMode:    { width: "7%" },
+  cFuelL:   { width: "7%", textAlign: "right" },
+  cConsTyp: { width: "9%", textAlign: "right" },
+  cActual:  { width: "8%", textAlign: "right" },
+  cBill:    { width: "8%", textAlign: "right" },
+  cRate:    { width: "8%", textAlign: "right" },
+  cRental:  { width: "10%", textAlign: "right" },
+  cFuelRs:  { width: "9%", textAlign: "right" },
+  cGrand:   { width: "11%", textAlign: "right" },
 
   statusDot: { width: 5, height: 5, borderRadius: 2.5 },
   tCell: { fontSize: 7, color: SLATE },
@@ -92,7 +96,9 @@ const styles = StyleSheet.create({
   fuelFlag: { color: AMBER_DEEP, fontFamily: "Helvetica-Bold" },
 
   siteSub: { flexDirection: "row", borderTopWidth: 1.25, borderTopColor: NAVY_SOFT, paddingVertical: 5, paddingHorizontal: 6, backgroundColor: PANEL, borderBottomLeftRadius: 5, borderBottomRightRadius: 5 },
-  siteSubLabelCell: { width: "37%", flexDirection: "row", alignItems: "center", gap: 4 },
+  // Spans E&C No + Reg No + Days + Mode, so the subtotal's figures sit under
+  // their own columns. Keep in step with those four widths.
+  siteSubLabelCell: { width: "30%", flexDirection: "row", alignItems: "center", gap: 4 },
   siteSubLabel: { fontSize: 7, fontFamily: "Helvetica-Bold", color: MUTE, textTransform: "uppercase", letterSpacing: 0.3 },
 
   totalsOuter: { flexDirection: "row", justifyContent: "flex-end", marginTop: 14 },
@@ -291,10 +297,19 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt }: { bills:
                   <View style={styles.tHead}>
                     <Text style={[styles.tHeadCell, styles.cCode]}>E&C No</Text>
                     <Text style={[styles.tHeadCell, styles.cReg]}>Reg No</Text>
-                    <Text style={[styles.tHeadCell, styles.cLabel]}>Vehicle</Text>
+                    <Text style={[styles.tHeadCell, styles.cDays]}>Days</Text>
                     <Text style={[styles.tHeadCell, styles.cMode]}>Mode</Text>
                     <Text style={[styles.tHeadCell, styles.cFuelL]}>Fuel (L)</Text>
-                    <Text style={[styles.tHeadCell, styles.cActual]}>Actual</Text>
+                    {/* Stacked rather than wrapped: left to itself "(cons typ)"
+                        breaks as "(cons  typ)" and "(meter)" hyphenates. */}
+                    <View style={styles.cConsTyp}>
+                      <Text style={styles.tHeadCell}>Actual</Text>
+                      <Text style={styles.tHeadCell}>(cons typ)</Text>
+                    </View>
+                    <View style={styles.cActual}>
+                      <Text style={styles.tHeadCell}>Actual</Text>
+                      <Text style={styles.tHeadCell}>(meter)</Text>
+                    </View>
                     <Text style={[styles.tHeadCell, styles.cBill]}>Billed</Text>
                     <Text style={[styles.tHeadCell, styles.cRate]}>Rate</Text>
                     <Text style={[styles.tHeadCell, styles.cRental]}>Rental (Rs)</Text>
@@ -305,8 +320,18 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt }: { bills:
                   {group.bills.map((b, i) => {
                     const fo = isFuelOnly(b);
                     const unit = unitFor(b.billingMode);
-                    const actual = b.actualMeterUnits ?? b.actualUnits ?? 0;
+                    // Null, not zero, when there is no per-site meter figure: a
+                    // vehicle split across sites has one reading for the month
+                    // and no honest way to divide it. Printing 0 next to a real
+                    // cons-typ figure would read as "the meter says it did
+                    // nothing", which is a different claim entirely.
+                    const actual = b.actualMeterUnits ?? b.actualUnits ?? null;
                     const basis = (b.rateBasis || "").toUpperCase();
+                    // Days posted to this site, summed from the rental lines by
+                    // the site split — so a shared vehicle shows the days this
+                    // site had it, not the days of the whole month.
+                    const days = b.assignedDays ?? 0;
+                    const consTyp = b.derivedStandardUnits ?? null;
                     return (
                       <View key={b.id} style={[styles.tRow, i % 2 === 1 ? styles.tRowAlt : {}]} wrap={false}>
                         <View style={styles.cCode}>
@@ -318,15 +343,23 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt }: { bills:
                             blanking it would tell the reader the plate is unknown
                             when it is right there. Under a labelled column the
                             repetition is informative; only inline does it read wrong. */}
-                        <Text style={[styles.tCell, styles.cReg]}>{b.assetRegNo || "—"}</Text>
-                        <View style={styles.cLabel}>
-                          <Text style={styles.tCell}>{b.assetLabel || "—"}</Text>
-                          {b.driverName ? <Text style={styles.tCellMute}>Driver: {b.driverName}</Text> : null}
+                        <View style={styles.cReg}>
+                          <Text style={styles.tCell}>{b.assetRegNo || "—"}</Text>
+                          {/* The make and model column is gone, so the driver
+                              rides here rather than off the page. */}
+                          {b.driverName ? <Text style={styles.tCellMute}>{b.driverName}</Text> : null}
                         </View>
+                        <Text style={[styles.tCellNum, styles.cDays]}>{days > 0 ? num(days, 0) : "—"}</Text>
                         <Text style={[styles.tCell, styles.cMode]}>{fo ? "Fuel only" : `${modeShort(b.billingMode)} · ${basis}`}</Text>
                         <Text style={[styles.tCellNum, styles.cFuelL]}>{b.fuelLitres > 0 ? num(b.fuelLitres, 0) : "—"}</Text>
-                        <Text style={[fo ? styles.tCellMute : styles.tCellNum, styles.cActual]}>
-                          {fo ? "—" : <>{num(actual, 0)}<Text style={styles.unitTag}> {unit}</Text></>}
+                        {/* What the diesel says the machine did, at its typical
+                            consumption rate — the second opinion on the meter,
+                            and the only one available when nobody read it. */}
+                        <Text style={[fo || consTyp == null ? styles.tCellMute : styles.tCellNum, styles.cConsTyp]}>
+                          {fo || consTyp == null ? "—" : <>{num(consTyp, 0)}<Text style={styles.unitTag}> {unit}</Text></>}
+                        </Text>
+                        <Text style={[fo || actual == null ? styles.tCellMute : styles.tCellNum, styles.cActual]}>
+                          {fo || actual == null ? "—" : <>{num(actual, 0)}<Text style={styles.unitTag}> {unit}</Text></>}
                         </Text>
                         <Text style={styles.cBill}>
                           {fo ? <Text style={styles.tCellMute}>—</Text> : <><Text style={styles.billStrong}>{num(b.billableUnits, 0)}</Text><Text style={styles.unitTag}> {unit}</Text></>}
@@ -346,6 +379,7 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt }: { bills:
                       <Text style={styles.siteSubLabel}>Site subtotal · {group.bills.length} veh.</Text>
                     </View>
                     <Text style={[styles.tCellNum, styles.cFuelL]}>{num(st.litres, 0)}</Text>
+                    <Text style={[styles.tCellMute, styles.cConsTyp]}></Text>
                     <Text style={[styles.tCellMute, styles.cActual]}></Text>
                     <Text style={[styles.tCellMute, styles.cBill]}></Text>
                     <Text style={[styles.tCellMute, styles.cRate]}></Text>

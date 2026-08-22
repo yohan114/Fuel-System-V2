@@ -186,3 +186,49 @@ describe("the whole month reconciles", () => {
     expect(after).toBe(before);
   });
 });
+
+// The two columns the consolidated bill gained when the make-and-model column
+// came out: how many days the machine was HERE, and what the diesel drawn HERE
+// says it did. Both have to be per-site or the invoice states the whole month's
+// figures under one site's name.
+describe("days and fuel-implied work, per site", () => {
+  it("gives each site only its own days", () => {
+    const byCode = Object.fromEntries(
+      explodeBillsBySite([hex37], codes).map((p) => [p.projectCode, p])
+    );
+    expect(byCode.AWIISAWELLA.assignedDays).toBe(13);
+    expect(byCode["CEP-03F"].assignedDays).toBe(12);
+    expect(byCode.BGP.assignedDays).toBe(6);
+  });
+
+  it("scales the fuel-implied work by the litres that site drew", () => {
+    // 1,320 L across the month imply 118 hours; Galagedara drew 1,140 of them.
+    const byCode = Object.fromEntries(
+      explodeBillsBySite([{ ...hex37, derivedStandardUnits: 118 }], codes).map((p) => [p.projectCode, p])
+    );
+    expect(byCode["CEP-03F"].derivedStandardUnits).toBeCloseTo(118 * (1140 / 1320), 6);
+    expect(byCode.AWIISAWELLA.derivedStandardUnits).toBeCloseTo(118 * (180 / 1320), 6);
+  });
+
+  it("says nothing rather than zero where a site drew no diesel", () => {
+    // Badalgama had the machine on dry hire for six days and issued nothing.
+    // A printed 0 would claim the fuel proves it did no work; the truth is that
+    // there is no fuel here to prove anything either way.
+    const byCode = Object.fromEntries(
+      explodeBillsBySite([{ ...hex37, derivedStandardUnits: 118 }], codes).map((p) => [p.projectCode, p])
+    );
+    expect(byCode.BGP.derivedStandardUnits).toBeNull();
+  });
+
+  it("says nothing when the bill itself never derived a figure", () => {
+    const byCode = Object.fromEntries(
+      explodeBillsBySite([{ ...hex37, derivedStandardUnits: null }], codes).map((p) => [p.projectCode, p])
+    );
+    expect(byCode["CEP-03F"].derivedStandardUnits).toBeNull();
+  });
+
+  it("the site portions' days add up to the month's", () => {
+    const parts = explodeBillsBySite([hex37], codes);
+    expect(parts.reduce((s, p) => s + p.assignedDays, 0)).toBe(31);
+  });
+});

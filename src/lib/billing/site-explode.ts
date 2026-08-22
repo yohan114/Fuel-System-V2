@@ -136,6 +136,17 @@ export function explodeBillsBySite(bills: any[], codeById?: Map<string, string>)
         // rows show none rather than a made-up number.
         actualMeterUnits: null,
         actualUnits: null,
+        // The fuel-implied work, though, IS known per site: the litres are. Scale
+        // the whole bill's derivation by this site's share of them, which keeps
+        // the consumption basis the generator already checked rather than
+        // re-deriving it here from a snapshot that may not be in the billed unit.
+        // No diesel here means no fuel-implied figure at all, which is an
+        // absence rather than a zero — the same way the litres column shows a
+        // dash. Printing 0 would claim the fuel proves the machine did nothing.
+        derivedStandardUnits:
+          b.derivedStandardUnits != null && (b.fuelLitres || 0) > 0 && p.litres > 0
+            ? b.derivedStandardUnits * (p.litres / b.fuelLitres)
+            : null,
         subtotalCents: subtotal[i],
         ssclCents: sscl[i],
         vatCents: vat[i],
