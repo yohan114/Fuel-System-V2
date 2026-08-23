@@ -9,6 +9,7 @@ import { checkDailyCap } from "@/lib/fuel-policy";
 import { extractFileField } from "@/lib/upload";
 import { revalidatePath } from "next/cache";
 import { errorMessage } from "@/lib/errors";
+import { logFuelIssueChange, diffSnapshots, periodKeyFor } from "@/lib/fuel/audit";
 
 // Site-configurable gate: when Setting "fuel_photo_required" === "true", a
 // pump/meter photo must accompany every fuel request / direct issue.
@@ -504,6 +505,8 @@ export async function editFuelIssueAction(issueId: string, formData: FormData) {
   const dateStr = formData.get("issueDate")?.toString();
   let fuelKind = formData.get("fuelKind")?.toString();
   const source = formData.get("source")?.toString() || "STATION";
+  // Free text, and worth having: the numbers say what moved, not why.
+  const reason = formData.get("reason")?.toString().trim() || null;
 
   if (!issueId || !assetCode || !litresStr || !dateStr) {
     return { error: "Please fill in all required fields" };
@@ -620,6 +623,9 @@ export async function editFuelIssueAction(issueId: string, formData: FormData) {
 
       // Update or create linked MeterReading record
       let meterReadingRecordId = oldIssue.meterReadingRecordId;
+      // Tracked for the audit entry: a litre changing hands moves a meter row
+      // as well as a tank balance, and the record should say which.
+      let meterOutcome: "created" | "updated" | "deleted" | "unchanged" = "unchanged";
 
       if (meterReading !== null) {
         if (meterReadingRecordId) {
@@ -633,6 +639,7 @@ export async function editFuelIssueAction(issueId: string, formData: FormData) {
               assetId: asset.id, // in case asset changed
             }
           });
+          meterOutcome = "updated";
         } else {
           // Create new meter reading record
           const newReading = await tx.meterReading.create({
@@ -647,6 +654,7 @@ export async function editFuelIssueAction(issueId: string, formData: FormData) {
             }
           });
           meterReadingRecordId = newReading.id;
+          meterOutcome = "created";
         }
       } else {
         // If they cleared the reading but there was one before, delete it
@@ -663,6 +671,7 @@ export async function editFuelIssueAction(issueId: string, formData: FormData) {
             where: { id: meterReadingRecordId }
           });
           meterReadingRecordId = null;
+          meterOutcome = "deleted";
         }
       }
 
@@ -684,15 +693,40 @@ export async function editFuelIssueAction(issueId: string, formData: FormData) {
         }
       });
 
-      // Write Audit Log
-      await tx.auditLog.create({
-        data: {
-          actorId: admin.id,
-          action: "UPDATE",
-          entity: "FuelIssue",
-          entityId: oldIssue.id,
-          summary: `Updated fuel issue ${oldIssue.id}: Asset changed from ${oldIssue.asset.code} to ${asset.code}, litres from ${oldIssue.litres}L to ${litres}L, date from ${oldIssue.issueDate.toISOString()} to ${issueDate.toISOString()}`,
-        }
+      // The record. Every field that moved with both its values, plus what the
+      // change did to the tank, the meter row and the month's bill — the old
+      // entry named three of the eleven fields it could change and no
+      // consequence at all.
+      await logFuelIssueChange(tx, admin.id, asset.code, {
+        action: "UPDATE",
+        issueId: oldIssue.id,
+        changes: diffSnapshots(
+          {
+            assetId: oldIssue.assetId, assetCode: oldIssue.asset.code, fuelKind: oldIssue.fuelKind,
+            litres: oldIssue.litres, meterReading: oldIssue.meterReading, readingType: oldIssue.readingType,
+            pricePerLitre: oldIssue.pricePerLitre, totalCost: oldIssue.totalCost, source: oldIssue.source,
+            issueDate: oldIssue.issueDate, bulkTankId: oldIssue.bulkTankId, voided: oldIssue.voided,
+          },
+          {
+            // `fuelKind` is a `let` that defaults to the old value earlier; the
+            // narrowing does not survive into this callback, so it is restated.
+            assetId: asset.id, assetCode: asset.code, fuelKind: fuelKind ?? oldIssue.fuelKind,
+            litres, meterReading, readingType: asset.meterType,
+            pricePerLitre: resolvedPrice.pricePerLitre, totalCost, source,
+            issueDate, bulkTankId: oldIssue.bulkTankId, voided: oldIssue.voided,
+          },
+        ),
+        tankDeltaLitres: balanceChange || undefined,
+        tankId: bulkTankToUpdate?.id ?? null,
+        tankName: bulkTankToUpdate?.name ?? null,
+        meterReading: meterOutcome,
+        // Both months where an edit moved the issue across a month boundary,
+        // since both bills have to be redone.
+        periodKey:
+          periodKeyFor(oldIssue.issueDate) === periodKeyFor(issueDate)
+            ? periodKeyFor(issueDate)
+            : `${periodKeyFor(oldIssue.issueDate)} → ${periodKeyFor(issueDate)}`,
+        reason,
       });
     });
 

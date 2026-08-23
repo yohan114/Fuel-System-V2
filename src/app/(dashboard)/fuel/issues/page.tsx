@@ -7,6 +7,7 @@ import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
 import { fuelDateTime } from "@/lib/colombo-date";
 import { fuelViewScope } from "@/lib/fuel/view-scope";
 import CorrectionButton from "./CorrectionButton";
+import IssueAdminActions from "./IssueAdminActions";
 import Link from "next/link";
 import { Search, MapPin } from "lucide-react";
 import { assetSearchClause } from "@/lib/fleet/asset-search";
@@ -172,6 +173,33 @@ export default async function FuelIssuesPage(props: PageProps) {
     select: { fuelIssueId: true },
   });
   const pendingSet = new Set(pendingCorr.map((c) => c.fuelIssueId));
+
+  // What has been done to each issue, for the admin row actions. Only loaded
+  // for an admin, since nobody else can see it — and only for the rows on
+  // screen, which is why it is keyed by the issue ids already fetched.
+  const isAdmin = session.role === "ADMIN";
+  const historyByIssue = new Map<string, { at: string; who: string | null; summary: string }[]>();
+  const tankName = new Map<string, string>();
+  if (isAdmin) {
+    const [entries, tanks] = await Promise.all([
+      prisma.auditLog.findMany({
+        where: { entity: "FuelIssue", entityId: { in: issues.map((i) => i.id) } },
+        select: { entityId: true, createdAt: true, summary: true, actor: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.bulkTank.findMany({ select: { id: true, name: true } }),
+    ]);
+    for (const e of entries) {
+      if (!e.entityId) continue;
+      if (!historyByIssue.has(e.entityId)) historyByIssue.set(e.entityId, []);
+      historyByIssue.get(e.entityId)!.push({
+        at: e.createdAt.toISOString(),
+        who: e.actor?.name ?? null,
+        summary: e.summary,
+      });
+    }
+    for (const t of tanks) tankName.set(t.id, t.name);
+  }
 
   // 3. Compute sums (voided issues don't count toward the filter totals)
   let totalLitres = 0;
@@ -390,7 +418,26 @@ export default async function FuelIssuesPage(props: PageProps) {
                     )}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    {issue.voided ? (
+                    {/* An admin acts directly and the act is recorded; everyone
+                        else asks, and the request is reviewed. Same data, two
+                        different responsibilities. */}
+                    {isAdmin ? (
+                      <IssueAdminActions
+                        issue={{
+                          id: issue.id,
+                          assetCode: issue.asset.code,
+                          litres: issue.litres,
+                          fuelKind: issue.fuelKind,
+                          meterReading: issue.meterReading,
+                          source: issue.source,
+                          issueDate: issue.issueDate.toISOString(),
+                          voided: issue.voided,
+                          bulkTankName: tankName.get(issue.bulkTankId ?? "") ?? null,
+                          tankLocked: !!issue.bulkTankId,
+                        }}
+                        history={historyByIssue.get(issue.id) ?? []}
+                      />
+                    ) : issue.voided ? (
                       <span className="text-[10px] text-gray-600">—</span>
                     ) : pendingSet.has(issue.id) ? (
                       <span className="text-[10px] font-semibold text-amber-300/80 bg-amber-500/5 border border-amber-500/10 rounded-lg px-2.5 py-1.5">
