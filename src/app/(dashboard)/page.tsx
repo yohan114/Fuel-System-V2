@@ -32,6 +32,15 @@ export default async function DashboardPage() {
   const user = await requireUser();
   const isAdmin = user.role === "ADMIN";
 
+  // The pumps an admin may record a fuel issue against, with the balance each
+  // holds so the choice is made with the stock figure in view.
+  const recordableTanks = isAdmin
+    ? await prisma.bulkTank.findMany({
+        select: { id: true, name: true, balance: true, fuelKind: true },
+        orderBy: { name: "asc" },
+      })
+    : [];
+
   // Calculate current calendar month boundaries in Colombo timezone
   const now = new Date();
   const colomboTodayStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
@@ -244,6 +253,9 @@ export default async function DashboardPage() {
         assets={assets.filter((a) => a.status === "ACTIVE")}
         isAdmin={isAdmin}
         isLocked={false}
+        // Only an admin records against another site's pump; everyone else
+        // issues from their own console, which already knows their tank.
+        tanks={isAdmin ? recordableTanks : []}
       />
 
       {/* KPI Cards */}

@@ -10,6 +10,12 @@ import { extractFileField } from "@/lib/upload";
 import { revalidatePath } from "next/cache";
 import { errorMessage } from "@/lib/errors";
 import { logFuelIssueChange, diffSnapshots, periodKeyFor } from "@/lib/fuel/audit";
+import { colomboDayKey } from "@/lib/colombo-date";
+
+// How far back an admin may date a fuel issue before having to say why. A week
+// covers the ordinary case — a site sends its sheets in on Monday — without
+// letting a month be quietly rewritten.
+const BACKDATE_FREE_DAYS = 7;
 
 // Site-configurable gate: when Setting "fuel_photo_required" === "true", a
 // pump/meter photo must accompany every fuel request / direct issue.
@@ -328,8 +334,12 @@ export async function recordDirectIssueAction(formData: FormData) {
   const fuelKind = formData.get("fuelKind")?.toString();
   const litresStr = formData.get("litres")?.toString();
   const meterReadingStr = formData.get("meterReading")?.toString();
-  const source = formData.get("source")?.toString() || "STATION";
+  let source = formData.get("source")?.toString() || "STATION";
   const dateStr = formData.get("issueDate")?.toString();
+  // Which pump it came out of. Blank means a filling station or an external
+  // purchase — real, and no tank to draw down.
+  const bulkTankId = formData.get("bulkTankId")?.toString().trim() || null;
+  const backdateReason = formData.get("backdateReason")?.toString().trim() || null;
 
   if (!assetId || !fuelKind || !litresStr || !dateStr) {
     return { error: "Please fill in all required fields" };
@@ -339,18 +349,33 @@ export async function recordDirectIssueAction(formData: FormData) {
   const meterReading = meterReadingStr ? parseFloat(meterReadingStr) : null;
   const issueDate = new Date(dateStr);
 
-  // Date Lock check (current day only)
+  // How far back this may be dated.
+  //
+  // It used to be the current day and nothing else, which is right for an
+  // operator at a pump and wrong for an office putting a week of paper sheets
+  // into the system — the reason so much of this fleet's fuel arrives by bulk
+  // import instead. An admin may date it back; past a week they say why, and
+  // the reason goes on the record with everything else.
   if (process.env.TEST_ENV !== "true") {
-    const colomboTodayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
-    const issueDatePart = dateStr.split("T")[0];
-    
-    // 20-hour access bypass for June 1st and June 2nd, 2026
-    const nowTime = new Date();
-    const bypassExpiry = new Date("2026-06-19T10:04:11.000Z");
-    const isBypassActive = nowTime < bypassExpiry && (issueDatePart === "2026-06-01" || issueDatePart === "2026-06-02");
+    const colomboToday = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
+    const issueDay = colomboDayKey(issueDate);
+    const isAdmin = admin.role === "ADMIN";
 
-    if (issueDatePart !== colomboTodayStr && !isBypassActive) {
+    if (issueDay > colomboToday) {
+      return { error: "A fuel issue cannot be dated in the future." };
+    }
+    if (!isAdmin && issueDay !== colomboToday) {
       return { error: "You can only log operations for the current day." };
+    }
+    if (isAdmin) {
+      const daysBack = Math.round(
+        (new Date(`${colomboToday}T00:00:00+05:30`).getTime() - new Date(`${issueDay}T00:00:00+05:30`).getTime()) / 86_400_000,
+      );
+      if (daysBack > BACKDATE_FREE_DAYS && (backdateReason?.length ?? 0) < 4) {
+        return {
+          error: `That is ${daysBack} days back. Give a reason for dating it then — it goes on the record.`,
+        };
+      }
     }
   }
 
@@ -414,6 +439,27 @@ export async function recordDirectIssueAction(formData: FormData) {
     const capError = await checkDailyCap(asset.id, asset.dailyCapLitres, issueDate, litres);
     if (capError) return { error: capError };
 
+    // The pump, where one was named. Litres out of a tank must come off its
+    // balance or the stock figure drifts from what was actually dispensed —
+    // which is how this database came to read 7,856 L at Badalgama against the
+    // site instance's 727 L.
+    let tank: { id: string; name: string; balance: number; fuelKind: string } | null = null;
+    if (bulkTankId) {
+      tank = await prisma.bulkTank.findUnique({
+        where: { id: bulkTankId },
+        select: { id: true, name: true, balance: true, fuelKind: true },
+      });
+      if (!tank) return { error: "That pump was not found" };
+      if (tank.fuelKind !== fuelKind) {
+        return { error: `${tank.name} holds ${tank.fuelKind.replace(/_/g, " ").toLowerCase()}, not ${fuelKind.replace(/_/g, " ").toLowerCase()}.` };
+      }
+      if (tank.balance < litres) {
+        return { error: `${tank.name} holds ${tank.balance.toFixed(1)} L — less than the ${litres} L being issued.` };
+      }
+      // Same convention as the operator consoles: the pump's name IS the source.
+      source = tank.name;
+    }
+
     const photo = await extractFileField(formData, "photo");
     if (!photo && (await photoRequired())) {
       return { error: "A pump/meter photo is required to record a fuel issue." };
@@ -439,9 +485,17 @@ export async function recordDirectIssueAction(formData: FormData) {
           issuedById: admin.id,
           issuePerson: admin.name,
           fuelPriceId: resolvedPrice.id,
+          bulkTankId: tank?.id ?? null,
           ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
         },
       });
+
+      if (tank) {
+        await tx.bulkTank.update({
+          where: { id: tank.id },
+          data: { balance: { decrement: litres } },
+        });
+      }
 
       // Log meter reading if provided
       if (meterReading !== null) {
@@ -466,21 +520,43 @@ export async function recordDirectIssueAction(formData: FormData) {
         });
       }
 
-      await tx.auditLog.create({
-        data: {
-          actorId: admin.id,
-          action: "CREATE",
-          entity: "FuelIssue",
-          entityId: issue.id,
-          summary: `Recorded direct issue of ${litres}L of ${fuelKind} for asset ${asset.code} at Rs. ${resolvedPrice.pricePerLitre / 100}/L.`,
-        },
+      await logFuelIssueChange(tx, admin.id, asset.code, {
+        action: "CREATE",
+        issueId: issue.id,
+        // A creation has no "before", so the fields are recorded as arrivals
+        // rather than as movements.
+        changes: [
+          { field: "litres", from: null, to: litres },
+          { field: "fuelKind", from: null, to: fuelKind },
+          { field: "pricePerLitre", from: null, to: resolvedPrice.pricePerLitre },
+          { field: "totalCost", from: null, to: totalCost },
+          { field: "source", from: null, to: source },
+          { field: "issueDate", from: null, to: issueDate.toISOString() },
+          ...(meterReading !== null ? [{ field: "meterReading", from: null, to: meterReading }] : []),
+        ],
+        tankDeltaLitres: tank ? -litres : undefined,
+        tankId: tank?.id ?? null,
+        tankName: tank?.name ?? null,
+        meterReading: meterReading !== null ? "created" : "unchanged",
+        periodKey: periodKeyFor(issueDate),
+        reason: backdateReason,
       });
     });
 
     revalidatePath("/");
     revalidatePath("/fuel/issues");
     revalidatePath(`/fleet/${asset.code}`);
-    return { success: true };
+    // The pump consoles show a balance this has just moved.
+    if (tank) {
+      revalidatePath("/workshop");
+      revalidatePath("/site");
+    }
+    return {
+      success: true,
+      message:
+        `Recorded ${litres} L for ${asset.code}` +
+        (tank ? ` from ${tank.name} — balance now ${(tank.balance - litres).toFixed(1)} L.` : " (station / external purchase)."),
+    };
   } catch (err: unknown) {
     console.error("Record direct issue error:", err);
     return { error: errorMessage(err) || "Failed to record fuel issue" };

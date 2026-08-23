@@ -14,13 +14,29 @@ interface AssetProp {
   regNo: string | null;
 }
 
+interface TankProp {
+  id: string;
+  name: string;
+  balance: number;
+  fuelKind: string;
+}
+
 interface QuickActionsProps {
   assets: AssetProp[];
   isAdmin: boolean;
   isLocked: boolean;
+  /** Pumps an admin may record against. Empty for anyone who cannot. */
+  tanks?: TankProp[];
 }
 
-export default function QuickActions({ assets, isAdmin, isLocked }: QuickActionsProps) {
+/** Now, as the datetime-local input wants it: Colombo wall clock, no zone. */
+function nowLocal(): string {
+  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+export default function QuickActions({ assets, isAdmin, isLocked, tanks = [] }: QuickActionsProps) {
   const [activeModal, setActiveModal] = useState<"request" | "issue" | "reading" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
@@ -31,6 +47,17 @@ export default function QuickActions({ assets, isAdmin, isLocked }: QuickActions
   const [selectedAssetCode, setSelectedAssetCode] = useState<string>("");
   const selectedAsset = assets.find(a => a.code.toUpperCase() === selectedAssetCode.toUpperCase() || a.id === selectedAssetCode);
 
+  // Which pump, and when. Both controlled, because the date decides whether a
+  // reason is demanded and the tank decides whether a source is asked for.
+  const [tankId, setTankId] = useState<string>("");
+  const [issueDate, setIssueDate] = useState<string>(nowLocal());
+  const daysBack = Math.max(
+    0,
+    Math.round(
+      (new Date(nowLocal().slice(0, 10)).getTime() - new Date(issueDate.slice(0, 10)).getTime()) / 86_400_000,
+    ),
+  );
+
   const openModal = (type: "request" | "issue" | "reading") => {
     setActiveModal(type);
     setError(null);
@@ -38,6 +65,8 @@ export default function QuickActions({ assets, isAdmin, isLocked }: QuickActions
     setLoading(false);
     setNeedsOverride(false);
     setSelectedAssetCode(assets[0]?.code || "");
+    setTankId("");
+    setIssueDate(nowLocal());
   };
 
   const closeModal = () => {
@@ -351,34 +380,84 @@ export default function QuickActions({ assets, isAdmin, isLocked }: QuickActions
 
                 {/* Additional details for Direct Issue */}
                 {activeModal === "issue" && (
-                  <div className="grid grid-cols-2 gap-4">
+                  <>
                     <div>
                       <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                        Fuel Source
+                        Where it came from
                       </label>
+                      {/* A pump draws its own balance down, exactly as the
+                          operator consoles do. Recording without one is real —
+                          a filling station has no tank — but it used to be the
+                          only option, so every issue logged here left the tank
+                          figures untouched and drifting. */}
                       <select
-                        name="source"
-                        required
+                        name="bulkTankId"
+                        value={tankId}
+                        onChange={(e) => setTankId(e.target.value)}
                         className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none"
                       >
-                        <option value="STATION">Fuel Station</option>
-                        <option value="BOWSER">Bowser</option>
+                        <option value="">Filling station / external — no tank</option>
+                        {tanks.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name} — {t.balance.toLocaleString(undefined, { maximumFractionDigits: 1 })} L of {t.fuelKind.replace(/_/g, " ").toLowerCase()}
+                          </option>
+                        ))}
                       </select>
+                      {tankId && (
+                        <p className="text-[10px] text-amber-400/90 mt-1">
+                          These litres come off {tanks.find((t) => t.id === tankId)?.name}&apos;s balance.
+                        </p>
+                      )}
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-                        Issue Date
-                      </label>
-                      <input
-                        type="datetime-local"
-                        name="issueDate"
-                        required
-                        defaultValue={new Date().toISOString().substring(0, 16)}
-                        className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none"
-                      />
+                    <div className="grid grid-cols-2 gap-4">
+                      {!tankId && (
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                            Source
+                          </label>
+                          <select
+                            name="source"
+                            className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none"
+                          >
+                            <option value="STATION">Fuel Station</option>
+                            <option value="BOWSER">Bowser</option>
+                          </select>
+                        </div>
+                      )}
+
+                      <div className={tankId ? "col-span-2" : ""}>
+                        <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                          Issue Date
+                        </label>
+                        <input
+                          type="datetime-local"
+                          name="issueDate"
+                          required
+                          value={issueDate}
+                          max={nowLocal()}
+                          onChange={(e) => setIssueDate(e.target.value)}
+                          className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-4 py-3 text-white text-sm focus:outline-none"
+                        />
+                      </div>
                     </div>
-                  </div>
+
+                    {/* Past a week back, say why. The office putting last
+                        week's paper sheets in is the ordinary case; rewriting
+                        a closed month is not. */}
+                    {isAdmin && daysBack > 7 && (
+                      <div>
+                        <label className="block text-xs font-semibold text-amber-400 uppercase tracking-wider mb-2">
+                          {daysBack} days back — why? (required)
+                        </label>
+                        <input
+                          name="backdateReason"
+                          placeholder="e.g. Marawila's paper sheets for the 5th to the 12th"
+                          className="w-full bg-[#1b1e30] border border-amber-500/20 rounded-xl px-4 py-3 text-white text-sm focus:outline-none"
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* Reason for request */}
