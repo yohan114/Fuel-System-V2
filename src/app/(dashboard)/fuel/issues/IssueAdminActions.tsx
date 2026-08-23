@@ -4,7 +4,7 @@ import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Edit3, Ban, RotateCcw, History, Loader2, X, AlertTriangle } from "lucide-react";
 import { editFuelIssueAction } from "@/app/actions/fuel";
-import { voidFuelIssueAction, restoreFuelIssueAction, previewVoidFuelIssueAction } from "@/app/actions/fuel-void";
+import { voidFuelIssueAction, restoreFuelIssueAction, previewVoidFuelIssueAction, fuelIssueHistoryAction } from "@/app/actions/fuel-void";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
 
 // Admin's row actions on the fuel issues log: edit, void, put back, and read
@@ -42,15 +42,25 @@ const fmtDateInput = (iso: string) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-export default function IssueAdminActions({ issue, history }: { issue: AdminIssueRow; history: HistoryEntry[] }) {
+export default function IssueAdminActions({ issue, historyCount }: { issue: AdminIssueRow; historyCount: number }) {
   const router = useRouter();
   const [open, setOpen] = useState<null | "edit" | "void" | "history">(null);
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [reason, setReason] = useState("");
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewVoidFuelIssueAction>> | null>(null);
+  // Loaded when the trail is opened, never with the page.
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
 
-  const close = () => { setOpen(null); setMsg(null); setReason(""); setPreview(null); };
+  const close = () => { setOpen(null); setMsg(null); setReason(""); setPreview(null); setHistory(null); };
+
+  const openHistory = () => {
+    setOpen("history"); setMsg(null); setHistory(null);
+    startTransition(async () => {
+      const r = await fuelIssueHistoryAction(issue.id);
+      setHistory(r.entries ?? []);
+    });
+  };
 
   const run = (fn: () => Promise<{ error?: string; success?: boolean; message?: string }>) =>
     startTransition(async () => {
@@ -88,9 +98,9 @@ export default function IssueAdminActions({ issue, history }: { issue: AdminIssu
             <Ban className="w-3 h-3" /> Void
           </button>
         )}
-        <button onClick={() => { setOpen("history"); setMsg(null); }} className={`${btn} text-gray-400 hover:bg-white/5`} title="What has been done to this issue">
+        <button onClick={openHistory} className={`${btn} text-gray-400 hover:bg-white/5`} title="What has been done to this issue">
           <History className="w-3 h-3" />
-          {history.length > 0 && <span>{history.length}</span>}
+          {historyCount > 0 && <span>{historyCount}</span>}
         </button>
       </div>
 
@@ -215,7 +225,11 @@ export default function IssueAdminActions({ issue, history }: { issue: AdminIssu
             {open === "history" && (
               <>
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">History · {issue.assetCode}</h3>
-                {history.length === 0 ? (
+                {history === null ? (
+                  <p className="text-xs text-gray-500 flex items-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> reading the log…
+                  </p>
+                ) : history.length === 0 ? (
                   <p className="text-xs text-gray-500">
                     Nothing has been done to this issue since it was recorded. Rows brought in by a
                     bulk import carry no entry — the trail starts when someone touches it here.

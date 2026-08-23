@@ -174,30 +174,28 @@ export default async function FuelIssuesPage(props: PageProps) {
   });
   const pendingSet = new Set(pendingCorr.map((c) => c.fuelIssueId));
 
-  // What has been done to each issue, for the admin row actions. Only loaded
-  // for an admin, since nobody else can see it — and only for the rows on
-  // screen, which is why it is keyed by the issue ids already fetched.
+  // How many times each issue on screen has been touched, for the badge on the
+  // history button. The trail itself is fetched only when someone opens it.
+  //
+  // Deliberately NOT `entityId: { in: [...the page's ids] }`. This page shows a
+  // thousand rows, twenty thousand under a pump filter, and every id becomes a
+  // bound parameter — past SQLite's limit, which is how this page came to
+  // return a server error the moment the history lookup was added. Grouping the
+  // whole FuelIssue slice of the audit log costs no parameters at all and scales
+  // with how often anyone edits fuel, not with how much fuel there is.
   const isAdmin = session.role === "ADMIN";
-  const historyByIssue = new Map<string, { at: string; who: string | null; summary: string }[]>();
+  const historyCount = new Map<string, number>();
   const tankName = new Map<string, string>();
   if (isAdmin) {
-    const [entries, tanks] = await Promise.all([
-      prisma.auditLog.findMany({
-        where: { entity: "FuelIssue", entityId: { in: issues.map((i) => i.id) } },
-        select: { entityId: true, createdAt: true, summary: true, actor: { select: { name: true } } },
-        orderBy: { createdAt: "desc" },
+    const [counts, tanks] = await Promise.all([
+      prisma.auditLog.groupBy({
+        by: ["entityId"],
+        where: { entity: "FuelIssue" },
+        _count: { _all: true },
       }),
       prisma.bulkTank.findMany({ select: { id: true, name: true } }),
     ]);
-    for (const e of entries) {
-      if (!e.entityId) continue;
-      if (!historyByIssue.has(e.entityId)) historyByIssue.set(e.entityId, []);
-      historyByIssue.get(e.entityId)!.push({
-        at: e.createdAt.toISOString(),
-        who: e.actor?.name ?? null,
-        summary: e.summary,
-      });
-    }
+    for (const c of counts) if (c.entityId) historyCount.set(c.entityId, c._count._all);
     for (const t of tanks) tankName.set(t.id, t.name);
   }
 
@@ -435,7 +433,7 @@ export default async function FuelIssuesPage(props: PageProps) {
                           bulkTankName: tankName.get(issue.bulkTankId ?? "") ?? null,
                           tankLocked: !!issue.bulkTankId,
                         }}
-                        history={historyByIssue.get(issue.id) ?? []}
+                        historyCount={historyCount.get(issue.id) ?? 0}
                       />
                     ) : issue.voided ? (
                       <span className="text-[10px] text-gray-600">—</span>

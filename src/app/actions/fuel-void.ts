@@ -22,6 +22,38 @@ import { generateBillForAsset } from "@/lib/billing/generate";
 //   the month's bill is redone, because fuel is what qualifies a machine to be
 //   billed at all and what its hours are derived from
 
+/**
+ * What has been done to one issue.
+ *
+ * Fetched when the trail is opened, not with the page. The log shows a thousand
+ * rows at a time and twenty thousand under a pump filter; asking for every
+ * row's history up front put one bound parameter per id into the query and went
+ * straight past SQLite's limit, which took the whole page down with a server
+ * error. One issue at a time costs one parameter.
+ */
+export async function fuelIssueHistoryAction(issueId: string) {
+  try {
+    await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to read this" };
+  }
+
+  const entries = await prisma.auditLog.findMany({
+    where: { entity: "FuelIssue", entityId: issueId },
+    select: { createdAt: true, summary: true, actor: { select: { name: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return {
+    success: true,
+    entries: entries.map((e) => ({
+      at: e.createdAt.toISOString(),
+      who: e.actor?.name ?? null,
+      summary: e.summary,
+    })),
+  };
+}
+
 /** What voiding this issue would do, in figures, before anyone commits to it. */
 export async function previewVoidFuelIssueAction(issueId: string) {
   try {
