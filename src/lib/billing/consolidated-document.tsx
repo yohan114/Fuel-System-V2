@@ -74,7 +74,11 @@ const styles = StyleSheet.create({
   // by the make-and-model column that came out.
   cCode:    { width: "9%", flexDirection: "row", alignItems: "center", gap: 3 },
   cReg:     { width: "9%" },
-  cDays:    { width: "5%", textAlign: "right" },
+  // Days is the only right-aligned column with a left-aligned one after it, so
+  // its digits ended up flush against the mode: "28Per-KM · W". Every other
+  // neighbouring pair is pushed apart by its own alignment; this one needs the
+  // gap spelled out.
+  cDays:    { width: "5%", textAlign: "right", paddingRight: 7 },
   cMode:    { width: "7%" },
   cFuelL:   { width: "7%", textAlign: "right" },
   cConsTyp: { width: "9%", textAlign: "right" },
