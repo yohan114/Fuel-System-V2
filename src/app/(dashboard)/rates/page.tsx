@@ -14,6 +14,18 @@ export default async function RatesPage() {
   const { rows, counts, litresMeasured, litresTotal } = await getRatesOverview();
   const pct = litresTotal > 0 ? (100 * litresMeasured) / litresTotal : 0;
 
+  // Counted here rather than in the overview because it is a question about
+  // pricing, not consumption, and the two are only now on the same page.
+  const priced = {
+    wet: rows.filter((r) => r.wetCents != null).length,
+    dry: rows.filter((r) => r.dryCents != null).length,
+    fullyWet: rows.filter((r) => r.fullyWetCents != null).length,
+    defaultWet: rows.filter((r) => r.defaultBasis === "w").length,
+    defaultDry: rows.filter((r) => r.defaultBasis === "d").length,
+    defaultUnset: rows.filter((r) => !r.defaultBasis).length,
+    unpriced: rows.filter((r) => r.dryCents == null && r.wetCents == null && r.fullyWetCents == null).length,
+  };
+
   const stat = (label: string, value: string | number, tone = "text-white", note?: string) => (
     <div className="bg-[#121420] border border-white/5 rounded-2xl p-4">
       <span className="text-[10px] text-gray-500 font-semibold uppercase tracking-wider block">{label}</span>
@@ -28,11 +40,11 @@ export default async function RatesPage() {
         <div>
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Gauge className="w-5 h-5 text-indigo-400" />
-            Fuel Consumption Rates
+            Fuel &amp; Rental Rates
           </h1>
           <p className="text-xs text-gray-400 mt-1">
-            Standard consumption bands from the 2026 Fleet Rental Prices workbook, against what each machine
-            actually burns.
+            What each machine burns and what it is charged, on one screen. Consumption bands come from the 2026
+            Fleet Rental Prices workbook; the hire rates are editable here.
           </p>
         </div>
         <a
@@ -51,6 +63,19 @@ export default async function RatesPage() {
         {stat("With a standard band", counts.withBand, "text-white", `${counts.withHeavy} have a heavy threshold`)}
         {stat("Fuel checked", `${pct.toFixed(1)}%`, pct < 20 ? "text-amber-400" : "text-white",
           `${litresMeasured.toLocaleString()} of ${litresTotal.toLocaleString()} L`)}
+      </div>
+
+      {/* Pricing coverage, the counterpart to the consumption tiles above. A
+          machine with no wet rate earns nothing however hard it works, and that
+          is invisible unless somebody counts it. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {stat("Priced wet", priced.wet, priced.wet < counts.total ? "text-amber-400" : "text-emerald-400",
+          `${counts.total - priced.wet} have no wet rate`)}
+        {stat("Priced dry", priced.dry, "text-white", `${priced.fullyWet} carry a fully-wet rate`)}
+        {stat("Bills wet by default", priced.defaultWet, "text-white",
+          `${priced.defaultDry} default to dry, ${priced.defaultUnset} unset`)}
+        {stat("No rate at all", priced.unpriced, priced.unpriced > 0 ? "text-rose-400" : "text-emerald-400",
+          "they invoice nothing for their work")}
       </div>
 
       {/* The honest caveats, stated once, up front. */}

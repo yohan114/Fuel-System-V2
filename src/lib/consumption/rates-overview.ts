@@ -45,6 +45,67 @@ export interface RateBandRow {
   severity: number;
   totalLitres: number;
   emptyReason: string | null;
+
+  // ── what the machine is CHARGED at ────────────────────────────────────────
+  //
+  // The consumption band says what a machine burns; these say what the client
+  // pays for it. They lived on separate screens, so nobody could see that a
+  // machine burning well above its band was also priced below its class — the
+  // two facts only mean something next to each other.
+  /** Which trio of rates actually applies to this machine. */
+  chargeMode: "hourly" | "perkm" | "perday";
+  /** Rs/hr, Rs/km or Rs/day for that mode, in cents. Null where a tier is unset. */
+  dryCents: number | null;
+  wetCents: number | null;
+  fullyWetCents: number | null;
+  /** The tier a bill falls to by default: "d" | "w" | "fw". */
+  defaultBasis: string | null;
+  equipType: string | null;
+}
+
+type ChargeMode = "hourly" | "perkm" | "perday";
+
+/**
+ * Which rate columns apply. Mirrors defaultModeForAsset in the billing engine —
+ * portable plant is priced by the day whatever meter it carries, a km odometer
+ * means per-km, everything else is hourly.
+ */
+function chargeModeOf(equipType: string | null | undefined, meterType: string): ChargeMode {
+  if (equipType === "PORTABLE") return "perday";
+  if (meterType === "KM") return "perkm";
+  return "hourly";
+}
+
+interface TierSource {
+  hrFwCents: number | null; hrWCents: number | null; hrDCents: number | null;
+  kmFwCents: number | null; kmWCents: number | null; kmDCents: number | null;
+  dyFwCents: number | null; dyWCents: number | null; dyDCents: number | null;
+  portDwCents: number | null; portDdCents: number | null;
+}
+
+/** The three tiers for the mode that applies, so the table shows one set, not eleven columns. */
+function tiersOf(r: TierSource | null | undefined, mode: ChargeMode) {
+  if (!r) return { dryCents: null, wetCents: null, fullyWetCents: null };
+  if (mode === "perkm") return { dryCents: r.kmDCents, wetCents: r.kmWCents, fullyWetCents: r.kmFwCents };
+  if (mode === "perday") {
+    // Portable plant is priced off its own two columns; the generic daily
+    // columns are what a non-portable machine hired by the day would use.
+    const port = r.portDwCents != null || r.portDdCents != null;
+    return port
+      ? { dryCents: r.portDdCents, wetCents: r.portDwCents, fullyWetCents: null }
+      : { dryCents: r.dyDCents, wetCents: r.dyWCents, fullyWetCents: r.dyFwCents };
+  }
+  return { dryCents: r.hrDCents, wetCents: r.hrWCents, fullyWetCents: r.hrFwCents };
+}
+
+/** The field each tier writes back to, so an edit lands where billing reads. */
+export function rateFieldFor(mode: ChargeMode, tier: "d" | "w" | "fw", portable: boolean): string | null {
+  if (mode === "perkm") return tier === "d" ? "kmDCents" : tier === "w" ? "kmWCents" : "kmFwCents";
+  if (mode === "perday") {
+    if (portable) return tier === "d" ? "portDdCents" : tier === "w" ? "portDwCents" : null;
+    return tier === "d" ? "dyDCents" : tier === "w" ? "dyWCents" : "dyFwCents";
+  }
+  return tier === "d" ? "hrDCents" : tier === "w" ? "hrWCents" : "hrFwCents";
 }
 
 export interface RatesOverview {
@@ -85,7 +146,14 @@ export async function getRatesOverview(): Promise<RatesOverview> {
         category: { select: { name: true } },
         project: { select: { name: true } },
         rentalRate: {
-          select: { fuelConsEcon: true, fuelConsTyp: true, fuelConsHeavy: true, fuelConsBasis: true },
+          select: {
+            fuelConsEcon: true, fuelConsTyp: true, fuelConsHeavy: true, fuelConsBasis: true,
+            equipType: true, defaultBasis: true,
+            hrFwCents: true, hrWCents: true, hrDCents: true,
+            kmFwCents: true, kmWCents: true, kmDCents: true,
+            dyFwCents: true, dyWCents: true, dyDCents: true,
+            portDwCents: true, portDdCents: true,
+          },
         },
       },
       orderBy: { code: "asc" },
@@ -131,6 +199,10 @@ export async function getRatesOverview(): Promise<RatesOverview> {
       intervals: s?.points.length ?? 0,
       state: s?.state ?? null,
       severity: s?.severity ?? 0,
+      chargeMode: chargeModeOf(a.rentalRate?.equipType, a.meterType),
+      ...tiersOf(a.rentalRate, chargeModeOf(a.rentalRate?.equipType, a.meterType)),
+      defaultBasis: a.rentalRate?.defaultBasis ?? null,
+      equipType: a.rentalRate?.equipType ?? null,
       totalLitres: s?.totalLitres ?? 0,
       emptyReason: s?.emptyReason ?? null,
     });

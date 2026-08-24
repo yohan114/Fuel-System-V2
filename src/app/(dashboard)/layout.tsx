@@ -89,7 +89,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Meter Readings", href: "/readings", icon: Gauge },
       { label: "Site Fuel", href: "/sites", icon: Building2 },
       { label: "Analytics", href: "/analytics", icon: Activity },
-      { label: "Fuel Rates", href: "/rates", icon: Gauge },
+      { label: "Fuel & Rental Rates", href: "/rates", icon: Gauge },
       { label: "Billing", href: "/billing", icon: Receipt },
       { label: "Alerts", href: "/alerts", icon: Bell },
       { label: "Receivables", href: "/billing/aging", icon: Wallet },
@@ -109,7 +109,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Filter Database", href: "/filters", icon: FilterIcon },
       { label: "Analytics", href: "/analytics", icon: Activity },
-      { label: "Fuel Rates", href: "/rates", icon: Gauge },
+      { label: "Fuel & Rental Rates", href: "/rates", icon: Gauge },
       { label: "Alerts", href: "/alerts", icon: Bell }
     );
   } else if (isWorkshop) {
