@@ -34,7 +34,10 @@ export async function loadConsolidatedBilling(
       where: { year, month },
       include: {
         lineItems: {
-          select: { kind: true, description: true, quantity: true, amountCents: true, projectId: true, projectName: true },
+          // unitRateCents is needed to state the rate each SITE was charged at.
+          // Without it the split fell back to the bill's dominant rate and a
+          // per-site page printed units it could not be multiplied by.
+          select: { kind: true, description: true, quantity: true, unitRateCents: true, amountCents: true, projectId: true, projectName: true },
         },
       },
       orderBy: [{ projectName: "asc" }, { assetCode: "asc" }],

@@ -232,3 +232,92 @@ describe("days and fuel-implied work, per site", () => {
     expect(parts.reduce((s, p) => s + p.assignedDays, 0)).toBe(31);
   });
 });
+
+// The rate a site was actually charged at.
+//
+// Bill.rateCents holds ONE rate — the dominant segment's — and a month can be
+// charged at more than one: wet hire at a client site, dry hire back at the
+// yard. Sixteen bills between May and August carry two. Printing the header
+// rate beside a site's own money is then simply wrong, and it is what sent the
+// owner looking for a missing Rs 3,658:
+//
+//   PC-02 spent one day of July at Wadakada on dry hire. The charge is
+//   3.87 hr × Rs 3,860 = Rs 14,941.94. The page printed "4 hr @ Rs 4,650",
+//   which multiplies to Rs 18,600 and matches nothing on the invoice.
+describe("the rate each site was charged at", () => {
+  const pc02 = {
+    id: "bill-pc02",
+    assetCode: "PC-02",
+    projectId: "p-cep03e",
+    projectName: "CEP-03 E Package",
+    projectCode: "CEP-03E",
+    rateCents: 465000,        // the header: the dominant WET segment
+    rateBasis: "w",
+    rentalAmountCents: 55494194,
+    fuelCostCents: 5805000,
+    fuelLitres: 150,
+    billableUnits: 120,
+    subtotalCents: 61299194,
+    ssclCents: 1532480,
+    vatCents: 11309761,
+    grandTotalCents: 74141435,
+    lineItems: [
+      { kind: "RENTAL", description: "Machine rental — CEP-03W · hourly (D) · 1 day", quantity: 3.870967741935484, unitRateCents: 386000, amountCents: 1494194, projectId: "p-cepw", projectName: "CEP-03 Wadakada" },
+      { kind: "RENTAL", description: "Machine rental — CEP-03E · hourly (W) · 17 days", quantity: 65.80645161290322, unitRateCents: 465000, amountCents: 30600000, projectId: "p-cep03e", projectName: "CEP-03 E Package" },
+      { kind: "RENTAL", description: "Machine rental — ING · hourly (W) · 13 days", quantity: 50.32258064516129, unitRateCents: 465000, amountCents: 23400000, projectId: "p-ing", projectName: "Inginimitiya" },
+    ],
+  };
+  const pcCodes = new Map([["p-cepw", "CEP-03W"], ["p-cep03e", "CEP-03E"], ["p-ing", "ING"]]);
+
+  it("gives Wadakada the dry rate it was actually charged, not the header's wet one", () => {
+    const byCode = Object.fromEntries(explodeBillsBySite([pc02], pcCodes).map((p) => [p.projectCode, p]));
+    expect(byCode["CEP-03W"].rateCents).toBe(386000);
+    expect(byCode["CEP-03E"].rateCents).toBe(465000);
+    expect(byCode.ING.rateCents).toBe(465000);
+  });
+
+  it("makes units × rate reconcile with the rental on every row", () => {
+    for (const p of explodeBillsBySite([pc02], pcCodes)) {
+      expect(Math.round(p.billableUnits * p.rateCents)).toBe(p.rentalAmountCents);
+    }
+  });
+
+  it("carries the site's own hire basis, so a dry day is not labelled Wet", () => {
+    const byCode = Object.fromEntries(explodeBillsBySite([pc02], pcCodes).map((p) => [p.projectCode, p]));
+    expect(byCode["CEP-03W"].rateBasis).toBe("d");
+    expect(byCode["CEP-03E"].rateBasis).toBe("w");
+  });
+
+  it("flags a weighted rate rather than passing one off as exact", () => {
+    // One site holding two segments at different rates — BM-02's May at
+    // Badalgama was billed both wet and dry.
+    const mixed = {
+      ...pc02,
+      lineItems: [
+        { kind: "RENTAL", description: "Machine rental — BGP · hourly (W) · 11 days", quantity: 42.58, unitRateCents: 260000, amountCents: 11070968, projectId: "p-bgp", projectName: "Badalgama" },
+        { kind: "RENTAL", description: "Machine rental — BGP · hourly (D) · 11 days", quantity: 50.56, unitRateCents: 180000, amountCents: 9100000, projectId: "p-bgp", projectName: "Badalgama" },
+        { kind: "RENTAL", description: "Machine rental — ING · hourly (W) · 3 days", quantity: 11.61, unitRateCents: 260000, amountCents: 3019355, projectId: "p-ing", projectName: "Inginimitiya" },
+      ],
+    };
+    const byCode = Object.fromEntries(
+      explodeBillsBySite([mixed], new Map([["p-bgp", "BGP"], ["p-ing", "ING"]])).map((p) => [p.projectCode, p]),
+    );
+    expect(byCode.BGP.rateBlended).toBe(true);
+    expect(byCode.ING.rateBlended).toBe(false);
+    // The weighted rate still reconciles against that site's own rental.
+    expect(Math.round(byCode.BGP.billableUnits * byCode.BGP.rateCents)).toBeCloseTo(byCode.BGP.rentalAmountCents, -2);
+    // And it cannot be mistaken for a real tier.
+    expect(byCode.BGP.rateCents).toBeGreaterThan(180000);
+    expect(byCode.BGP.rateCents).toBeLessThan(260000);
+  });
+
+  it("leaves a single-rate bill's rate exactly as charged", () => {
+    const single = {
+      ...pc02,
+      lineItems: [{ kind: "RENTAL", description: "Machine rental — ING · hourly (W) · 31 days", quantity: 120, unitRateCents: 465000, amountCents: 55800000, projectId: "p-ing", projectName: "Inginimitiya" }],
+    };
+    const [p] = explodeBillsBySite([single], pcCodes);
+    expect(p.rateCents).toBe(465000);
+    expect(p.rateBlended).toBe(false);
+  });
+});

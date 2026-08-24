@@ -145,6 +145,19 @@ function m(cents: number) {
 function num(x: number, digits = 0) {
   return x.toLocaleString("en-LK", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
+/**
+ * Billable units, shown to enough precision that units × rate matches the
+ * rental beside them.
+ *
+ * A prorated minimum is rarely whole — one day of a 31-day month against a
+ * 120-hour guarantee is 3.87 hours — and rounding it to "4" on the page invites
+ * exactly the arithmetic a client will do: 4 × the rate, which comes to
+ * something the invoice does not say. Whole numbers stay whole; the rest carry
+ * two decimals.
+ */
+function units(x: number) {
+  return Number.isInteger(x) ? num(x, 0) : num(x, 2);
+}
 function unitFor(mode: string) {
   return mode === "perkm" ? "km" : mode === "perday" ? "day" : "hr";
 }
@@ -366,10 +379,14 @@ export function ConsolidatedDocument({ bills, periodKey, generatedAt }: { bills:
                           {fo || actual == null ? "—" : <>{num(actual, 0)}<Text style={styles.unitTag}> {unit}</Text></>}
                         </Text>
                         <Text style={styles.cBill}>
-                          {fo ? <Text style={styles.tCellMute}>—</Text> : <><Text style={styles.billStrong}>{num(b.billableUnits, 0)}</Text><Text style={styles.unitTag}> {unit}</Text></>}
+                          {fo ? <Text style={styles.tCellMute}>—</Text> : <><Text style={styles.billStrong}>{units(b.billableUnits)}</Text><Text style={styles.unitTag}> {unit}</Text></>}
                         </Text>
+                        {/* The rate THIS row was charged at. A month split
+                            between wet hire on site and dry hire at the yard
+                            carries both, and a single figure taken from the
+                            dominant segment made the line unmultipliable. */}
                         <Text style={[fo ? styles.tCellMute : styles.tCellNum, styles.cRate]}>
-                          {fo || !b.rateCents ? "—" : m(b.rateCents)}
+                          {fo || !b.rateCents ? "—" : <>{m(b.rateCents)}{b.rateBlended ? <Text style={styles.unitTag}> avg</Text> : null}</>}
                         </Text>
                         <Text style={[fo ? styles.tCellMute : styles.tCellNum, styles.cRental]}>{fo ? "—" : m(b.rentalAmountCents)}</Text>
                         <Text style={[b.fuelCostCents > 0 ? styles.tCellNum : styles.tCellMute, styles.cFuelRs]}>{b.fuelCostCents > 0 ? m(b.fuelCostCents) : "—"}</Text>

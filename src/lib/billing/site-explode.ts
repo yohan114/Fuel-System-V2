@@ -41,6 +41,8 @@ export interface ExplodedBill {
   siteShare: number;
   /** True when the bill was split; false when it passed through whole. */
   isSitePortion: boolean;
+  /** True when this portion covers more than one rate, so rateCents is a weighted average. */
+  rateBlended?: boolean;
   [key: string]: any;
 }
 
@@ -54,19 +56,68 @@ export interface ExplodedBill {
  * `codeById` maps projectId → project code so each portion carries the right
  * site code for filtering; without it a portion keeps the header bill's code.
  */
+/**
+ * The rate a set of rental lines was actually charged at.
+ *
+ * `Bill.rateCents` holds one rate — the dominant segment's — and a month can be
+ * charged at more than one: a machine on wet hire at a client site and dry hire
+ * back at the yard is billed at both, and 16 bills across May to August are.
+ * Printing the header rate beside a site's own money is then simply wrong. PC-02
+ * spent one day of July at Wadakada on dry hire: the line reads 3.87 hr at
+ * Rs 3,860 = Rs 14,941.94, and the per-site page printed "4 hr @ Rs 4,650",
+ * which multiplies out to Rs 18,600 and matches nothing.
+ *
+ * Where the lines agree, that rate is returned exactly. Where they do not, the
+ * weighted rate is returned and flagged, because a single number cannot be the
+ * whole truth and should not pretend to be.
+ */
+function rateOfLines(lines: any[]): { rateCents: number | null; rateBlended: boolean; rateBasis: string | null } {
+  const rental = lines.filter((l) => l.kind === "RENTAL" && (l.quantity || 0) > 0);
+  if (rental.length === 0) return { rateCents: null, rateBlended: false, rateBasis: null };
+
+  // The hire basis is written into each line's description — "· hourly (D) ·"
+  // — so the site's own basis comes from the same place its money does. The
+  // bill header carries only the dominant segment's, which had a dry day at
+  // Wadakada labelled Wet.
+  const bases = [...new Set(rental.map((l) => (String(l.description || "").match(/\((FW|W|D)\)/) || [])[1]).filter(Boolean))];
+  const rateBasis = bases.length === 1 ? bases[0].toLowerCase() : null;
+
+  const distinct = [...new Set(rental.map((l) => l.unitRateCents).filter((r) => r != null && r > 0))];
+  if (distinct.length === 1) return { rateCents: distinct[0] as number, rateBlended: false, rateBasis };
+
+  const units = rental.reduce((n, l) => n + (l.quantity || 0), 0);
+  const amount = rental.reduce((n, l) => n + (l.amountCents || 0), 0);
+  // Zero distinct rates means the caller did not load unitRateCents; the
+  // effective rate still reconciles, so it is used rather than showing nothing.
+  return {
+    rateCents: units > 0 ? Math.round(amount / units) : null,
+    rateBlended: distinct.length > 1,
+    rateBasis,
+  };
+}
+
 export function explodeBillsBySite(bills: any[], codeById?: Map<string, string>): ExplodedBill[] {
   const out: ExplodedBill[] = [];
 
-  const whole = (b: any): ExplodedBill => ({
-    ...b,
-    id: b.id,
-    sourceBillId: b.id,
-    siteShare: 1,
-    isSitePortion: false,
-    assignedDays: (b.lineItems || [])
-      .filter((l: any) => l.kind === "RENTAL")
-      .reduce((n: number, l: any) => n + parseSegmentDays(l.description || ""), 0),
-  });
+  const whole = (b: any): ExplodedBill => {
+    const lines = b.lineItems || [];
+    const rate = rateOfLines(lines);
+    return {
+      ...b,
+      id: b.id,
+      sourceBillId: b.id,
+      siteShare: 1,
+      isSitePortion: false,
+      assignedDays: lines
+        .filter((l: any) => l.kind === "RENTAL")
+        .reduce((n: number, l: any) => n + parseSegmentDays(l.description || ""), 0),
+      // Even an unsplit bill can carry two rates — a machine that went to the
+      // yard and back within one site's month.
+      rateCents: rate.rateCents ?? b.rateCents,
+      rateBlended: rate.rateBlended,
+      rateBasis: rate.rateBasis ?? b.rateBasis,
+    };
+  };
 
   for (const b of bills) {
     const items = (b.lineItems || []).filter((l: any) => l.kind === "RENTAL" || l.kind === "FUEL");
@@ -77,7 +128,7 @@ export function explodeBillsBySite(bills: any[], codeById?: Map<string, string>)
 
     const bySite = new Map<
       string,
-      { projectId: string | null; projectName: string | null; rental: number; fuel: number; litres: number; billed: number; days: number }
+      { projectId: string | null; projectName: string | null; rental: number; fuel: number; litres: number; billed: number; days: number; lines: any[] }
     >();
     for (const l of items) {
       const key = l.projectId || l.projectName || "__none__";
@@ -85,10 +136,11 @@ export function explodeBillsBySite(bills: any[], codeById?: Map<string, string>)
         bySite.set(key, {
           projectId: l.projectId ?? null,
           projectName: l.projectName ?? null,
-          rental: 0, fuel: 0, litres: 0, billed: 0, days: 0,
+          rental: 0, fuel: 0, litres: 0, billed: 0, days: 0, lines: [],
         });
       }
       const g = bySite.get(key)!;
+      g.lines.push(l);
       if (l.kind === "RENTAL") {
         g.rental += l.amountCents;
         g.billed += l.quantity || 0;
@@ -131,6 +183,13 @@ export function explodeBillsBySite(bills: any[], codeById?: Map<string, string>)
         fuelLitres: p.litres,
         billableUnits: p.billed,
         assignedDays: p.days,
+        // The rate THIS site was charged at, not the bill's dominant one. Units
+        // × rate now reconciles with the rental beside it, which is the whole
+        // job of a per-site page.
+        ...(() => {
+          const r = rateOfLines(p.lines);
+          return { rateCents: r.rateCents ?? b.rateCents, rateBlended: r.rateBlended, rateBasis: r.rateBasis ?? b.rateBasis };
+        })(),
         // A split vehicle has one meter reading for the month; there is no
         // honest way to say how much of it moved at each site, so the per-site
         // rows show none rather than a made-up number.

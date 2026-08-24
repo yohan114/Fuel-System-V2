@@ -123,6 +123,13 @@ export default async function BillingPage(props: PageProps) {
             rentalAmountCents: rental[idx],
             fuelCostCents: fuelCost[idx],
             billableUnits: row.billableUnits,
+            // The rate THIS site was charged at, derived from its own rental
+            // rather than taken from the bill header. A machine on wet hire at
+            // one site and dry at another carries both, and showing the
+            // dominant one beside another site's units makes the row
+            // unmultipliable — PC-02's Wadakada day read 4 hr at Rs 4,650
+            // against a charge of Rs 14,941.94.
+            rateCents: row.billableUnits > 0 ? Math.round(row.rentalCents / row.billableUnits) : b.rateCents,
             portion: { days: row.days, totalDays: split.totalDays, fullGrandCents: b.grandTotalCents },
           };
         })
