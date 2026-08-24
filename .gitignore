@@ -85,4 +85,6 @@ out/
 # Ad-hoc database snapshots taken before a bulk change. Useful locally, never
 # worth 30 MB in the history — and the repo is public.
 data/*.bak-*
+# Scratch copies used to rehearse a change before it touches the real file.
+data/*.preview*
 .next-server.log
