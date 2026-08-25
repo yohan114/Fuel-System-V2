@@ -108,7 +108,8 @@ export default function PortableRates({ data, canEdit }: { data: PortableOvervie
             Portable plant carries no meter anybody reads, so it is not priced by the hour or the kilometre — it goes
             out for a day at a flat rate. <span className="text-gray-300">Wet</span> includes fuel or power, an operator
             and routine consumables; <span className="text-gray-300">Dry</span> is the bare machine. Both exclude 18%
-            VAT and transport, and a part day bills as a full one.
+            VAT and transport, and a part day bills as a full one — except where the{" "}
+            <span className="text-amber-400">Min.</span> column says otherwise.
           </p>
           <p className="text-[10px] text-gray-600 mt-1">{PORTABLE_CARD_SOURCE}</p>
         </div>
@@ -121,6 +122,7 @@ export default function PortableRates({ data, canEdit }: { data: PortableOvervie
                 <th className="text-left font-semibold uppercase tracking-wider px-3 py-3">Capacity / size</th>
                 <th className="text-right font-semibold uppercase tracking-wider px-3 py-3">Wet Rs/day</th>
                 <th className="text-right font-semibold uppercase tracking-wider px-3 py-3">Dry Rs/day</th>
+                <th className="text-center font-semibold uppercase tracking-wider px-3 py-3">Billing</th>
                 <th className="text-center font-semibold uppercase tracking-wider px-3 py-3">Min.</th>
                 <th className="text-right font-semibold uppercase tracking-wider px-3 py-3">In fleet</th>
                 <th className="text-left font-semibold uppercase tracking-wider px-4 py-3">Basis of the figure</th>
@@ -135,9 +137,24 @@ export default function PortableRates({ data, canEdit }: { data: PortableOvervie
                       {newCat ? k.category : ""}
                     </td>
                     <td className="px-3 py-2 text-gray-300">{k.size}</td>
-                    <td className="px-3 py-2 text-right text-white font-semibold tabular-nums">{money(k.wetCents)}</td>
+                    <td className="px-3 py-2 text-right text-white font-semibold tabular-nums">
+                      {money(k.wetCents)}
+                      {/* Non-powered kit has nothing to include, so the two
+                          tiers are the same figure — worth saying, or the row
+                          reads as a mistake. */}
+                      {k.nonPowered ? (
+                        <span className="text-gray-600 text-[9px] ml-1" title="Non-powered — no fuel, power or operator to include">
+                          = dry
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-2 text-right text-gray-300 tabular-nums">{money(k.dryCents)}</td>
-                    <td className="px-3 py-2 text-center text-gray-600 text-[10px]">{k.minimum}</td>
+                    <td className={`px-3 py-2 text-center text-[10px] ${k.billing === "Per day" ? "text-gray-600" : "text-amber-400"}`}>
+                      {k.billing === "Per day" ? "machine" : "per set"}
+                    </td>
+                    <td className={`px-3 py-2 text-center text-[10px] ${k.minimum === "1 day" ? "text-gray-600" : "text-amber-400"}`}>
+                      {k.minimum}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {k.fleetCount > 0 ? (
                         <span className="text-indigo-400 font-semibold" title={k.codes.join(", ")}>

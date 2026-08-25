@@ -106,7 +106,7 @@ describe("the workbook's shape", () => {
     const pf = sheet(i, "Portable Fleet");
     expect((pf.aoa[headerRow(pf, "Machine")] as string[])[14]).toBe("Bills Nothing Today");
     const pc = sheet(i, "Portable Card");
-    expect((pc.aoa[headerRow(pc, "Category")] as string[])[5]).toBe("In Fleet");
+    expect((pc.aoa[headerRow(pc, "Category")] as string[])[7]).toBe("In Fleet");
   });
 
   it("gives every sheet a width for every column it declares", () => {
@@ -320,12 +320,30 @@ describe("totals", () => {
   });
 
   it("totals the fleet count on the portable card but not the prices", () => {
-    const t = totalRow("Portable Card");
+    const i = input();
+    const s = sheet(i, "Portable Card");
+    const head = s.aoa[headerRow(s, "Category")] as string[];
+    const t = totalRow("Portable Card", i);
     expect(t[0]).toBe("TOTAL");
-    expect(t[1]).toBe("36 classes");
-    expect(t[5]).toBe(0);
-    expect(t[2]).toBeNull();
-    expect(t[3]).toBeNull();
+    expect(t[1]).toBe(`${PORTABLE_CLASSES.length} classes`);
+    expect(t[head.indexOf("In Fleet")]).toBe(0);
+    // Per-class prices; a sum across 59 different machines means nothing.
+    expect(t[head.indexOf("Wet (LKR/day)")]).toBeNull();
+    expect(t[head.indexOf("Dry (LKR/day)")]).toBeNull();
+  });
+
+  it("marks the non-powered classes rather than letting wet == dry read as a typo", () => {
+    const s = sheet(input(), "Portable Card");
+    const head = s.aoa[headerRow(s, "Category")] as string[];
+    const rows = s.aoa.slice(headerRow(s, "Category") + 1).filter((r) => r[0] && r[0] !== "TOTAL");
+    const flagged = rows.filter((r) => String(r[head.indexOf("Powered")]).startsWith("no"));
+    expect(flagged).toHaveLength(3);
+    for (const r of flagged) {
+      expect(r[head.indexOf("Wet (LKR/day)")]).toBe(r[head.indexOf("Dry (LKR/day)")]);
+    }
+    // And the two quanta v10 introduced are carried, not flattened.
+    expect(rows.some((r) => r[head.indexOf("Billing")] === "Per set/day")).toBe(true);
+    expect(rows.some((r) => r[head.indexOf("Minimum")] === "7 days")).toBe(true);
   });
 });
 

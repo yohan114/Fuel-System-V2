@@ -384,7 +384,7 @@ function portableCardSheet(i: RatesWorkbookInput, dayKey: string): SheetSpec {
         `${i.portable.counts.total} portable machines. The rest are off the card and are listed on the Portable Fleet sheet.`,
     ],
     [],
-    ["Category", "Capacity / Size", "Wet (LKR/day)", "Dry (LKR/day)", "Minimum", "In Fleet", "Machine Codes", "Basis of the Figure", "Class ID"],
+    ["Category", "Capacity / Size", "Wet (LKR/day)", "Dry (LKR/day)", "Billing", "Minimum", "Powered", "In Fleet", "Machine Codes", "Basis of the Figure", "Class ID"],
   ];
   for (const k of classes) {
     aoa.push([
@@ -394,20 +394,23 @@ function portableCardSheet(i: RatesWorkbookInput, dayKey: string): SheetSpec {
       k.size,
       lkr(k.wetCents),
       lkr(k.dryCents),
+      k.billing,
       k.minimum,
+      // Without this the three lines where wet equals dry look like a typo.
+      k.nonPowered ? "no — wet equals dry" : "yes",
       k.fleetCount,
       k.codes.length ? k.codes.join(", ") : null,
       k.note,
       k.id,
     ]);
   }
-  const total: Cell[] = new Array(9).fill(null);
+  const total: Cell[] = new Array(11).fill(null);
   total[0] = "TOTAL";
   total[1] = `${classes.length} classes`;
-  total[5] = classes.reduce((s, k) => s + k.fleetCount, 0);
+  total[7] = classes.reduce((s, k) => s + k.fleetCount, 0);
   aoa.push([], total);
 
-  return { name: "Portable Card", aoa, widths: [26, 34, 15, 15, 9, 9, 30, 62, 24] };
+  return { name: "Portable Card", aoa, widths: [26, 46, 15, 15, 13, 10, 20, 9, 30, 62, 24] };
 }
 
 // ── Sheet 6: Portable Fleet ─────────────────────────────────────────────────
