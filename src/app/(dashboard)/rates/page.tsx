@@ -2,6 +2,7 @@ import React from "react";
 import Link from "next/link";
 import { Gauge, AlertTriangle, TrendingUp, FileSpreadsheet, Info } from "lucide-react";
 import { getSession } from "@/lib/auth";
+import { billingScope } from "@/lib/roles";
 import { getRatesOverview } from "@/lib/consumption/rates-overview";
 import { getPortableOverview } from "@/lib/consumption/portable-overview";
 import RatesTable from "./RatesTable";
@@ -18,6 +19,9 @@ export default async function RatesPage() {
     getPortableOverview(),
   ]);
   const pct = litresTotal > 0 ? (100 * litresMeasured) / litresTotal : 0;
+  // Same helper the export route gates on, so the button and the download
+  // cannot disagree about who may have it.
+  const canExport = billingScope(session).kind === "all";
 
   // Counted here rather than in the overview because it is a question about
   // pricing, not consumption, and the two are only now on the same page.
@@ -52,13 +56,18 @@ export default async function RatesPage() {
             Fleet Rental Prices workbook; the hire rates are editable here.
           </p>
         </div>
-        <a
-          href="/api/rates/xlsx"
-          className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition"
-        >
-          <FileSpreadsheet className="w-4 h-4" />
-          Export to Excel
-        </a>
+        {/* The export carries the whole fleet's commercial rates, so the route
+            serves it to administrators and allocators only. Showing the button
+            to anyone else would just hand them a 403. */}
+        {canExport ? (
+          <a
+            href="/api/rates/xlsx"
+            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Export to Excel
+          </a>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
