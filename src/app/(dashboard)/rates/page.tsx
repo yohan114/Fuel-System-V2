@@ -3,7 +3,9 @@ import Link from "next/link";
 import { Gauge, AlertTriangle, TrendingUp, FileSpreadsheet, Info } from "lucide-react";
 import { getSession } from "@/lib/auth";
 import { getRatesOverview } from "@/lib/consumption/rates-overview";
+import { getPortableOverview } from "@/lib/consumption/portable-overview";
 import RatesTable from "./RatesTable";
+import PortableRates from "./PortableRates";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +13,10 @@ export default async function RatesPage() {
   const session = await getSession();
   if (!session) return null;
 
-  const { rows, counts, litresMeasured, litresTotal } = await getRatesOverview();
+  const [{ rows, counts, litresMeasured, litresTotal }, portable] = await Promise.all([
+    getRatesOverview(),
+    getPortableOverview(),
+  ]);
   const pct = litresTotal > 0 ? (100 * litresMeasured) / litresTotal : 0;
 
   // Counted here rather than in the overview because it is a question about
@@ -103,6 +108,10 @@ export default async function RatesPage() {
             Road vehicles are shown in <span className="text-gray-300">km/L</span> (higher is better), machinery in{" "}
             <span className="text-gray-300">L/hr</span> (lower is better) — matching the workbook.
           </li>
+          <li>
+            The {portable.counts.total} portable machines are priced <span className="text-gray-300">per day</span>, not
+            per hour, off a separate capacity card — they are in their own section below rather than in the table above.
+          </li>
         </ul>
       </div>
 
@@ -142,6 +151,11 @@ export default async function RatesPage() {
       )}
 
       <RatesTable rows={rows} canEdit={session.role === "ADMIN"} />
+
+      {/* Portable plant is priced on its own card, in Rs/day rather than Rs/hr,
+          so it gets its own section rather than being squeezed into a table
+          whose columns mean something else. */}
+      <PortableRates data={portable} canEdit={session.role === "ADMIN"} />
 
       <div className="bg-[#121420] border border-white/5 rounded-2xl p-5">
         <h2 className="text-xs font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">

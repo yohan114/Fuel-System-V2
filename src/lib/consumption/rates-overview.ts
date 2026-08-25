@@ -88,12 +88,12 @@ function tiersOf(r: TierSource | null | undefined, mode: ChargeMode) {
   if (!r) return { dryCents: null, wetCents: null, fullyWetCents: null };
   if (mode === "perkm") return { dryCents: r.kmDCents, wetCents: r.kmWCents, fullyWetCents: r.kmFwCents };
   if (mode === "perday") {
-    // Portable plant is priced off its own two columns; the generic daily
-    // columns are what a non-portable machine hired by the day would use.
-    const port = r.portDwCents != null || r.portDdCents != null;
-    return port
-      ? { dryCents: r.portDdCents, wetCents: r.portDwCents, fullyWetCents: null }
-      : { dryCents: r.dyDCents, wetCents: r.dyWCents, fullyWetCents: r.dyFwCents };
+    // Per-day means portable, and pickRateCents reads ONLY the two portable
+    // columns for portable plant. Showing the generic daily columns when the
+    // portable pair happened to be empty put a figure on screen that billing
+    // would never use — and an edit to that cell wrote to the portable column,
+    // so the displayed number and the edited number were different fields.
+    return { dryCents: r.portDdCents, wetCents: r.portDwCents, fullyWetCents: null };
   }
   return { dryCents: r.hrDCents, wetCents: r.hrWCents, fullyWetCents: r.hrFwCents };
 }
