@@ -104,3 +104,4 @@ data/app-ship.db
 service-record-data.db
 data/fuel-data-export.json
 backups/
+data/app-ship.db.sha256
