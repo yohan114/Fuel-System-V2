@@ -105,3 +105,5 @@ service-record-data.db
 data/fuel-data-export.json
 backups/
 data/app-ship.db.sha256
+data/new-passwords-*.txt
+data/app.db.pre-rotate-*

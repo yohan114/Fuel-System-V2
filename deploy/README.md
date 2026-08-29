@@ -84,8 +84,13 @@ there, and proves the app user can actually write.
 
 **Check:** the sha256 and the four counts match what `make-ship-db.ts` printed.
 Today's file: `33.1 MB`, `12 users, 770 assets, 13690 fuelIssues, 703 bills`,
-sha256 `e70abb1c18d9ef6b7628eb94407aaec74bc169faf48e0e3697e0a3c982bc9a6d`.
+sha256 `94bd756eb0b79ac576c4f78b0b663356925d0260caba191bb8a03c2f7cc705e7`.
 A mismatch means re-ship — do not "fix it later".
+
+This file carries the **rotated** password hashes. If you shipped a copy before
+the rotation, ship this one over it — the earlier file still has the hashes that
+were published, including the admin account whose password was in the repo
+history in plaintext.
 
 ---
 
@@ -234,9 +239,16 @@ them up.
 ## Still outstanding
 
 - **The GitHub repo is public and its history holds `data/app.db`** across 143
-  commits, including 12 staff bcrypt hashes. Untracking it stopped new exposure;
-  it did not remove the old copies. Rotate those 12 passwords before the site
-  takes real logins.
+  commits. Untracking it stopped new exposure; it did not remove the old copies.
+  All 12 staff passwords have now been rotated, so those published hashes are
+  worthless — but anyone who cloned the repo earlier still holds them, and they
+  will crack eventually. Treat the rotation as the fix, not the history.
+- `SEED_ADMIN_PASSWORD` was in the history in **plaintext**, and the `admin`
+  account was still using it — a working administrator login for anyone who read
+  the repo. Rotated, and the value in `.env` was replaced too. `bootstrap.sh`
+  generates a fresh one on the server, so nothing carries the old value forward.
+- The `test` account (SITE_PUMP, site TEST) is active on a production system.
+  Consider deactivating it rather than leaving a live login nobody owns.
 - `WORKSHOP_DB_PATH` is intentionally unset — WorkshopOne is on another host, and
   the sync polls a Windows path that does not exist here.
 - Google Drive backup upload needs `GDRIVE_SA_EMAIL`, `GDRIVE_SA_PRIVATE_KEY`
