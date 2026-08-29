@@ -1,0 +1,76 @@
+# =============================================================================
+#  E&C Fuel System — systemd unit
+#
+#      sudo cp deploy/fuelsystem.service /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now fuelsystem
+#
+#  systemd rather than PM2, deliberately. PM2 keeps one mutable dump.pm2 per
+#  PM2_HOME, and `pm2 save` overwrites it with a snapshot of whatever the daemon
+#  shows at that instant. On a box where WorkshopOne may share that home, a fuel
+#  deploy could quietly drop it from the boot list — the failure only appears at
+#  the next reboot, as an app that simply never came back. `systemctl enable` is
+#  an idempotent symlink; it cannot destroy anyone else's boot state.
+#
+#  Single instance on purpose. src/instrumentation.ts starts the Ceypetco price
+#  scheduler and the 5-minute WorkshopOne poller once per process, so running
+#  two would double both.
+# =============================================================================
+[Unit]
+Description=E&C Fuel System (Next.js)
+Documentation=https://github.com/yohan114/Fuel-System-V2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fuelapp
+Group=fuelapp
+WorkingDirectory=/var/www/fuelsystem
+
+# The app's own timezone, so the machine's is left alone. Billing derives day
+# keys from local time in several places; on a UTC host every Colombo day
+# boundary shifts 5.5 hours and fuel issued after 18:30 lands in the wrong
+# invoice month.
+Environment=TZ=Asia/Colombo
+Environment=NODE_ENV=production
+Environment=PORT=3300
+# The PRIVATE Node, by absolute path. /usr/bin/node belongs to whatever else
+# runs on this box and must never be what this unit resolves.
+Environment=PATH=/opt/node-24/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/var/www/fuelsystem/.env
+
+# -H 127.0.0.1 binds to loopback only. nginx is the only thing that should reach
+# it; without this the app is directly reachable on :3300 from the internet,
+# bypassing nginx, Cloudflare and every header this deployment relies on.
+ExecStart=/opt/node-24/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3300
+
+Restart=on-failure
+RestartSec=5
+# A crash loop should stop and stay stopped rather than hammer the box that
+# WorkshopOne is also running on.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Two Node apps and two SQLite databases on one small VM. A runaway here should
+# be killed rather than take the machine — and WorkshopOne — down with it.
+MemoryMax=1500M
+
+# Hardening. ProtectSystem=strict makes the whole filesystem read-only except
+# what is named below, so a fault in this app cannot write into WorkshopOne's
+# directories.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fuel-system /var/backups/fuel-system /var/www/fuelsystem/.next
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fuelsystem
+
+[Install]
+WantedBy=multi-user.target

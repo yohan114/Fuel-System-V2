@@ -64,24 +64,50 @@ fi
   echo "    http    http;"
   echo "}"
   echo
-  echo "# Connection header for the upstream. Sending \"upgrade\" unconditionally"
-  echo "# is the common copy-paste error: it breaks keepalive on ordinary"
-  echo "# requests, because every response then carries a Connection: upgrade the"
-  echo "# client never asked for. Echo it only when the client actually asked."
-  echo "map \$http_upgrade \$connection_upgrade {"
-  echo "    default upgrade;"
-  echo "    ''      close;"
-  echo "}"
+  # $connection_upgrade is the boilerplate every Node reverse-proxy guide tells
+  # you to add, so the app already on this box very likely declares it. A map
+  # may be declared only once per http context, and a second one is a hard
+  # error: nginx then REFUSES TO START. Nothing breaks at that moment — the
+  # running nginx keeps serving from its loaded config — so the fault is armed
+  # silently and detonates at the next reload or reboot, taking both apps with
+  # it. Emit ours only if nothing else has one.
+  if nginx -T 2>/dev/null | grep -qE '^\s*map\s+\$http_upgrade\s+\$connection_upgrade'; then
+    echo "# \$connection_upgrade is already declared elsewhere in this nginx config."
+    echo "# Not redeclaring it — a duplicate map stops nginx from starting."
+  else
+    echo "# Connection header for the upstream. Sending \"upgrade\" unconditionally"
+    echo "# is the common copy-paste error: it breaks keepalive on ordinary"
+    echo "# requests, because every response then carries a Connection: upgrade the"
+    echo "# client never asked for. Echo it only when the client actually asked."
+    echo "map \$http_upgrade \$connection_upgrade {"
+    echo "    default upgrade;"
+    echo "    ''      close;"
+    echo "}"
+  fi
 } > "$TMP"
 
 count="$(grep -c '^set_real_ip_from' "$TMP")"
 [[ "$count" -ge 10 ]] || { echo "Only $count ranges parsed — that looks wrong, not writing." >&2; exit 1; }
 
-install -m 0644 "$TMP" "$OUT"
-echo "Wrote $OUT ($count Cloudflare ranges)"
+# Install, TEST, and roll back on failure. The previous order installed first
+# and only warned afterwards, which left an invalid file on disk: nginx keeps
+# running on its loaded config, so nothing looks wrong until the next reload —
+# possibly logrotate's, at 03:00 — and then neither app comes back.
+BACKUP=""
+if [[ -f "$OUT" ]]; then
+  BACKUP="${OUT}.bak-$(date +%s)"
+  cp -p "$OUT" "$BACKUP"
+fi
 
-if nginx -t 2>/dev/null; then
-  echo "nginx config is valid. Reload with: sudo systemctl reload nginx"
+install -m 0644 "$TMP" "$OUT"
+
+if nginx -t >/dev/null 2>&1; then
+  [[ -n "$BACKUP" ]] && rm -f "$BACKUP"
+  echo "Wrote $OUT ($count Cloudflare ranges) — nginx -t passes"
+  echo "Reload when ready: sudo systemctl reload nginx"
 else
-  echo "WARNING: nginx -t failed — check the output of 'sudo nginx -t'." >&2
+  echo "nginx -t FAILED with the new file. Rolling back — nothing left broken." >&2
+  if [[ -n "$BACKUP" ]]; then mv -f "$BACKUP" "$OUT"; else rm -f "$OUT"; fi
+  nginx -t 2>&1 | sed 's/^/    /' >&2
+  exit 1
 fi

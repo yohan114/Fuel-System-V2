@@ -1,75 +1,106 @@
-# Deploying to fuelsystem.ec-workshops.online
+# Deploying onto 20.204.51.43 — a server that already runs WorkshopOne
 
-Server `20.204.51.43` · Ubuntu 22.04/24.04 · Node 24 · nginx · PM2 · Cloudflare in front
+Incumbent: **WorkshopOne**, `:1929`, owns a live SQLite database on this box.
+Newcomer: **fuel system**, `:3300` on loopback, behind nginx, behind Cloudflare.
 
-Run these in order. Every script is idempotent and re-runnable; each one checks
-before it acts and stops rather than guessing.
+The order is **survey → decide → act**. Nothing here changes anything until you
+have read what is already on the machine.
 
 ---
 
-## Before you start: what the DNS is actually doing
+## 0. What the earlier "fresh box" version of this bundle would have done
 
-`fuelsystem.ec-workshops.online` currently resolves to **Cloudflare**
-(`104.21.28.69`, `172.67.144.154`), not to `20.204.51.43`, and returns **404** —
-so the record is proxied and Cloudflare has no working origin behind it.
+Worth stating plainly, because most of it was silent:
 
-That is fine, and arguably better than pointing straight at the box, but it
-changes two things that the generic Ubuntu/Next.js guides get wrong:
-
-- **TLS.** Cloudflare terminates HTTPS at its edge. What the origin needs is a
-  certificate Cloudflare trusts, not one browsers trust. A Cloudflare Origin
-  Certificate is free, lasts 15 years and needs no renewal cron.
-- **Client IPs and scheme.** Every request arrives from a Cloudflare address
-  over plain HTTP. Without the `real_ip` block, your logs record Cloudflare for
-  every visitor; without the forwarded-proto map, the app builds `http://` URLs
-  and drops `Secure` cookies — a login redirect loop that reproduces only
-  through Cloudflare and never when you curl the origin directly.
-
-In the Cloudflare dashboard for `ec-workshops.online`, confirm:
-
-| Setting | Value |
+| | |
 |---|---|
-| DNS → `fuelsystem` A record | `20.204.51.43`, **Proxied** (orange cloud) |
-| SSL/TLS → encryption mode | **Full (strict)** once the origin cert is installed |
-| SSL/TLS → Always Use HTTPS | On |
+| Replaced the **system Node** with 24 | WorkshopOne's compiled SQLite addon becomes ABI-mismatched. It keeps running on the loaded binary and dies at its **next restart or reboot** with "Module did not self-register" — days later, unconnected to this deploy. |
+| `rm /etc/nginx/sites-enabled/default` | Very plausibly WorkshopOne's only public route. It stays up on loopback, so every process check passes while the site is dead. |
+| A duplicate `map $connection_upgrade` | nginx then **refuses to start**. The running process keeps serving, so nothing looks wrong until the next reload — logrotate's, at 03:00 — and then **both** apps are down. |
+| `ufw enable` | Default-denies `:1929` off the network instantly. |
+| Fresh random `FUEL_PORTAL_TOKEN` | Every WorkshopOne call into `/api/portal/*` 401s. Nothing logs it on this side; its panels just stop updating. |
+| Machine timezone → Asia/Colombo | Shifts every existing cron and timer on the box. |
 
-Do **not** leave the mode on *Flexible*: Cloudflare would speak HTTP to the
-origin while showing visitors a padlock, and the login POST would loop.
+All fixed in this bundle. The scripts now bring their own Node, their own
+service manager, and touch nothing of the incumbent's.
 
 ---
 
-## 1. Bootstrap the box
+## 1. Survey — read-only, safe on a production box any time
 
 ```bash
 ssh <you>@20.204.51.43
+curl -fsSL https://raw.githubusercontent.com/yohan114/Fuel-System-V2/main/deploy/survey-server.sh -o survey.sh
+less survey.sh
+sudo bash survey.sh
+```
+
+No package changes, no service restarts, no writes outside `/tmp`. Env files are
+read **keys only** — it never prints a secret value. It tees a report to
+`/tmp/fuel-survey-<timestamp>.txt` and ends with a one-screen SUMMARY.
+
+**Send me the SUMMARY block** — the decisions below hang off it.
+
+---
+
+## 2. Decide, from what the survey shows
+
+| If the survey shows | Then |
+|---|---|
+| `:1929` process runs on `/usr/bin/node` | Good — bootstrap installs Node privately at `/opt/node-24` and never touches the system one. Nothing to change. |
+| `:3300` already in use | Bootstrap refuses to run. Pick another port and change it in `.env`, `deploy/fuelsystem.service`, and both `proxy_pass` lines in `nginx/fuelsystem-proxy.conf`. |
+| `sites-enabled/default` proxies to `:1929` | **Do not delete it.** Skip the catch-all; add the fuel vhost alongside it. |
+| `sites-enabled/default` is the stock Ubuntu placeholder | Install `000-catchall.conf`, then the fuel vhost. |
+| Something already declares `default_server` on `:80` | Skip `000-catchall.conf` — a second one stops nginx starting. |
+| `$connection_upgrade` already declared | `cloudflare-realip.sh` detects this and omits its own copy. Nothing to do. |
+| `ufw` is inactive | Leave it inactive. Use the Azure NSG for SSH. Enabling it is WorkshopOne's owner's call, not this deployment's. |
+| WorkshopOne's hostname is **not** Cloudflare-proxied | Do **not** narrow 80/443 to Cloudflare ranges — that would cut off WorkshopOne's users too. |
+| WorkshopOne's SQLite is 0600 in a 0700 directory | Use the snapshot approach in §6. Do not grant `fuelapp` into its directory. |
+
+---
+
+## 3. Bootstrap
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/yohan114/Fuel-System-V2/main/deploy/bootstrap.sh -o bootstrap.sh
 less bootstrap.sh
 sudo bash bootstrap.sh
 ```
 
-Installs packages, sets the timezone to Asia/Colombo, installs Node 24 and PM2,
-creates the `fuelapp` user and the directories, clones `main`, generates
-`.env` with fresh secrets, and builds `better-sqlite3` natively.
+Asks you to type `SHARED` to confirm you surveyed the box, refuses if `:3300` is
+taken or another web server owns `:80`, installs Node privately, creates
+`fuelapp`, clones `main`, writes `.env`, and builds `better-sqlite3`.
 
-**It prints `SEED_ADMIN_PASSWORD` once. Copy it before you close the terminal.**
+**Copy the `SEED_ADMIN_PASSWORD` it prints.**
 
-The secrets are generated *on the server* and never travel. It refuses to
-overwrite an existing `.env` — regenerating `FUEL_AUTH_SECRET` invalidates every
-session cookie and logs the whole company out.
-
-**Check:** ends with `Bootstrap complete`, and `file
-node_modules/better-sqlite3/build/Release/better_sqlite3.node` says
-`ELF 64-bit LSB shared object` — not a Windows DLL.
+**Check:** it ends by printing the system Node as *untouched*, and
+`/root/fuel-deploy-node-before.txt` records what was there before.
 
 ---
 
-## 2. Carry the database up
+## 4. Set the shared token — before starting anything
 
-The database never travels through git. From the workstation:
+`bootstrap.sh` deliberately writes a placeholder. This is a **shared secret**
+with WorkshopOne; generating a new one on this side breaks the link.
+
+```bash
+sudo nano /var/www/fuelsystem/.env
+# FUEL_PORTAL_TOKEN="<WorkshopOne's SERVICE_PLANNER_TOKEN>"
+```
+
+The survey report names the file holding it without printing its value; read it
+on the box. `start-app.sh` refuses to start while the placeholder is there, and
+verifies the token against `/api/portal/summary` once running.
+
+---
+
+## 5. Database, then start
+
+From the workstation:
 
 ```bash
 cd "D:/Fuel system server side/fuelsystem"
-npx tsx scripts/make-ship-db.ts          # writes data/app-ship.db + .sha256
+npx tsx scripts/make-ship-db.ts
 scp data/app-ship.db <you>@20.204.51.43:/tmp/app-ship.db
 ```
 
@@ -77,179 +108,162 @@ On the server:
 
 ```bash
 sudo bash /var/www/fuelsystem/deploy/install-db.sh /tmp/app-ship.db
-```
-
-It verifies the file *before* moving it into place, backs up anything already
-there, and proves the app user can actually write.
-
-**Check:** the sha256 and the four counts match what `make-ship-db.ts` printed.
-Today's file: `33.1 MB`, `12 users, 770 assets, 13690 fuelIssues, 703 bills`,
-sha256 `94bd756eb0b79ac576c4f78b0b663356925d0260caba191bb8a03c2f7cc705e7`.
-A mismatch means re-ship — do not "fix it later".
-
-This file carries the **rotated** password hashes. If you shipped a copy before
-the rotation, ship this one over it — the earlier file still has the hashes that
-were published, including the admin account whose password was in the repo
-history in plaintext.
-
----
-
-## 3. Build and start
-
-```bash
 sudo bash /var/www/fuelsystem/deploy/start-app.sh
 ```
 
-Checks the config, shows migration status read-only (and offers to apply with a
-backup first), builds, starts under PM2, enables boot persistence, and does not
-finish until `http://127.0.0.1:3300/login` returns 200.
+Current file: `33.1 MB`, `12 users, 770 assets, 13690 fuelIssues, 703 bills`,
+sha256 `94bd756eb0b79ac576c4f78b0b663356925d0260caba191bb8a03c2f7cc705e7`.
+It carries the **rotated** password hashes — if you shipped an earlier copy,
+ship this over it.
 
-**Check:** ends with `http://127.0.0.1:3300/login -> 200`. The app is on
-loopback only at this point — nothing is public yet.
+`start-app.sh` runs under **systemd**, not PM2, so there is no shared `dump.pm2`
+a fuel deploy could overwrite. It finishes by checking `:3300` answers, that the
+portal token is accepted, **and that WorkshopOne on `:1929` is still up.**
 
 ---
 
-## 4. nginx
+## 6. Wire the service sync to WorkshopOne
+
+The fuel system reads WorkshopOne's service jobs directly. Do **not** point it
+at the live file: `better-sqlite3`'s `readonly: true` on a WAL database still
+has to map the `-shm` sidecar, which needs *write* permission on that file and
+its directory. `chmod 444` on the `.db` looks right and fails.
+
+Take a consistent snapshot instead — as WorkshopOne's own user, so no permission
+grant into its directory is needed:
+
+```bash
+sudo -u <workshopone-user> crontab -e
+```
+
+```cron
+# every 5 minutes, a consistent copy for the fuel system's service sync
+*/5 * * * * sqlite3 /path/to/workshopone.db ".backup '/var/lib/fuel-system/workshopone-snapshot.db'" && chown fuelapp:fuelapp /var/lib/fuel-system/workshopone-snapshot.db
+```
+
+Then uncomment in `/var/www/fuelsystem/.env`:
+
+```
+WORKSHOP_DB_PATH=/var/lib/fuel-system/workshopone-snapshot.db
+```
+
+`.backup` is safe against a concurrent writer and folds in the WAL, so the
+snapshot is never torn. Restart with `sudo systemctl restart fuelsystem`.
+
+**Check:** `serviceSync.lastResult` on the admin screen shows `ok: true` with a
+non-zero `scanned`. Locally it reads 1,650 jobs. Leaving `WORKSHOP_DB_PATH`
+unset is safe — the sync stays idle; pointing it at a path that does not exist
+is not, it fails every 5 minutes forever.
+
+---
+
+## 7. nginx
 
 ```bash
 cd /var/www/fuelsystem
-sudo bash deploy/nginx/cloudflare-realip.sh      # do this FIRST
+sudo bash deploy/nginx/cloudflare-realip.sh      # FIRST — and it now rolls back on failure
 sudo mkdir -p /etc/nginx/snippets
 sudo cp deploy/nginx/fuelsystem-proxy.conf /etc/nginx/snippets/
+# only if the survey said no default_server exists:
+sudo cp deploy/nginx/000-catchall.conf /etc/nginx/sites-available/000-catchall
+sudo ln -sf /etc/nginx/sites-available/000-catchall /etc/nginx/sites-enabled/000-catchall
 sudo cp deploy/nginx/fuelsystem.conf /etc/nginx/sites-available/fuelsystem
 sudo ln -sf /etc/nginx/sites-available/fuelsystem /etc/nginx/sites-enabled/fuelsystem
-sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-`cloudflare-realip.sh` must run first — the site config depends on the
-`$cf_forwarded_proto` map it writes, and `nginx -t` fails without it.
+**Check both apps, by Host header, before and after:**
 
-**Check:** `nginx -t` says `syntax is ok` / `test is successful`, and from your
-own machine `curl -I http://20.204.51.43 -H 'Host: fuelsystem.ec-workshops.online'`
-returns 200 or a redirect — not 502. A 502 means nginx is up and the app is not;
-check `sudo -u fuelapp pm2 logs fuelsystem`.
+```bash
+curl -sI http://127.0.0.1 -H 'Host: fuelsystem.ec-workshops.online' | head -1
+curl -sI http://127.0.0.1 -H 'Host: <workshopone-hostname>'          | head -1
+curl -sI http://127.0.0.1                                            | head -1   # unmatched Host
+```
+
+`nginx -t` validates syntax. It does **not** tell you which block wins for a
+given Host — only these curls do.
 
 ---
 
-## 5. TLS on the origin
+## 8. Cloudflare and TLS
 
-**Recommended — Cloudflare Origin Certificate.** In the dashboard:
-SSL/TLS → Origin Server → Create Certificate, hostnames
-`fuelsystem.ec-workshops.online` and `*.ec-workshops.online`, 15 years.
+The DNS is proxied through Cloudflare (`104.21.28.69`, `172.67.144.154`) and
+currently 404s. In the dashboard for `ec-workshops.online`:
+
+| Setting | Value |
+|---|---|
+| DNS → `fuelsystem` A record | `20.204.51.43`, **Proxied** |
+| SSL/TLS mode | **Full (strict)** once the origin cert is installed |
+| Always Use HTTPS | On |
+
+Cloudflare terminates TLS and speaks plain HTTP to the origin, so `$scheme` is
+`http` even for an HTTPS visitor. Pass that through and the app builds `http://`
+URLs and drops `Secure` cookies — a login redirect loop that reproduces *only*
+through Cloudflare, never when you curl the origin. `cloudflare-realip.sh`
+handles it.
+
+Origin certificate — a Cloudflare Origin Certificate is free, lasts 15 years and
+needs no renewal cron:
 
 ```bash
 sudo mkdir -p /etc/ssl/cloudflare && sudo chmod 700 /etc/ssl/cloudflare
-sudo nano /etc/ssl/cloudflare/fuelsystem.pem     # paste the certificate
-sudo nano /etc/ssl/cloudflare/fuelsystem.key     # paste the private key
+sudo nano /etc/ssl/cloudflare/fuelsystem.pem
+sudo nano /etc/ssl/cloudflare/fuelsystem.key
 sudo chmod 600 /etc/ssl/cloudflare/fuelsystem.key
 ```
 
-Then in `/etc/nginx/sites-available/fuelsystem`: uncomment the `443` server
-block, comment out the `include ...fuelsystem-proxy.conf;` in the port-80 block,
-and uncomment the `return 301` line above it.
-
-```bash
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-Finally set Cloudflare SSL/TLS mode to **Full (strict)**.
-
-**Alternative — Let's Encrypt**, if you want an origin certificate the public
-can verify:
-
-```bash
-sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d fuelsystem.ec-workshops.online
-```
-
-The ACME challenge location is already in the site config and Cloudflare passes
-`/.well-known/` through, so this works with the proxy left on.
-
-**Check:** `curl -I https://fuelsystem.ec-workshops.online/login` returns 200,
-and the login form actually submits. If pages load but sign-in fails, the
-forwarded-proto map is wrong — that is the symptom.
+Then uncomment the `443` block in the site file, comment the port-80 `include`,
+uncomment the `return 301`, and reload.
 
 ---
 
-## 6. Lock the door
-
-```bash
-sudo ufw status                 # rules are staged by bootstrap.sh
-sudo ufw enable                 # only after you have confirmed SSH works
-```
-
-Because the origin IP is public, anyone who knows it can bypass Cloudflare
-entirely. To prevent that, restrict 80/443 to Cloudflare only:
-
-```bash
-sudo ufw delete allow 80/tcp; sudo ufw delete allow 443/tcp
-for ip in $(curl -s https://www.cloudflare.com/ips-v4) $(curl -s https://www.cloudflare.com/ips-v6); do
-  sudo ufw allow from "$ip" to any port 80,443 proto tcp
-done
-```
-
-Also narrow SSH to your own address in the **Azure Network Security Group** —
-`20.204.51.43` is an Azure VM, so the NSG sits in front of ufw and is the
-control that actually matters.
-
----
-
-## 7. Backups
-
-The nightly cron route needs `CRON_SECRET` from `.env`:
+## 9. Backups
 
 ```bash
 sudo -u fuelapp crontab -e
 ```
 
 ```cron
-# nightly database backup at 02:30 Colombo
-30 2 * * * curl -fsS "http://127.0.0.1:3300/api/cron/backup?secret=REPLACE_WITH_CRON_SECRET" >/dev/null
-# keep the Cloudflare ranges current
+30 2 * * * curl -fsS "http://127.0.0.1:3300/api/cron/backup?secret=<CRON_SECRET>" >/dev/null
 0 4 1 * * /usr/bin/bash /var/www/fuelsystem/deploy/nginx/cloudflare-realip.sh && systemctl reload nginx
 ```
 
-Backups land in `/var/backups/fuel-system` (`BACKUP_DIR` in `.env`). They are
-on the same disk as the database, so copy them off the box as well — a disk
-failure takes both.
-
-**Check it actually backed up the right file**, which was a real defect until
-this deploy: `ls -l /var/backups/fuel-system` should show a file within a few MB
-of 33 MB, not 4 KB.
+**Check the size**, which was a real defect until this deploy: a backup in
+`/var/backups/fuel-system` should be within a few MB of 33 MB, not 4 KB.
+Copy them off the box — they sit on the same disk as the database.
 
 ---
 
 ## Updating later
 
 ```bash
-ssh <you>@20.204.51.43
-cd /var/www/fuelsystem
-sudo -u fuelapp git pull
-sudo bash deploy/start-app.sh
+cd /var/www/fuelsystem && sudo -u fuelapp git pull && sudo bash deploy/start-app.sh
 ```
 
-`start-app.sh` rebuilds and restarts. It never touches the database, so it is
-safe to re-run. A `next.config.ts` change **requires** the rebuild — the allowed
-origins are baked into the server bundle and a bare `pm2 restart` will not pick
-them up.
+Rebuilds and restarts; never touches the database. A `next.config.ts` change
+**requires** the rebuild — allowed origins are baked into the server bundle.
+
+---
+
+## What must not be done on this box
+
+| | Consequence |
+|---|---|
+| `apt-get install nodejs` / NodeSource | Replaces `/usr/bin/node`; WorkshopOne dies at its next restart. |
+| `rm /etc/nginx/sites-enabled/default` | May remove WorkshopOne's only public route. |
+| `ufw enable`, or narrowing 80/443 | Cuts off `:1929` and any non-Cloudflare client of either app. |
+| `pm2 save` under a shared `PM2_HOME` | Overwrites the boot list; WorkshopOne may not come back from a reboot. |
+| `timedatectl set-timezone` | Shifts every existing cron and timer. |
+| Pointing `WORKSHOP_DB_PATH` at the live database | `-shm` cannot be mapped read-only; fails every 5 minutes. |
+| Regenerating `FUEL_PORTAL_TOKEN` alone | Silent 401s on every WorkshopOne call. |
 
 ---
 
 ## Still outstanding
 
-- **The GitHub repo is public and its history holds `data/app.db`** across 143
-  commits. Untracking it stopped new exposure; it did not remove the old copies.
-  All 12 staff passwords have now been rotated, so those published hashes are
-  worthless — but anyone who cloned the repo earlier still holds them, and they
-  will crack eventually. Treat the rotation as the fix, not the history.
-- `SEED_ADMIN_PASSWORD` was in the history in **plaintext**, and the `admin`
-  account was still using it — a working administrator login for anyone who read
-  the repo. Rotated, and the value in `.env` was replaced too. `bootstrap.sh`
-  generates a fresh one on the server, so nothing carries the old value forward.
-- The `test` account (SITE_PUMP, site TEST) is active on a production system.
-  Consider deactivating it rather than leaving a live login nobody owns.
-- `WORKSHOP_DB_PATH` is intentionally unset — WorkshopOne is on another host, and
-  the sync polls a Windows path that does not exist here.
+- The GitHub repo is public and its history holds `data/app.db` across 143
+  commits. All 12 staff passwords have been rotated, so those hashes are now
+  worthless — but anyone who cloned earlier still holds them.
+- The `test` account (SITE_PUMP, site TEST) is active. Consider deactivating it.
 - Google Drive backup upload needs `GDRIVE_SA_EMAIL`, `GDRIVE_SA_PRIVATE_KEY`
   and `GDRIVE_BACKUP_FOLDER_ID`; without them the local backup still runs.

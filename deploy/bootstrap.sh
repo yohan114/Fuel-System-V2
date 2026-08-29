@@ -1,22 +1,41 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  E&C Fuel System — first-time server bootstrap
-#  Target: fresh Ubuntu 22.04 / 24.04 on 20.204.51.43
+#  E&C Fuel System — bootstrap onto a SHARED server
+#  Target: 20.204.51.43, which ALREADY RUNS WorkshopOne on :1929
 #
-#  Run as a user with sudo:
-#      curl -fsSL https://raw.githubusercontent.com/yohan114/Fuel-System-V2/main/deploy/bootstrap.sh -o bootstrap.sh
-#      less bootstrap.sh          # read it before running it
-#      sudo bash bootstrap.sh
+#      sudo bash deploy/survey-server.sh      # FIRST. read the summary.
+#      sudo bash deploy/bootstrap.sh
 #
-#  Idempotent: safe to re-run. Every step checks before it acts and says what it
-#  found. Nothing here touches the database — that is carried separately and
-#  installed by deploy/install-db.sh, so a re-run can never destroy live data.
+#  This box is not empty, and that changes almost every decision here. The
+#  guiding rule: the fuel system brings its own everything and touches nothing
+#  the incumbent depends on.
 #
-#  What it does NOT do, on purpose:
-#    * does not generate TLS certificates (Cloudflare sits in front — see
-#      deploy/README.md, the choice is yours and it is not idempotent)
-#    * does not start the app (no database yet)
-#    * does not open SSH to the world or change your SSH config
+#  What that means in practice, and what an earlier version of this script got
+#  wrong:
+#
+#    * Node is installed PRIVATELY at /opt/node-24. There is exactly one
+#      /usr/bin/node on Ubuntu, and replacing it re-points every Node app on the
+#      machine. WorkshopOne reads SQLite, so it has a compiled native addon
+#      built against one NODE_MODULE_VERSION; swapping the interpreter under it
+#      does not fail at upgrade time — it fails at its next restart, days later,
+#      with "Module did not self-register".
+#
+#    * The app runs under SYSTEMD, not PM2. PM2 keeps one mutable dump.pm2 per
+#      PM2_HOME and `pm2 save` overwrites it wholesale. If WorkshopOne shares
+#      that home, a fuel deploy can silently delete it from the boot list.
+#      A systemd unit has no shared mutable state.
+#
+#    * nginx is installed only if ABSENT. `apt-get install nginx` on a box that
+#      already has it is an upgrade, and the postinst restarts it for both apps.
+#
+#    * The MACHINE timezone is left alone. The app gets TZ=Asia/Colombo in its
+#      own unit. Changing it system-wide moves every existing cron and timer.
+#
+#    * ufw and unattended-upgrades are NOT introduced. Automatic patching with
+#      automatic restarts is the host owner's decision, and it is the most
+#      likely thing to detonate a latent fault at 03:00.
+#
+#  Idempotent. Safe to re-run. Does not touch the database.
 # =============================================================================
 set -euo pipefail
 
@@ -27,7 +46,10 @@ BACKUP_DIR="${BACKUP_DIR:-/var/backups/fuel-system}"
 REPO="${REPO:-https://github.com/yohan114/Fuel-System-V2.git}"
 BRANCH="${BRANCH:-main}"
 NODE_MAJOR="${NODE_MAJOR:-24}"
+NODE_VER="${NODE_VER:-24.12.0}"          # pinned; do not track "latest"
+NODE_PREFIX="/opt/node-${NODE_MAJOR}"
 PORT="${PORT:-3300}"
+WORKSHOP_PORT="${WORKSHOP_PORT:-1929}"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m    ok   %s\033[0m\n' "$*"; }
@@ -36,52 +58,97 @@ die()  { printf '\n\033[1;31mFAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "run with sudo"
 
-# ── 1. base packages ─────────────────────────────────────────────────────────
-say "Base packages"
+# ── 0. pre-flight: this box is NOT empty ─────────────────────────────────────
+say "Pre-flight"
+if [[ ! -f /root/.fuel-preflight-ack ]]; then
+  warn "This server already runs WorkshopOne on :${WORKSHOP_PORT}."
+  warn "Run deploy/survey-server.sh first and read its SUMMARY block."
+  read -r -p "$(printf '\033[1;33m    type SHARED once you have surveyed this box: \033[0m')" r
+  [[ "$r" == "SHARED" ]] || die "stopped — survey the box first"
+  touch /root/.fuel-preflight-ack
+fi
+
+# Another web server owning :80 would make the nginx step meaningless.
+for s in apache2 caddy lighttpd httpd; do
+  systemctl is-active --quiet "$s" 2>/dev/null && die "$s is running and owns :80 — decide which web server fronts both apps before continuing"
+done
+
+if ss -lntH "sport = :${PORT}" 2>/dev/null | grep -q .; then
+  ss -lntpH "sport = :${PORT}" | sed 's/^/      /'
+  die "port ${PORT} is already in use — resolve this before continuing"
+fi
+ok "port ${PORT} is free"
+
+if ss -lntH "sport = :${WORKSHOP_PORT}" 2>/dev/null | grep -q .; then
+  ok "WorkshopOne is listening on :${WORKSHOP_PORT} (as expected)"
+else
+  warn "nothing is listening on :${WORKSHOP_PORT} — is WorkshopOne actually running?"
+fi
+
+say "Externally-reachable listeners — a firewall change would orphan these"
+ss -lntupH 2>/dev/null | grep -vE '127\.0\.0\.1:|\[::1\]:' | sed 's/^/      /' || true
+
+# ── 1. packages ──────────────────────────────────────────────────────────────
+say "Packages"
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
 apt-get update -qq
-# sqlite3 is not optional: scripts/deploy-to-vps.sh silently degrades from a
-# safe .backup to a plain cp without it, which on a WAL database can copy a
-# torn file. build-essential + python3 + pkg-config are needed to compile
-# better-sqlite3 if no prebuilt binary matches this kernel.
-apt-get install -y -qq curl ca-certificates git sqlite3 build-essential python3 \
-  pkg-config nginx ufw rsync unattended-upgrades jq >/dev/null
-ok "installed"
+# Inert build and runtime tooling only. sqlite3 is not optional — the deploy
+# and backup paths degrade from a safe .backup to a plain cp without it, and on
+# a WAL database a cp can copy a torn file.
+apt-get install -y -qq -o Dpkg::Options::=--force-confold \
+  curl ca-certificates git sqlite3 build-essential python3 pkg-config rsync jq >/dev/null
+ok "build tooling installed"
 
-# ── 2. timezone ──────────────────────────────────────────────────────────────
+if dpkg -s nginx >/dev/null 2>&1; then
+  ok "nginx already present ($(nginx -v 2>&1 | sed 's/.*\///')) — NOT upgraded, NOT restarted"
+else
+  apt-get install -y -qq -o Dpkg::Options::=--force-confold nginx >/dev/null
+  ok "nginx installed (was absent)"
+fi
+
+dpkg -s ufw >/dev/null 2>&1 || warn "ufw not installed — not introducing one; use the Azure NSG instead"
+# unattended-upgrades deliberately not installed. See the header.
+
+# ── 2. timezone — the app's, not the machine's ───────────────────────────────
 say "Timezone"
-# Billing derives day keys from server-local time in several places
-# (src/lib/assignments.ts, src/lib/breakdowns.ts). On a UTC host every day
-# boundary shifts by 5.5 hours and fuel issued after 18:30 lands on the wrong
-# day — which silently moves it into the wrong invoice month.
-current_tz="$(timedatectl show -p Timezone --value)"
-if [[ "$current_tz" != "Asia/Colombo" ]]; then
-  timedatectl set-timezone Asia/Colombo
-  ok "set to Asia/Colombo (was $current_tz)"
+current_tz="$(timedatectl show -p Timezone --value 2>/dev/null || echo unknown)"
+if [[ "$current_tz" == "Asia/Colombo" ]]; then
+  ok "machine is already Asia/Colombo"
 else
-  ok "already Asia/Colombo"
+  ok "machine left at ${current_tz} — correct on a shared box"
+  ok "the fuel app gets TZ=Asia/Colombo in its own systemd unit"
+  warn "changing it machine-wide would shift every existing cron and timer, and"
+  warn "move WorkshopOne's timestamps the moment it next restarts. Not doing that."
 fi
 
-# ── 3. node ──────────────────────────────────────────────────────────────────
-say "Node ${NODE_MAJOR}"
-have_node="$(node -v 2>/dev/null || true)"
-if [[ "$have_node" == v${NODE_MAJOR}.* ]]; then
-  ok "already $have_node"
+# ── 3. Node, privately ───────────────────────────────────────────────────────
+say "Node ${NODE_VER} at ${NODE_PREFIX}"
+{ echo "system node before this deploy: $(node -v 2>/dev/null || echo none)"
+  echo "at: $(command -v node 2>/dev/null || echo none)"
+  dpkg -l nodejs 2>/dev/null | tail -2 || true
+} > /root/fuel-deploy-node-before.txt
+
+if [[ -x "${NODE_PREFIX}/bin/node" ]]; then
+  ok "private node $("${NODE_PREFIX}/bin/node" -v) already installed"
 else
-  # Prisma 7.8 requires ^20.19 || ^22.12 || >=24. Node 24 matches the
-  # workstation this was tested on, so the better-sqlite3 ABI is identical.
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >/dev/null
-  apt-get install -y -qq nodejs >/dev/null
-  ok "installed $(node -v)"
+  tmpd="$(mktemp -d)"
+  curl -fsSL -o "$tmpd/node.tar.xz" "https://nodejs.org/dist/v${NODE_VER}/node-v${NODE_VER}-linux-x64.tar.xz"
+  curl -fsSL -o "$tmpd/SHASUMS256.txt" "https://nodejs.org/dist/v${NODE_VER}/SHASUMS256.txt"
+  # Verify before unpacking. A tarball fetched over the network and unpacked
+  # into /opt as root is worth one checksum.
+  ( cd "$tmpd" && grep " node-v${NODE_VER}-linux-x64.tar.xz\$" SHASUMS256.txt \
+      | sed "s|node-v${NODE_VER}-linux-x64.tar.xz|node.tar.xz|" | sha256sum -c - >/dev/null ) \
+    || die "Node tarball checksum mismatch — not unpacking"
+  tar -xJf "$tmpd/node.tar.xz" -C /opt
+  ln -sfn "/opt/node-v${NODE_VER}-linux-x64" "$NODE_PREFIX"
+  rm -rf "$tmpd"
+  ok "installed $("${NODE_PREFIX}/bin/node" -v)"
 fi
-command -v pm2 >/dev/null || npm install -g pm2 >/dev/null
-ok "pm2 $(pm2 -v)"
+ok "system node untouched: $(node -v 2>/dev/null || echo 'none installed')"
+export PATH="${NODE_PREFIX}/bin:$PATH"
 
 # ── 4. app user ──────────────────────────────────────────────────────────────
 say "Application user: ${APP_USER}"
-# One identity owns the app, the database, the .env and the backups. Mixed
-# ownership on a WAL database is the classic "attempt to write a readonly
-# database" — SQLite needs to create app.db-wal and app.db-shm beside the file,
-# so the DIRECTORY must be writable, not just the .db.
 if id -u "$APP_USER" >/dev/null 2>&1; then
   ok "exists"
 else
@@ -89,18 +156,12 @@ else
   ok "created"
 fi
 
-if pm2 list >/dev/null 2>&1 && pm2 jlist 2>/dev/null | jq -e 'length > 0' >/dev/null 2>&1; then
-  warn "pm2 already manages apps as $(whoami) — check 'pm2 list'; do not run two pm2 daemons for one box"
-fi
-
 # ── 5. directories ───────────────────────────────────────────────────────────
 say "Directories"
 mkdir -p "$APP_DIR" "$DATA_DIR/uploads" "$BACKUP_DIR"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR" "$DATA_DIR" "$BACKUP_DIR"
 chmod 750 "$DATA_DIR" "$BACKUP_DIR"
-ok "$APP_DIR"
-ok "$DATA_DIR (0750, $APP_USER)"
-ok "$BACKUP_DIR (0750, $APP_USER)"
+ok "$APP_DIR, $DATA_DIR (0750), $BACKUP_DIR (0750)"
 
 # ── 6. code ──────────────────────────────────────────────────────────────────
 say "Code"
@@ -113,102 +174,89 @@ else
   sudo -u "$APP_USER" git clone --quiet --branch "$BRANCH" "$REPO" "$APP_DIR"
   ok "cloned at $(sudo -u "$APP_USER" git -C "$APP_DIR" rev-parse --short HEAD)"
 fi
-
-# The whole point of the untrack commit: a database must never arrive by pull.
-if [[ -f "$APP_DIR/data/app.db" ]]; then
-  die "$APP_DIR/data/app.db exists — the repo is still shipping a database. Stop and re-check Part A step 2."
-fi
+[[ -f "$APP_DIR/data/app.db" ]] && die "$APP_DIR/data/app.db exists — a database must never arrive by git pull"
 ok "no database inside the tree (correct)"
 
 # ── 7. .env ──────────────────────────────────────────────────────────────────
 say "Environment file"
-# Generated HERE so secrets never travel over scp, email or a chat window.
-# Written once and never overwritten: regenerating FUEL_AUTH_SECRET signs every
-# existing session cookie invalid and logs the whole company out.
 if [[ -f "$APP_DIR/.env" ]]; then
-  ok ".env exists — left untouched (delete it by hand if you truly want new secrets)"
+  ok ".env exists — left untouched"
 else
-  gen() { node -e "console.log(require('crypto').randomBytes($1).toString('base64url'))"; }
+  gen() { "${NODE_PREFIX}/bin/node" -e "console.log(require('crypto').randomBytes($1).toString('base64url'))"; }
   admin_pw="$(gen 12)"
   cat > "$APP_DIR/.env" <<EOF
 NODE_ENV=production
 TZ=Asia/Colombo
 PORT=${PORT}
 
-# Absolute, and BOTH names: the app reads FUEL_DATABASE_URL (src/lib/db.ts),
-# the Prisma CLI reads only DATABASE_URL (prisma.config.ts). Same value, so
-# they cannot drift and edit different databases.
+# Absolute, and BOTH names: the app reads FUEL_DATABASE_URL (src/lib/db.ts), the
+# Prisma CLI reads only DATABASE_URL (prisma.config.ts). Same value so they
+# cannot drift and edit different databases.
 DATABASE_URL="file:${DATA_DIR}/app.db"
 FUEL_DATABASE_URL="file:${DATA_DIR}/app.db"
 
-# src/lib/auth-secret.ts throws in production when this is unset or still the
-# dev fallback — but lazily, so the site boots and /login renders and only the
-# sign-in POST 500s. Set it now, not after the first support call.
+# Ours alone — generated here so they never travel.
 FUEL_AUTH_SECRET="$(gen 48)"
 CRON_SECRET="$(gen 32)"
-FUEL_PORTAL_TOKEN="$(gen 32)"
 SEED_ADMIN_PASSWORD="${admin_pw}"
+
+# SHARED SECRET WITH WORKSHOPONE — DO NOT GENERATE A NEW ONE.
+# WorkshopOne calls /api/portal/{costs,entities,service,summary} with this value
+# in an x-portal-token header; every one of those routes returns 401 on a
+# mismatch, and nothing on this side logs it. WorkshopOne's panels just quietly
+# stop updating and it looks like a WorkshopOne bug.
+# Set this to WorkshopOne's existing SERVICE_PLANNER_TOKEN, or rotate both sides
+# together in one window. start-app.sh refuses to start until it is set.
+FUEL_PORTAL_TOKEN="REPLACE_WITH_WORKSHOPONE_SERVICE_PLANNER_TOKEN"
+
+# WorkshopOne is on THIS box, so the service sync can read its database — but
+# not the live file. A better-sqlite3 readonly open of a WAL database still has
+# to map the -shm sidecar, which needs write permission on the file and its
+# directory; granting fuelapp write access into WorkshopOne's data directory is
+# not something to do casually. Point this at a snapshot instead, refreshed by
+# the cron in deploy/README.md. Leave it commented until that snapshot exists,
+# or the sync throws every 5 minutes forever.
+# WORKSHOP_DB_PATH=${DATA_DIR}/workshopone-snapshot.db
 
 UPLOADS_DIR=${DATA_DIR}/uploads
 BACKUP_DIR=${BACKUP_DIR}
-
-# WorkshopOne runs on another host; leave unset so the sync stays idle rather
-# than polling a path that does not exist here.
-# WORKSHOP_DB_PATH=
 EOF
   chown "$APP_USER:$APP_USER" "$APP_DIR/.env"
   chmod 600 "$APP_DIR/.env"
   ok "created, mode 600, owner $APP_USER"
-  printf '\033[1;33m    SEED_ADMIN_PASSWORD = %s\033[0m\n' "$admin_pw"
-  printf '\033[1;33m    ^ copy this now; it is only used if you seed a fresh admin\033[0m\n'
+  printf '\033[1;33m    SEED_ADMIN_PASSWORD = %s   (copy it now)\033[0m\n' "$admin_pw"
+  warn "FUEL_PORTAL_TOKEN is a PLACEHOLDER — set it before starting, see the file"
 fi
 
-# ── 8. firewall ──────────────────────────────────────────────────────────────
-say "Firewall"
-# Deliberately NOT enabling ufw here. Enabling a default-deny firewall over an
-# SSH session locks you out if the allow rule is wrong, and this script may be
-# running on a box whose SSH port is not 22. Rules are staged; you enable it.
-ufw allow OpenSSH >/dev/null 2>&1 || true
-ufw allow 80/tcp   >/dev/null 2>&1 || true
-ufw allow 443/tcp  >/dev/null 2>&1 || true
-if ufw status | grep -q "Status: active"; then
-  ok "already active"
-else
-  warn "rules staged but ufw is INACTIVE — enable it yourself once SSH is confirmed: sudo ufw enable"
-fi
-# 3300 must never be world-reachable; nginx proxies to it over loopback.
-ufw deny "${PORT}/tcp" >/dev/null 2>&1 || true
-ok "port ${PORT} denied from outside (nginx proxies over loopback)"
-
-# ── 9. dependencies and build ────────────────────────────────────────────────
+# ── 8. dependencies ──────────────────────────────────────────────────────────
 say "Dependencies"
-# better-sqlite3 is native. A Windows node_modules copied here throws an
-# invalid-ELF-header error on every page; it must be built on this box.
 cd "$APP_DIR"
-sudo -u "$APP_USER" npm ci --no-audit --no-fund
+sudo -u "$APP_USER" env PATH="${NODE_PREFIX}/bin:/usr/bin:/bin" npm ci --no-audit --no-fund
 so="$APP_DIR/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
 [[ -f "$so" ]] || die "better-sqlite3 native binary missing"
 file "$so" | grep -q "ELF 64-bit" || die "better-sqlite3 is not a Linux binary: $(file -b "$so")"
-ok "better-sqlite3 is a Linux ELF binary"
-sudo -u "$APP_USER" npx prisma generate >/dev/null
+ok "better-sqlite3 built against $("${NODE_PREFIX}/bin/node" -v), ELF 64-bit"
+sudo -u "$APP_USER" env PATH="${NODE_PREFIX}/bin:/usr/bin:/bin" npx prisma generate >/dev/null
 ok "prisma client generated"
 
-say "Bootstrap complete"
+say "Bootstrap complete — nothing of WorkshopOne's was changed"
 cat <<EOF
+
+  system node : $(node -v 2>/dev/null || echo 'none') (untouched, recorded in /root/fuel-deploy-node-before.txt)
+  fuel node   : $("${NODE_PREFIX}/bin/node" -v) at ${NODE_PREFIX}
+  nginx       : $(dpkg -s nginx >/dev/null 2>&1 && echo 'present, not restarted' || echo 'not installed')
 
 Next, in order:
 
-  1. Carry the database up (from the workstation):
-         scp data/app-ship.db <you>@20.204.51.43:/tmp/app-ship.db
-     then on this box:
+  1. Set FUEL_PORTAL_TOKEN in ${APP_DIR}/.env to WorkshopOne's
+     SERVICE_PLANNER_TOKEN. The survey report tells you which file holds it.
+
+  2. Carry the database up, then:
          sudo bash ${APP_DIR}/deploy/install-db.sh /tmp/app-ship.db
 
-  2. Build and start:
+  3. Start it:
          sudo bash ${APP_DIR}/deploy/start-app.sh
 
-  3. Web server and TLS — read ${APP_DIR}/deploy/README.md first.
-     Your DNS is proxied through Cloudflare, so the TLS step is NOT the
-     plain certbot run the generic guides give you.
-
-Nothing is serving yet. That is expected: there is no database.
+  4. nginx — read ${APP_DIR}/deploy/README.md. Do NOT delete the default site
+     before checking what it serves.
 EOF
