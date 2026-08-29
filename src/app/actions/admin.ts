@@ -9,6 +9,7 @@ import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
 import { errorMessage } from "@/lib/errors";
+import { liveDbPath, backupDir as resolveBackupDir } from "@/lib/db-path";
 
 // 1. Update Settings
 export async function updateSettingsAction(formData: FormData) {
@@ -186,11 +187,13 @@ export async function runOnDemandBackupAction() {
     return { error: "You are not authorized to perform this action" };
   }
 
-  const dbPath = path.join(process.cwd(), "data", "app.db");
-  const backupDir = path.join(process.cwd(), "backups");
+  // The live database, wherever it actually is — in production that is outside
+  // the repository, and the old hardcode would have backed up a stray file.
+  const dbPath = liveDbPath();
+  const backupDir = resolveBackupDir();
 
   if (!fs.existsSync(dbPath)) {
-    return { error: "Database file 'data/app.db' does not exist" };
+    return { error: `Database file not found at ${dbPath}` };
   }
 
   if (!fs.existsSync(backupDir)) {

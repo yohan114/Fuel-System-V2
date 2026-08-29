@@ -1,12 +1,18 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { liveDbPath, backupDir as resolveBackupDir } from "../src/lib/db-path";
 
 async function runBackup() {
   console.log("Starting database backup...");
 
-  const dbPath = path.join(process.cwd(), "data", "app.db");
-  const backupDir = path.join(process.cwd(), "backups");
+  // Resolved from the environment, not assumed. In production the live database
+  // is outside the repository; backing up ./data/app.db there copies whatever
+  // stray file a build left behind and reports success.
+  const dbPath = liveDbPath();
+  const backupDir = resolveBackupDir();
+  console.log(`  source: ${dbPath}`);
+  console.log(`  target: ${backupDir}`);
 
   if (!fs.existsSync(dbPath)) {
     console.error(`Error: Source database does not exist at ${dbPath}`);

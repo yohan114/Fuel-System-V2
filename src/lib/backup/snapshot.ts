@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { gzipSync } from "zlib";
 import fs from "fs";
 import path from "path";
+import { liveDbPath, liveDbDir } from "../db-path";
 
 // Consistent, compressed snapshot of the live SQLite database. Uses the
 // SQLite online-backup API (safe while the app is writing, WAL included)
@@ -14,13 +15,17 @@ export interface Snapshot {
   rawBytes: number;
 }
 
-export async function snapshotDatabase(dbPath = path.join(process.cwd(), "data", "app.db")): Promise<Snapshot> {
+export async function snapshotDatabase(dbPath = liveDbPath()): Promise<Snapshot> {
+  // Says which path it looked at. The old message named data/app.db whatever
+  // had actually been checked, which sent people looking in the wrong place.
   if (!fs.existsSync(dbPath)) throw new Error(`Database not found at ${dbPath}`);
 
   const now = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
   const stamp = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}-${p2(now.getHours())}${p2(now.getMinutes())}`;
-  const tmp = path.join(process.cwd(), "data", `.backup-tmp-${process.pid}.db`);
+  // Beside the database being copied, not under the working directory — on the
+  // server those are different filesystems.
+  const tmp = path.join(liveDbDir(), `.backup-tmp-${process.pid}.db`);
 
   const db = new Database(dbPath, { readonly: true });
   try {

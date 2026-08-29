@@ -88,3 +88,19 @@ data/*.bak-*
 # Scratch copies used to rehearse a change before it touches the real file.
 data/*.preview*
 .next-server.log
+
+# ── Live databases: they ship out of band, never through git ─────────────────
+# These were tracked until production. A tracked database is a live hazard on a
+# server: `git pull` overwrites it with the committed copy when the file is
+# clean, refuses the pull when it is dirty (and the reflex `git checkout --`
+# then destroys it), and a pull that includes the untrack commit deletes it
+# outright. The production database therefore lives at
+# /var/lib/fuel-system/app.db, OUTSIDE this tree, and these rules keep the
+# local copies from being committed back by a stray `git add -A`.
+# *.db above already covers most of this; named explicitly so the intent is
+# readable and a future narrowing of that glob cannot quietly re-expose them.
+data/app.db
+data/app-ship.db
+service-record-data.db
+data/fuel-data-export.json
+backups/

@@ -23,7 +23,7 @@
 # ==============================================================================
 set -euo pipefail
 
-BRANCH="${BRANCH:-claude/wonderful-hypatia-yi703x}"
+BRANCH="${BRANCH:-main}"
 PM2_APP="${PM2_APP:-fuelsystem}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="${HOME}/fuel-db-backups"

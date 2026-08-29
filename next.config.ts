@@ -14,30 +14,41 @@ import type { NextConfig } from "next";
 // origins follow automatically.
 const PORT = process.env.PORT ?? "3300";
 
-// The hostnames this system is reached by, in production behind the reverse
-// proxy and locally on the LAN. Kept in one array so the dev-origin list and the
-// server-action list cannot drift apart — previously they were duplicated by
-// hand and had to be edited twice.
+// The hostnames this system is reached by: in production behind Cloudflare and
+// the reverse proxy, and locally on the LAN. Kept in one array so the dev-origin
+// list and the server-action list cannot drift apart — previously they were
+// duplicated by hand and had to be edited twice.
+//
+// ENTRIES ARE HOSTS, NEVER URLS. Next compares against `new URL(origin).host`
+// (server/app-render/csrf-protection.js), which is "example.com" or
+// "example.com:3300" and never carries a scheme. Every "https://..." entry this
+// list used to hold was therefore dead weight that matched nothing — harmless
+// in itself, but it hid a real fault: the only LAN entry was written
+// "http://192.168.8.200:3300", so it never matched, and a server action posted
+// from a site machine on the LAN address was rejected. Pages load, forms fail
+// silently, and it reads like a broken form rather than a config mismatch.
+//
+// Checked with Next's own matcher rather than assumed:
+//   isCsrfOriginAllowed("192.168.8.200:3300", [...old list...]) === false
+//   isCsrfOriginAllowed("192.168.8.200:3300", [...this list...]) === true
+//
+// A wildcard matches exactly one label, so "*.ec-workshops.online" covers
+// fuelsystem.ec-workshops.online but not the bare apex.
 const ALLOWED_ORIGINS = [
+  // Production, through Cloudflare. Named literally as well as covered by the
+  // wildcard below, so narrowing the wildcard later cannot silently kill every
+  // form in production.
+  "fuelsystem.ec-workshops.online",
   "fuel.portal.ec-workshops.online",
-  "https://fuel.portal.ec-workshops.online",
-  "*.portal.ec-workshops.online",
-  "https://*.portal.ec-workshops.online",
   "fuel-portal.ec-workshops.online",
-  "https://fuel-portal.ec-workshops.online",
-  "http://fuel-portal.ec-workshops.online",
   "*.ec-workshops.online",
-  "https://*.ec-workshops.online",
-  "http://*.ec-workshops.online",
-  // Local and LAN access on the configured port. The bare "localhost" entry
-  // covers the default-port case; the explicit ones cover a browser that sends
-  // the port in the Origin header, which it does whenever the port is not 80/443.
+  "*.portal.ec-workshops.online",
+  // Local. The bare entry covers the default-port case; the second covers a
+  // browser that sends the port, which it does whenever the port is not 80/443.
   "localhost",
   `localhost:${PORT}`,
-  `http://localhost:${PORT}`,
-  `https://localhost:${PORT}`,
   // Site machines reach the server by LAN address, not by name.
-  `http://192.168.8.200:${PORT}`,
+  `192.168.8.200:${PORT}`,
 ];
 
 const nextConfig: NextConfig = {
