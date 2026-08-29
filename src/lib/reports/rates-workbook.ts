@@ -563,3 +563,123 @@ export function buildRatesWorkbook(input: RatesWorkbookInput): XLSX.WorkBook {
 export function ratesWorkbookFilename(generatedAt: Date): string {
   return `fuel-rental-rates-${colomboDayKey(generatedAt)}.xlsx`;
 }
+
+// ── the one-page export ─────────────────────────────────────────────────────
+//
+// The seven-sheet workbook answers "give me everything". This answers the more
+// common question — "give me the table I am looking at" — as a single sheet
+// that mirrors the screen: the same columns in the same order, the same rows in
+// the same order, honouring whatever filter and search were active.
+//
+// Four columns exist here that are not separate boxes on screen, because a
+// spreadsheet cannot do what a rendered cell does:
+//
+//   Reg No       — printed beside the machine code in one cell on screen; its
+//                  own column here so it can be sorted and looked up.
+//   Severity (×) — rendered inside the verdict badge as " · 1.68×"; a number of
+//                  its own here so the column can be sorted.
+//   Rate Unit    — the screen writes the unit into each figure as "45/km", but a
+//                  column holding 45/km beside 2,000/hr beside 6,000/day is only
+//                  safe to read once the unit is a field.
+//   Actual Unit  — the same problem, and the one the screen genuinely does not
+//                  solve. Its single Unit column states the BAND's unit and is
+//                  blank when a machine has no band, while the Actual figure
+//                  beside it is populated from the METER regardless. That leaves
+//                  a bare number that is L/hr on one row and km/L on the next
+//                  with nothing to tell them apart — so Actual gets its own unit
+//                  column, derived from the meter and never blank.
+
+export interface RatesTableSheetInput {
+  /** Already filtered and in screen order. */
+  rows: RateBandRow[];
+  /** One line describing the filter and search that produced these rows. */
+  scopeNote: string;
+  generatedAt: Date;
+  exportedBy: string;
+}
+
+const TABLE_HEADERS = [
+  "Machine", "Reg No", "Category",
+  "Econ", "Standard", "Heavy", "Unit",
+  "Actual", "Actual Unit", "Intervals", "Verdict", "Severity (×)",
+  "Rate Unit", "Dry (LKR)", "Wet (LKR)", "Fully Wet (LKR)", "Bills On",
+];
+
+const TABLE_WIDTHS = [14, 12, 24, 9, 10, 9, 9, 9, 11, 10, 34, 11, 10, 12, 12, 14, 12];
+
+export function buildRatesTableSheet(i: RatesTableSheetInput): SheetSpec {
+  const dayKey = colomboDayKey(i.generatedAt);
+  const aoa: Cell[][] = [
+    [`Fuel & Rental Rates — ${dayKey}`],
+    [i.scopeNote],
+    [
+      `Econ / Standard / Heavy are in the Unit column and Actual is in the Actual Unit column — L/hr for machinery (higher is worse), km/L for road vehicles (higher is better). ` +
+        `The two differ on a machine whose band is quoted per hour while its meter counts kilometres, and Unit is blank where there is no band at all. ` +
+        `Dry / Wet / Fully wet are rupees in the Rate Unit column — per hour, per km or per day — so never sum or average those columns across rows with different rate units. ` +
+        `A blank Fully Wet on a per-day row means portable plant has no fully-wet tier, not that one is unpriced; the screen prints “n/a” there. ` +
+        `Exported by ${i.exportedBy}, ${fuelDateTime(i.generatedAt)}.`,
+    ],
+    [],
+    TABLE_HEADERS,
+  ];
+
+  for (const r of i.rows) {
+    aoa.push([
+      r.code,
+      r.regNo ?? null,
+      r.categoryName ?? null,
+      round2(r.econDisplay),
+      round2(r.typDisplay),
+      round2(r.heavyDisplay),
+      r.typ != null ? r.unit : null,
+      round2(r.actualDisplay),
+      // From the meter, not the band, so it is never blank and never disagrees
+      // with the figure it labels.
+      displayUnit(consBasisForMeter(r.meterType)),
+      r.intervals,
+      verdictOf(r),
+      // Same gate as the screen: the figure only appears inside a verdict badge,
+      // so a machine measured once too few times shows the words and no number.
+      r.state != null && r.severity > 0 ? round2(r.severity) : null,
+      RATE_UNIT[r.chargeMode] ?? r.chargeMode,
+      lkr(r.dryCents),
+      lkr(r.wetCents),
+      lkr(r.fullyWetCents),
+      (r.defaultBasis && BASIS_LABEL[r.defaultBasis]) || "unset → wet",
+    ]);
+  }
+
+  // Only the interval count can honestly be added up. Bands are rates, severity
+  // is a ratio, and the three money columns mix Rs/hr, Rs/km and Rs/day.
+  const total: Cell[] = new Array(TABLE_HEADERS.length).fill(null);
+  total[0] = "TOTAL";
+  total[1] = `${i.rows.length} machine${i.rows.length === 1 ? "" : "s"}`;
+  total[TABLE_HEADERS.indexOf("Intervals")] = i.rows.reduce((s, r) => s + r.intervals, 0);
+  aoa.push([], total);
+
+  if (i.rows.length === 0) {
+    // Placed relative to the header row rather than at a counted offset —
+    // adding a line of prose above the table used to shift every such index.
+    aoa.splice(aoa.indexOf(TABLE_HEADERS) + 1, 0, ["No machine matches that filter."]);
+  }
+
+  return { name: "Fuel & Rental Rates", aoa, widths: TABLE_WIDTHS };
+}
+
+export function buildRatesTableWorkbook(input: RatesTableSheetInput): XLSX.WorkBook {
+  const wb = XLSX.utils.book_new();
+  const s = buildRatesTableSheet(input);
+  const ws = XLSX.utils.aoa_to_sheet(s.aoa);
+  ws["!cols"] = s.widths.map((wch) => ({ wch }));
+  ws["!merges"] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: s.widths.length - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: s.widths.length - 1 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: s.widths.length - 1 } },
+  ];
+  XLSX.utils.book_append_sheet(wb, ws, s.name);
+  return wb;
+}
+
+export function ratesTableFilename(generatedAt: Date): string {
+  return `fuel-rental-rates-table-${colomboDayKey(generatedAt)}.xlsx`;
+}

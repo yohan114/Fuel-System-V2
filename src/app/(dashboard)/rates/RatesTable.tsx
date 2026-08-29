@@ -2,25 +2,16 @@
 
 import React, { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { Search } from "lucide-react";
+import { Search, FileSpreadsheet } from "lucide-react";
 import type { RateBandRow } from "@/lib/consumption/rates-overview";
+import { RATE_FILTERS, filterRateRows, type RateFilter } from "@/lib/consumption/rates-filter";
 import { setMachineRateAction, setMachineDefaultBasisAction } from "@/app/actions/rates";
 
 interface Props {
   rows: RateBandRow[];
   canEdit: boolean;
+  canExport: boolean;
 }
-
-type Filter = "all" | "over" | "measured" | "no-band" | "conflict" | "no-card";
-
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "over", label: "Over standard" },
-  { key: "measured", label: "Measured" },
-  { key: "no-band", label: "No band" },
-  { key: "conflict", label: "Not comparable" },
-  { key: "no-card", label: "No rate card" },
-];
 
 const STATE_STYLE: Record<string, { cls: string; label: string }> = {
   OVER: { cls: "bg-rose-500/10 text-rose-400 border-rose-500/30", label: "over heavy" },
@@ -123,7 +114,11 @@ function BasisPicker({ row, canEdit }: { row: RateBandRow; canEdit: boolean }) {
   React.useEffect(() => { setBasis(row.defaultBasis ?? ""); }, [row.defaultBasis]);
 
   if (!canEdit) {
-    return <span className="text-[10px] text-gray-500">{BASIS_LABEL[basis] ?? "—"}</span>;
+    // "unset → wet", not a dash. Billing falls back to the wet tier when no
+    // default is set, and the editable picker says so on its placeholder — a
+    // read-only viewer was seeing a dash for the same state, which then
+    // disagreed with the exported sheet on 217 rows.
+    return <span className="text-[10px] text-gray-500">{BASIS_LABEL[basis] ?? "unset → wet"}</span>;
   }
   return (
     <select
@@ -150,27 +145,23 @@ function BasisPicker({ row, canEdit }: { row: RateBandRow; canEdit: boolean }) {
 
 const BASIS_LABEL: Record<string, string> = { d: "Dry", w: "Wet", fw: "Fully wet" };
 
-export default function RatesTable({ rows, canEdit }: Props) {
+export default function RatesTable({ rows, canEdit, canExport }: Props) {
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<RateFilter>("all");
 
-  const filtered = useMemo(() => {
-    const term = q.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (filter === "over" && r.state !== "OVER" && r.state !== "HEAVY") return false;
-      if (filter === "measured" && r.intervals === 0) return false;
-      if (filter === "no-band" && r.bandReason !== "no-band") return false;
-      if (filter === "conflict" && r.bandReason !== "basis-conflict") return false;
-      if (filter === "no-card" && r.bandReason !== "no-rate-card") return false;
-      if (!term) return true;
-      return (
-        r.code.toLowerCase().includes(term) ||
-        (r.regNo ?? "").toLowerCase().includes(term) ||
-        (r.categoryName ?? "").toLowerCase().includes(term) ||
-        (r.projectName ?? "").toLowerCase().includes(term)
-      );
-    });
-  }, [rows, q, filter]);
+  // Shared with the export route, so the sheet cannot return different rows
+  // from the ones on screen.
+  const filtered = useMemo(() => filterRateRows(rows, { q, filter }), [rows, q, filter]);
+
+  // The export carries whatever is on screen, so the link carries the same
+  // filter and search rather than always exporting the whole fleet.
+  const exportHref = useMemo(() => {
+    const p = new URLSearchParams();
+    if (filter !== "all") p.set("filter", filter);
+    if (q.trim()) p.set("q", q.trim());
+    const s = p.toString();
+    return `/api/rates/table/xlsx${s ? `?${s}` : ""}`;
+  }, [q, filter]);
 
   const num = (n: number | null, dp = 1) => (n == null ? "—" : n.toFixed(dp));
 
@@ -186,8 +177,8 @@ export default function RatesTable({ rows, canEdit }: Props) {
             className="w-full bg-[#1b1e30] border border-white/5 rounded-xl pl-9 pr-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50"
           />
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {FILTERS.map((f) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {RATE_FILTERS.map((f) => (
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
@@ -200,11 +191,29 @@ export default function RatesTable({ rows, canEdit }: Props) {
               {f.label}
             </button>
           ))}
+          {/* This table on its own, as a single sheet — carrying whatever
+              filter and search are showing. The full seven-sheet workbook is
+              the button at the top of the page. */}
+          {canExport ? (
+            <a
+              href={exportHref}
+              className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-3 py-1.5 rounded-lg border bg-emerald-600/90 border-emerald-500 text-white hover:bg-emerald-500 transition"
+              title="Download this table as one Excel sheet, exactly as filtered"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Export this table
+            </a>
+          ) : null}
         </div>
       </div>
 
-      <div className="px-4 py-2 text-[10px] text-gray-500 border-b border-white/5">
-        {filtered.length.toLocaleString()} of {rows.length.toLocaleString()} machines
+      <div className="px-4 py-2 text-[10px] text-gray-500 border-b border-white/5 flex items-center justify-between gap-3">
+        <span>
+          {filtered.length.toLocaleString()} of {rows.length.toLocaleString()} machines
+        </span>
+        {canExport && filtered.length !== rows.length ? (
+          <span className="text-gray-600">The export carries these {filtered.length.toLocaleString()}, not the whole fleet.</span>
+        ) : null}
       </div>
 
       <div className="overflow-x-auto">

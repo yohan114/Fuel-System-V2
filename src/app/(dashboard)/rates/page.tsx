@@ -159,7 +159,7 @@ export default async function RatesPage() {
         </div>
       )}
 
-      <RatesTable rows={rows} canEdit={session.role === "ADMIN"} />
+      <RatesTable rows={rows} canEdit={session.role === "ADMIN"} canExport={canExport} />
 
       {/* Portable plant is priced on its own card, in Rs/day rather than Rs/hr,
           so it gets its own section rather than being squeezed into a table
