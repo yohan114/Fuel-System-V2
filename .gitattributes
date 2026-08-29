@@ -1,0 +1,33 @@
+# Line endings.
+#
+# This repository is edited on Windows and deployed to Linux. The committed
+# blobs are all correctly LF today — these rules pin that, so a workstation with
+# a different core.autocrlf setting cannot quietly change it.
+#
+# What that guards against: a shell script committed with CRLF, which bash on
+# Ubuntu rejects on its very first line with
+#
+#     $'\r': command not found
+#
+# — for a root-run bootstrap script, on a fresh server, in an error that names
+# nothing useful. Anything the server executes or parses is pinned to LF.
+
+* text=auto
+
+# Executed or parsed on the server — must be LF.
+*.sh        text eol=lf
+*.conf      text eol=lf
+*.service   text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+.env*       text eol=lf
+Dockerfile  text eol=lf
+
+# Binary — never touch these.
+*.db        binary
+*.sqlite    binary
+*.xlsx      binary
+*.pdf       binary
+*.png       binary
+*.jpg       binary
+*.ico       binary
