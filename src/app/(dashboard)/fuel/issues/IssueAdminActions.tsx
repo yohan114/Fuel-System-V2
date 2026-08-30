@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useEffect, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Edit3, Ban, RotateCcw, History, Loader2, X, AlertTriangle } from "lucide-react";
 import { editFuelIssueAction } from "@/app/actions/fuel";
@@ -51,8 +52,22 @@ export default function IssueAdminActions({ issue, historyCount }: { issue: Admi
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewVoidFuelIssueAction>> | null>(null);
   // Loaded when the trail is opened, never with the page.
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
+  // The dialog is portalled into <body>, which does not exist while this is
+  // rendered on the server. Portalling only after mount keeps the server and
+  // the first client render identical, so React has nothing to complain about.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const close = () => { setOpen(null); setMsg(null); setReason(""); setPreview(null); setHistory(null); };
+
+  // Escape closes it. A dialog that can only be dismissed by finding a small X
+  // is worse on a laptop trackpad than one that answers the key everyone tries.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   const openHistory = () => {
     setOpen("history"); setMsg(null); setHistory(null);
@@ -104,9 +119,20 @@ export default function IssueAdminActions({ issue, historyCount }: { issue: Admi
         </button>
       </div>
 
-      {open && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-[#121420] border border-white/10 rounded-2xl p-6 w-full max-w-lg shadow-2xl space-y-4 text-left max-h-[90vh] overflow-y-auto">
+      {/* Rendered into <body>, not here.
+          These actions live inside a <td>, and a voided row carries
+          `opacity-50` (page.tsx). CSS opacity applies to the whole subtree —
+          position:fixed does NOT escape it — so the dialog inherited 50%
+          opacity and the table showed straight through it. It was worst on the
+          void history, because a voided row is the only one that is dimmed.
+          A portal takes the dialog out of the row entirely, which also makes it
+          immune to any future ancestor with a transform, filter or clip. */}
+      {open && mounted && createPortal(
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}
+        >
+          <div className="relative bg-[#121420] border border-white/10 rounded-2xl p-6 w-full max-w-lg shadow-2xl space-y-4 text-left max-h-[90vh] overflow-y-auto">
             <button onClick={close} className="absolute right-6 top-6 text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-white/5">
               <X className="w-4 h-4" />
             </button>
@@ -251,7 +277,8 @@ export default function IssueAdminActions({ issue, historyCount }: { issue: Admi
               </>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
