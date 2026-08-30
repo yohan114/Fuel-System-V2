@@ -21,8 +21,9 @@ Worth stating plainly, because most of it was silent:
 | Fresh random `FUEL_PORTAL_TOKEN` | Every WorkshopOne call into `/api/portal/*` 401s. Nothing logs it on this side; its panels just stop updating. |
 | Machine timezone → Asia/Colombo | Shifts every existing cron and timer on the box. |
 
-All fixed in this bundle. The scripts now bring their own Node, their own
-service manager, and touch nothing of the incumbent's.
+All fixed in this bundle. The scripts bring their own Node at `/opt/node-24`,
+run PM2 under their own user with their own `PM2_HOME`, and touch nothing of
+the incumbent's.
 
 ---
 
@@ -48,7 +49,7 @@ read **keys only** — it never prints a secret value. It tees a report to
 | If the survey shows | Then |
 |---|---|
 | `:1929` process runs on `/usr/bin/node` | Good — bootstrap installs Node privately at `/opt/node-24` and never touches the system one. Nothing to change. |
-| `:3300` already in use | Bootstrap refuses to run. Pick another port and change it in `.env`, `deploy/fuelsystem.service`, and both `proxy_pass` lines in `nginx/fuelsystem-proxy.conf`. |
+| `:3300` already in use | Bootstrap refuses to run. Pick another port and change it in `.env`, `deploy/ecosystem.config.js` (both the `args` and `env.PORT`), and both `proxy_pass` lines in `nginx/fuelsystem-proxy.conf`. |
 | `sites-enabled/default` proxies to `:1929` | **Do not delete it.** Skip the catch-all; add the fuel vhost alongside it. |
 | `sites-enabled/default` is the stock Ubuntu placeholder | Install `000-catchall.conf`, then the fuel vhost. |
 | Something already declares `default_server` on `:80` | Skip `000-catchall.conf` — a second one stops nginx starting. |
@@ -116,9 +117,12 @@ sha256 `94bd756eb0b79ac576c4f78b0b663356925d0260caba191bb8a03c2f7cc705e7`.
 It carries the **rotated** password hashes — if you shipped an earlier copy,
 ship this over it.
 
-`start-app.sh` runs under **systemd**, not PM2, so there is no shared `dump.pm2`
-a fuel deploy could overwrite. It finishes by checking `:3300` answers, that the
-portal token is accepted, **and that WorkshopOne on `:1929` is still up.**
+`start-app.sh` runs it under **PM2 as `fuelapp` with `PM2_HOME=/home/fuelapp/.pm2`**.
+That isolation is the whole safety story: `pm2 save` overwrites `dump.pm2` rather
+than merging, so under a home shared with WorkshopOne every fuel deploy would
+rewrite its boot list. The script checks no other daemon shares that home and
+refuses if one does. It finishes by checking `:3300` answers, that the portal
+token is accepted, **and that WorkshopOne on `:1929` is still up.**
 
 ---
 
@@ -148,7 +152,11 @@ WORKSHOP_DB_PATH=/var/lib/fuel-system/workshopone-snapshot.db
 ```
 
 `.backup` is safe against a concurrent writer and folds in the WAL, so the
-snapshot is never torn. Restart with `sudo systemctl restart fuelsystem`.
+snapshot is never torn. Restart with:
+
+```bash
+sudo -u fuelapp PM2_HOME=/home/fuelapp/.pm2 /opt/node-24/bin/npx pm2 restart fuelsystem --update-env
+```
 
 **Check:** `serviceSync.lastResult` on the admin screen shows `ok: true` with a
 non-zero `scanned`. Locally it reads 1,650 jobs. Leaving `WORKSHOP_DB_PATH`
@@ -252,7 +260,7 @@ Rebuilds and restarts; never touches the database. A `next.config.ts` change
 | `apt-get install nodejs` / NodeSource | Replaces `/usr/bin/node`; WorkshopOne dies at its next restart. |
 | `rm /etc/nginx/sites-enabled/default` | May remove WorkshopOne's only public route. |
 | `ufw enable`, or narrowing 80/443 | Cuts off `:1929` and any non-Cloudflare client of either app. |
-| `pm2 save` under a shared `PM2_HOME` | Overwrites the boot list; WorkshopOne may not come back from a reboot. |
+| `pm2 save` as root, or without `PM2_HOME` set | Lands in a shared home and overwrites the boot list; WorkshopOne may not come back from a reboot. Always `sudo -u fuelapp PM2_HOME=/home/fuelapp/.pm2`. |
 | `timedatectl set-timezone` | Shifts every existing cron and timer. |
 | Pointing `WORKSHOP_DB_PATH` at the live database | `-shm` cannot be mapped read-only; fails every 5 minutes. |
 | Regenerating `FUEL_PORTAL_TOKEN` alone | Silent 401s on every WorkshopOne call. |
