@@ -341,29 +341,54 @@ export default async function FuelIssuesPage(props: PageProps) {
         </div>
       ) : (
         <div className="bg-[#121420] border border-white/5 rounded-2xl overflow-hidden shadow-xl">
-          {/* Table */}
-          <table className="w-full border-collapse text-left text-xs">
+          {/* The outer box keeps the rounded corners; this inner div is the
+              scroll container. The box used to be overflow-hidden around a
+              w-full table, which is why ten columns crushed into each other on
+              anything short of a very wide monitor — the site cell stacked into
+              four lines and the Action column was clipped off the right edge
+              with no way to reach it. A min-width plus a real scroll container
+              lets the columns keep their size and gives you a bar to get to
+              them. */}
+          <div className="overflow-x-auto overflow-y-auto max-h-[68vh] fuel-log-scroll">
+            <table className="w-full min-w-[1180px] border-collapse text-left text-xs">
+              {/* Fixed widths so the columns do not renegotiate their size on
+                  every page of results — a table whose columns jump as you
+                  scroll is far harder to read down. */}
+              <colgroup>
+                <col className="w-[150px]" />
+                <col className="w-[130px]" />
+                <col className="w-[200px]" />
+                <col className="w-[95px]" />
+                <col className="w-[85px]" />
+                <col className="w-[95px]" />
+                <col className="w-[130px]" />
+                <col className="w-[140px]" />
+                <col className="w-[130px]" />
+                <col className="w-[125px]" />
+              </colgroup>
             <thead>
-              <tr className="bg-white/5 text-gray-400 border-b border-white/5">
-                <th className="px-6 py-4 font-semibold">Date</th>
-                <th className="px-6 py-4 font-semibold">Asset Code</th>
-                <th className="px-6 py-4 font-semibold">Assigned Site</th>
-                <th className="px-6 py-4 font-semibold">Fuel Kind</th>
-                <th className="px-6 py-4 font-semibold">Volume</th>
-                <th className="px-6 py-4 font-semibold">Pump Price</th>
-                <th className="px-6 py-4 font-semibold">Total Cost</th>
-                <th className="px-6 py-4 font-semibold">Issue Person</th>
-                <th className="px-6 py-4 font-semibold">Source</th>
-                <th className="px-6 py-4 font-semibold text-right">Action</th>
+              {/* Sticky, and opaque rather than bg-white/5 — a translucent
+                  header lets the rows scroll visibly through it. */}
+              <tr className="sticky top-0 z-10 bg-[#1b1e2e] text-gray-400 border-b border-white/10 shadow-sm">
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Date</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Asset Code</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Assigned Site</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Fuel Kind</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap text-right">Volume</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap text-right">Pump Price</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap text-right">Total Cost</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Issue Person</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Source</th>
+                <th className="px-4 py-3.5 font-semibold whitespace-nowrap text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {issues.map((issue) => (
                 <tr key={issue.id} className={`hover:bg-white/[0.02] transition-colors ${issue.voided ? "opacity-50" : ""}`}>
-                  <td className="px-6 py-4 text-gray-300 font-medium whitespace-nowrap">
+                  <td className="px-4 py-3 text-gray-300 font-medium whitespace-nowrap">
                     {fuelDateTime(issue.issueDate)}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-4 py-3">
                     <Link
                       href={`/fleet/${issue.asset.code}`}
                       className={`font-bold tracking-wide transition-colors ${issue.voided ? "text-gray-500 line-through" : "text-white hover:text-indigo-400"}`}
@@ -377,45 +402,71 @@ export default async function FuelIssuesPage(props: PageProps) {
                       <span className="ml-2 bg-red-500/10 text-red-300 border border-red-500/10 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">Voided</span>
                     )}
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-4 py-3 align-top">
                     {(() => {
                       const s = siteOfIssue(issue);
                       const drawnElsewhere = s && issue.source && s.code && issue.source.toUpperCase() !== s.code.toUpperCase() && !issue.source.toUpperCase().includes(s.code.toUpperCase());
+                      // Two lines, each truncated, rather than one inline-flex.
+                      // "Badalgama Main Workshop Main pump" is long enough that
+                      // the old single run wrapped into a four-line stack and
+                      // set the height of every row on the page. The full text
+                      // stays available on hover.
                       return s ? (
-                        <span className="inline-flex items-center gap-1 text-gray-300">
-                          <MapPin className="w-3 h-3 text-indigo-400 shrink-0" />
-                          {s.name}
-                          {drawnElsewhere && <span title={`Fuel drawn at ${issue.source}`} className="text-[9px] text-amber-400/70">↩ {issue.source}</span>}
-                        </span>
+                        <div className="min-w-0">
+                          <span className="flex items-center gap-1 text-gray-300 min-w-0" title={s.name}>
+                            <MapPin className="w-3 h-3 text-indigo-400 shrink-0" />
+                            <span className="truncate">{s.name}</span>
+                          </span>
+                          {drawnElsewhere && (
+                            <span
+                              title={`Fuel drawn at ${issue.source}`}
+                              className="block truncate text-[9px] text-amber-400/70 mt-0.5 pl-4"
+                            >
+                              ↩ {issue.source}
+                            </span>
+                          )}
+                        </div>
                       ) : <span className="text-gray-600">Unassigned</span>;
                     })()}
                   </td>
-                  <td className="px-6 py-4 text-gray-400 capitalize">
+                  <td className="px-4 py-3 text-gray-400 capitalize">
                     {issue.fuelKind.replace("_", " ").toLowerCase()}
                   </td>
-                  <td className="px-6 py-4 text-white font-bold whitespace-nowrap">
+                  {/* Figures right-aligned and tabular so the decimal points
+                      line up down the column — 100.0 L above 20.0 L above
+                      219.0 L is only scannable if the digits sit under each
+                      other. */}
+                  <td className="px-4 py-3 text-white font-bold whitespace-nowrap text-right tabular-nums">
                     {issue.litres.toFixed(1)} L
                   </td>
-                  <td className="px-6 py-4 text-gray-400">
+                  <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-right tabular-nums">
                     Rs. {(issue.pricePerLitre / 100).toFixed(2)}
                   </td>
-                  <td className="px-6 py-4 text-white font-bold whitespace-nowrap">
+                  <td className="px-4 py-3 text-white font-bold whitespace-nowrap text-right tabular-nums">
                     Rs. {(issue.totalCost / 100).toLocaleString("en-LK", { minimumFractionDigits: 2 })}
                   </td>
-                  <td className="px-6 py-4 text-gray-300">
-                    {issue.issuePerson || issue.issuedBy.name}
+                  <td className="px-4 py-3 text-gray-300">
+                    <span className="block truncate" title={issue.issuePerson || issue.issuedBy.name}>
+                      {issue.issuePerson || issue.issuedBy.name}
+                    </span>
                   </td>
-                  <td className="px-6 py-4">
-                    <span className="bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400 border border-white/5">
+                  <td className="px-4 py-3 align-top">
+                    {/* A one-line badge that truncates, not a block that wraps.
+                        "BADALGAMA MAIN WORKSHOP MAIN PUMP" in a narrow column
+                        broke across four lines and stretched the whole row. */}
+                    <span
+                      title={issue.source}
+                      className="block max-w-full truncate bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400 border border-white/5"
+                    >
                       {issue.source}
                     </span>
                     {issue.photoName && (
-                      <a href={`/api/fuel-issues/${issue.id}/photo`} target="_blank" rel="noopener noreferrer" className="ml-2 text-indigo-400 hover:text-indigo-300 text-[10px] font-semibold underline">
+                      <a href={`/api/fuel-issues/${issue.id}/photo`} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-indigo-400 hover:text-indigo-300 text-[10px] font-semibold underline">
                         photo
                       </a>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-4 py-3 text-right">
                     {/* An admin acts directly and the act is recorded; everyone
                         else asks, and the request is reviewed. Same data, two
                         different responsibilities. */}
@@ -458,7 +509,18 @@ export default async function FuelIssuesPage(props: PageProps) {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
+          {/* Says what you are looking at, and that the table scrolls — a
+              scroll container with no edge cue reads as a short list. */}
+          <div className="px-4 py-2.5 border-t border-white/5 text-[10px] text-gray-500 flex items-center justify-between gap-3">
+            <span>
+              Showing {issues.length.toLocaleString()}
+              {matchingTotal > issues.length ? ` of ${matchingTotal.toLocaleString()}` : ""} issue
+              {issues.length === 1 ? "" : "s"}
+            </span>
+            <span className="hidden sm:inline text-gray-600">Scroll inside the table — the header stays put</span>
+          </div>
         </div>
       )}
     </div>

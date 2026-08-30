@@ -163,10 +163,17 @@ export default async function DashboardLayout({ children }: LayoutProps) {
   }
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-[#090a0f] text-gray-200">
-      
+    // On desktop the shell is exactly one viewport tall and the two columns
+    // scroll independently. It used to be min-h-screen, which let the whole
+    // document grow with the content — so <main>'s overflow-y-auto never
+    // actually engaged, and the sidebar stretched with the page until the user
+    // card and Sign Out sat somewhere below the fold. Mobile keeps min-h-screen:
+    // it is a single column with a fixed bottom nav, and locking its height
+    // would break scrolling on short screens.
+    <div className="min-h-screen md:h-screen md:overflow-hidden flex flex-col md:flex-row bg-[#090a0f] text-gray-200">
+
       {/* 1. Desktop Sidebar */}
-      <aside className="hidden md:flex flex-col w-64 bg-[#121420] border-r border-white/5 p-6 flex-shrink-0">
+      <aside className="hidden md:flex flex-col w-64 h-screen bg-[#121420] border-r border-white/5 p-6 flex-shrink-0">
         {/* Brand / Logo */}
         <div className="flex items-center gap-3 mb-10 px-2">
           <div className="w-10 h-10 bg-gradient-to-tr from-indigo-500 to-emerald-500 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/10">
@@ -178,8 +185,12 @@ export default async function DashboardLayout({ children }: LayoutProps) {
           </div>
         </div>
 
-        {/* Navigation Links */}
-        <nav className="flex-1 space-y-1">
+        {/* Navigation Links.
+            min-h-0 is load-bearing: a flex child defaults to min-height:auto,
+            which refuses to shrink below its content, so overflow-y-auto here
+            would never scroll and the list would push the footer off-screen
+            instead. An admin has 28 entries — well past one viewport. */}
+        <nav className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -194,25 +205,24 @@ export default async function DashboardLayout({ children }: LayoutProps) {
             );
           })}
 
-          {/* Admin Section */}
-          {isAdmin && (
-            <div className="pt-6 mt-6 border-t border-white/5 space-y-1">
-              <p className="px-4 text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                System Admin
-              </p>
-              <Link
-                href="/admin/prices"
-                className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-all"
-              >
-                <Settings className="w-5 h-5" />
-                Admin Console
-              </Link>
-            </div>
-          )}
         </nav>
 
-        {/* User Card & Logout */}
-        <div className="border-t border-white/5 pt-6 mt-6 flex flex-col gap-4">
+        {/* Pinned footer: System Admin, then who you are, then Sign Out.
+            Outside <nav> on purpose. Inside it, System Admin scrolled away with
+            the other 28 entries and the whole block ended up below the fold;
+            out here it is always at the bottom of the window, which is where
+            people look for it. flex-shrink-0 stops the nav's overflow from
+            squeezing it. */}
+        <div className="flex-shrink-0 border-t border-white/5 pt-4 mt-4 flex flex-col gap-4">
+          {isAdmin && (
+            <Link
+              href="/admin/prices"
+              className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-all"
+            >
+              <Settings className="w-5 h-5" />
+              System Admin
+            </Link>
+          )}
           <div className="flex items-center gap-3 px-2">
             <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center font-bold text-indigo-400 border border-indigo-500/10">
               {session.name.substring(0, 2).toUpperCase()}
