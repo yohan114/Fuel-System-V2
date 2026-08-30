@@ -4,17 +4,68 @@ import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import WorkshopConsole from "./WorkshopConsole";
 import PumpOverview, { PumpCard } from "./PumpOverview";
+import PumpIssuePanel from "./PumpIssuePanel";
 
-export default async function WorkshopPage() {
+export default async function WorkshopPage(props: { searchParams: Promise<{ tank?: string }> }) {
   const session = await getSession();
   if (!session || (session.role !== "ADMIN" && session.role !== "WORKSHOP")) {
     redirect("/");
+  }
+
+  const tankParam = (await props.searchParams).tank?.trim() || "";
+
+  // ?tank= means "record into this pump", and only an admin may aim it at a
+  // pump that is not their own. An operator arriving with someone else's id —
+  // by a shared link or by editing the address — is sent back to their own
+  // console rather than shown a form that would refuse them at submit time.
+  if (tankParam && session.role !== "ADMIN") {
+    if (tankParam !== session.bulkTankId) redirect("/workshop");
   }
 
   // An operator is posted to one pump and wants to work it. An admin owns all of
   // them and wants the estate: which are dry, which hold stock, where today's
   // fuel went. Showing an admin a single arbitrary tank — whichever came back
   // first — answered a question nobody asked.
+  // An admin who named a pump gets the panel that records into it. This is the
+  // route the Pump Overview's "Record issue" button opens, and the only way for
+  // the office to key a site's fuel without borrowing that site's login.
+  if (session.role === "ADMIN" && tankParam) {
+    const picked = await prisma.bulkTank.findUnique({
+      where: { id: tankParam },
+      include: { project: { select: { code: true, name: true } } },
+    });
+    // A stale link should show the estate, not a stack trace.
+    if (picked) {
+      const assets = await prisma.asset.findMany({
+        where: { status: { not: "DISPOSED" } },
+        select: { id: true, code: true, regNo: true, meterType: true },
+        orderBy: { code: "asc" },
+      });
+      // Colombo "now" for the datetime-local default, computed here so the
+      // first render cannot disagree with the browser's clock.
+      const nowLocal = new Date()
+        .toLocaleString("sv-SE", { timeZone: "Asia/Colombo" })
+        .replace(" ", "T")
+        .slice(0, 16);
+      return (
+        <PumpIssuePanel
+          tank={{
+            id: picked.id,
+            name: picked.name,
+            fuelKind: picked.fuelKind,
+            balance: picked.balance,
+            capacity: picked.capacity,
+            projectCode: picked.project?.code ?? null,
+            projectName: picked.project?.name ?? null,
+            isWorkshop: /workshop/i.test(picked.project?.name ?? picked.name),
+          }}
+          assets={assets}
+          nowLocal={nowLocal}
+        />
+      );
+    }
+  }
+
   if (session.role === "ADMIN" && !session.bulkTankId) {
     const tanks = await prisma.bulkTank.findMany({
       include: { project: { select: { code: true, name: true } } },
@@ -55,10 +106,11 @@ export default async function WorkshopPage() {
     tank = await prisma.bulkTank.findUnique({
       where: { id: session.bulkTankId },
     });
-  } else if (session.role === "ADMIN") {
-    // Admin can view the first tank by default
-    tank = await prisma.bulkTank.findFirst();
   }
+  // No arbitrary-tank fallback. An admin holding a bulkTankId gets their own
+  // pump; one without gets the overview above and picks. `findFirst()` handed
+  // whichever row came back first, which is never the pump anybody meant — the
+  // same reasoning as the overview branch, which this used to contradict.
 
   // Fetch all tanks for selection (especially for admins)
   const allTanks = await prisma.bulkTank.findMany({

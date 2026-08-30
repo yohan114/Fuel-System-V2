@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { isPumpOperator, isSiteUser } from "@/lib/roles";
+import { resolveIssueAuthority } from "@/lib/fuel/issue-authority";
 import { canUserAccessAsset } from "@/lib/assignments";
 import { revalidatePath } from "next/cache";
 import { getPriceForDate } from "@/lib/pricing";
@@ -476,7 +477,19 @@ export async function workshopIssueFuelAction(formData: FormData) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  if (!isPumpOperator(user.role) || !user.bulkTankId) {
+  // This console's tank comes from the SESSION and never from the form — an
+  // operator signs for one pump, so which tank it is was never the browser's
+  // to say. The admin's pump panel is the opposite and takes it from the form;
+  // resolveIssueAuthority is where the two rules are stated together so they
+  // cannot drift into disagreeing about who may move whose stock.
+  const authority = resolveIssueAuthority({
+    role: user.role,
+    ownTankId: user.bulkTankId,
+    targetTankId: null,
+  });
+  if (!authority.allowed) return { error: authority.error };
+  const operatorTankId = authority.tankId;
+  if (!operatorTankId) {
     return { error: "Only accounts with a linked pump (workshop or site) can issue fuel from bulk." };
   }
 
@@ -532,9 +545,10 @@ export async function workshopIssueFuelAction(formData: FormData) {
   }
 
   try {
-    // 1. Fetch current tank balance
+    // 1. Fetch current tank balance — the pump the authority check settled on,
+    // so there is one place the tank is decided and one value used downstream.
     const tank = await prisma.bulkTank.findUnique({
-      where: { id: user.bulkTankId },
+      where: { id: operatorTankId },
     });
 
     if (!tank) {

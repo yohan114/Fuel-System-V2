@@ -1,6 +1,6 @@
 import React from "react";
 import Link from "next/link";
-import { Database, Warehouse, AlertTriangle } from "lucide-react";
+import { Database, Warehouse, AlertTriangle, Fuel } from "lucide-react";
 
 // Stock across every pump, on one screen.
 //
@@ -38,12 +38,15 @@ function Card({ p }: { p: PumpCard }) {
   // here would have matched nothing and shown an empty list.
   const href = `/fuel/issues?tank=${encodeURIComponent(p.id)}`;
 
+  // Two destinations from one card: the log (what came out of this pump) and
+  // the console that records into it. A <button> or a second <a> cannot be
+  // nested inside an <a>, so the whole-card link becomes a stretched overlay and
+  // the record action sits above it on the z-axis. Clicking anywhere else on the
+  // card still opens the log, exactly as before — nothing is relearned.
   return (
-    <Link
-      href={href}
-      className="bg-[#121420] border border-white/5 rounded-2xl p-5 shadow-md hover:border-indigo-500/30 transition-colors h-full flex flex-col gap-4"
-    >
-      <div className="flex items-start justify-between gap-3">
+    <article className="relative bg-[#121420] border border-white/5 rounded-2xl p-5 shadow-md hover:border-indigo-500/30 transition-colors h-full flex flex-col gap-4">
+      <Link href={href} className="absolute inset-0 rounded-2xl" aria-label={`Fuel issue log for ${p.name}`} />
+      <div className="relative flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0">
           <div className={`p-2 rounded-xl shrink-0 ${p.isWorkshop ? "bg-emerald-500/10 text-emerald-400" : "bg-indigo-500/10 text-indigo-400"}`}>
             {p.isWorkshop ? <Warehouse size={18} /> : <Database size={18} />}
@@ -62,7 +65,7 @@ function Card({ p }: { p: PumpCard }) {
         )}
       </div>
 
-      <div className="mt-auto space-y-2">
+      <div className="relative mt-auto space-y-2">
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-2xl font-bold text-white">
             {p.balance.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
@@ -85,8 +88,21 @@ function Card({ p }: { p: PumpCard }) {
               : "0 L issued today"}
           </span>
         </div>
+
+        {/* z-10 lifts this above the stretched overlay link, so it wins the
+            click rather than falling through to the log. */}
+        <Link
+          href={`/workshop?tank=${encodeURIComponent(p.id)}`}
+          className={`relative z-10 mt-3 flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-semibold border transition-colors ${
+            p.isWorkshop
+              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+              : "border-indigo-500/20 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20"
+          }`}
+        >
+          <Fuel size={12} /> Record issue
+        </Link>
       </div>
-    </Link>
+    </article>
   );
 }
 
@@ -103,7 +119,8 @@ export default function PumpOverview({ pumps }: { pumps: PumpCard[] }) {
         <h1 className="text-2xl font-bold text-white">Pump Overview</h1>
         <p className="text-xs text-gray-400 mt-1 max-w-3xl">
           Stock across every pump. Click any tank to see that site&apos;s fuel issues, filter by
-          vehicle and date, and download a PDF or Excel report.
+          vehicle and date, and download a PDF or Excel report — or use <span className="text-gray-300">Record issue</span> to
+          log fuel straight out of that pump, for any site.
         </p>
         <p className="text-[11px] text-gray-500 mt-2">
           {pumps.length} pumps · {totalStock.toLocaleString(undefined, { maximumFractionDigits: 1 })} L in stock
