@@ -112,8 +112,8 @@ sudo bash /var/www/fuelsystem/deploy/install-db.sh /tmp/app-ship.db
 sudo bash /var/www/fuelsystem/deploy/start-app.sh
 ```
 
-Current file: `33.1 MB`, `12 users, 770 assets, 13690 fuelIssues, 703 bills`,
-sha256 `94bd756eb0b79ac576c4f78b0b663356925d0260caba191bb8a03c2f7cc705e7`.
+Current file: `33.1 MB`, `12 users, 770 assets, 13691 fuelIssues, 704 bills`,
+sha256 `2e716c3c4170a53ccdee2f801d217b481605e1679787d03036edc2ad17745abe`.
 It carries the **rotated** password hashes — if you shipped an earlier copy,
 ship this over it.
 
