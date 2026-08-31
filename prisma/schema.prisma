@@ -353,6 +353,20 @@ model FuelIssue {
   // site itself is derived from the vehicle's allocation (see site-attribution).
   issuePerson     String?
 
+  // Provenance for rows written by scripts/import_site_fuel.ts: a stable hash of
+  // the SHEET ROW this issue came from (file|sheet|row|nth|project), not of its
+  // values. Null on every row keyed in through the UI and on the historical
+  // loads that predate the importer.
+  //
+  // Keying on row identity rather than value identity is what makes a re-import
+  // a guaranteed no-op even when the site edits a litre figure between runs — a
+  // changed value on the same sheet row is reported as an update candidate
+  // instead of silently appearing as a second charge. It is also the only thing
+  // that lets a load be reconciled back to its source document, whose absence is
+  // how Pallanoya carried a 260 L duplicate for three weeks under a legitimate
+  // source string.
+  importKey       String?      @unique
+
   corrections     FuelIssueCorrection[]
 
   // Performance: FuelIssue is the largest, fastest-growing table and is read by
