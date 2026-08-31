@@ -1,6 +1,6 @@
 // PM2 process definition for the fuel system.
 //
-//     cd /var/www/fuelsystem
+//     cd <the checkout>
 //     sudo -u fuelapp PM2_HOME=/home/fuelapp/.pm2 \
 //       /opt/node-24/bin/npx pm2 start deploy/ecosystem.config.js
 //
@@ -21,22 +21,36 @@
 // Never run this app's pm2 commands as root, and never without PM2_HOME set —
 // both land you back in a shared home.
 
+// Where the checkout actually is, derived from this file rather than declared.
+// It used to be the literal "/var/www/fuelsystem", which silently broke a deploy
+// to any other path: PM2 sets cwd BEFORE it runs anything, so a wrong value here
+// does not fail loudly — Next starts in a directory with no .next and no
+// node_modules and the error names the module, not the directory.
+//
+// APP_DIR still wins when it is set, so the value stays consistent with
+// start-app.sh, which takes the same override.
+const path = require("path");
+const APP_DIR = process.env.APP_DIR || path.resolve(__dirname, "..");
+const NODE_PREFIX = process.env.NODE_PREFIX || "/opt/node-24";
+const APP_USER = process.env.APP_USER || "fuelapp";
+const PORT = process.env.PORT || "3300";
+
 module.exports = {
   apps: [
     {
       name: "fuelsystem",
-      cwd: "/var/www/fuelsystem",
+      cwd: APP_DIR,
 
       // The PRIVATE Node, by absolute path. /usr/bin/node belongs to whatever
       // else runs on this box; better-sqlite3 here is compiled against 24 and
       // resolving a different one at boot is how you get "Module did not
       // self-register" a week after the deploy that caused it.
-      interpreter: "/opt/node-24/bin/node",
+      interpreter: `${NODE_PREFIX}/bin/node`,
       script: "node_modules/next/dist/bin/next",
       // -H 127.0.0.1 binds to loopback. Without it the app is reachable
       // directly on :3300 from the internet, bypassing nginx, Cloudflare and
       // every header this deployment depends on.
-      args: "start -H 127.0.0.1 -p 3300",
+      args: `start -H 127.0.0.1 -p ${PORT}`,
 
       // One instance, deliberately. src/instrumentation.ts starts the Ceypetco
       // price scheduler and the 5-minute WorkshopOne poller once per process,
@@ -51,8 +65,8 @@ module.exports = {
         // after 18:30 lands in the wrong invoice month. Set per-process so the
         // machine's own clock is left alone for WorkshopOne.
         TZ: "Asia/Colombo",
-        PORT: "3300",
-        PATH: "/opt/node-24/bin:/usr/local/bin:/usr/bin:/bin",
+        PORT: String(PORT),
+        PATH: `${NODE_PREFIX}/bin:/usr/local/bin:/usr/bin:/bin`,
       },
 
       // Two Node apps and two SQLite databases on one small VM. A runaway here
@@ -64,8 +78,8 @@ module.exports = {
       min_uptime: "30s",
       restart_delay: 5000,
 
-      out_file: "/home/fuelapp/.pm2/logs/fuelsystem-out.log",
-      error_file: "/home/fuelapp/.pm2/logs/fuelsystem-error.log",
+      out_file: `/home/${APP_USER}/.pm2/logs/fuelsystem-out.log`,
+      error_file: `/home/${APP_USER}/.pm2/logs/fuelsystem-error.log`,
       merge_logs: true,
       time: true,
     },
