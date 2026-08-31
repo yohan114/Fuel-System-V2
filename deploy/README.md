@@ -112,10 +112,16 @@ sudo bash /var/www/fuelsystem/deploy/install-db.sh /tmp/app-ship.db
 sudo bash /var/www/fuelsystem/deploy/start-app.sh
 ```
 
-Current file: `33.1 MB`, `12 users, 770 assets, 13691 fuelIssues, 704 bills`,
-sha256 `2e716c3c4170a53ccdee2f801d217b481605e1679787d03036edc2ad17745abe`.
+Current file: `33.5 MB`, `12 users, 770 assets, 14053 fuelIssues, 704 bills`,
+sha256 `4adf41cd48986eddca36c40c56001a8fe322976ba90ff6558851e2b94b949370`.
 It carries the **rotated** password hashes — if you shipped an earlier copy,
 ship this over it.
+
+Rebuilt 31 Aug 2026, after the five-site August fuel import (362 issues,
+6,568 L, sources: BATTI-02, IRD-03, ING, MANN, MUTUR). Fuel now runs to
+28 Aug on the sites that reported; `fuelIssues` counts all rows, of which
+14,043 are live and 10 voided. Supersedes the 30 Aug file
+(`2e716c3c…`, 13,691 rows), which predates that import.
 
 `start-app.sh` runs it under **PM2 as `fuelapp` with `PM2_HOME=/home/fuelapp/.pm2`**.
 That isolation is the whole safety story: `pm2 save` overwrites `dump.pm2` rather
