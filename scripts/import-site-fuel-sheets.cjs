@@ -153,7 +153,28 @@ const existing = new Set(
 
 const admin = db.prepare("SELECT id FROM User WHERE username='admin'").get();
 if (!admin) throw new Error("no admin user to attribute the import to");
-const priceRow = db.prepare("SELECT id, pricePerLitre FROM FuelPrice ORDER BY effectiveFrom DESC LIMIT 1").get();
+// Price by the day the fuel was ISSUED, from the AUTO_DIESEL band in force on
+// that Colombo day — not by "whatever FuelPrice row happens to sort last".
+//
+// The previous single-row lookup had two faults and both reached the invoice.
+// It had no fuelKind filter, so the latest row overall could be PETROL_95 or
+// KEROSENE and every diesel issue would carry that figure. And it ignored the
+// issue date, so a June fill was charged at August's price. 286 of the 437 rows
+// this script has already written are priced against the wrong band, worth
+// Rs 311,636 — those are existing charges and are corrected through
+// FuelIssueCorrection with evidence, not by an importer rewriting them.
+const PRICES = db.prepare(
+  `SELECT id, pricePerLitre, ${cd("effectiveFrom")} AS day
+     FROM FuelPrice WHERE fuelKind = 'AUTO_DIESEL' ORDER BY effectiveFrom ASC`
+).all();
+if (!PRICES.length) throw new Error("no AUTO_DIESEL price on record — cannot price an import");
+
+/** The band in force on a Colombo day, e.g. "2026-08-24". */
+function priceOn(day) {
+  let hit = PRICES[0];
+  for (const p of PRICES) { if (p.day <= day) hit = p; else break; }
+  return hit;
+}
 
 // ── parsers ──────────────────────────────────────────────────────────────────
 function parseGrid(rows, period) {
@@ -355,10 +376,10 @@ const out = db.transaction(() => {
     (id, fuelKind, litres, issueDate, createdAt, assetId, issuedById, bulkTankId, source, voided, pricePerLitre, totalCost, fuelPriceId)
     VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?)`);
   for (const p of planned) {
-    const price = priceRow ? priceRow.pricePerLitre : null;
+    const band = priceOn(p.day);
     ins.run(crypto.randomUUID(), "AUTO_DIESEL", p.litres, atColombo(p.day), NOW,
       p.assetId, admin.id, p.tankId, `${p.file} :: ${p.sheet}`,
-      price, price != null ? Math.round(price * p.litres) : null, priceRow ? priceRow.id : null);
+      band.pricePerLitre, Math.round(band.pricePerLitre * p.litres), band.id);
   }
   db.prepare(`INSERT INTO AuditLog (id,action,entity,entityId,summary,metaJson,createdAt,actorId)
               VALUES (?,?,?,?,?,?,?,?)`).run(
