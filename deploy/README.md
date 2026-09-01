@@ -112,16 +112,15 @@ sudo bash /var/www/fuelsystem/deploy/install-db.sh /tmp/app-ship.db
 sudo bash /var/www/fuelsystem/deploy/start-app.sh
 ```
 
-Current file: `33.6 MB`, `12 users, 770 assets, 14053 fuelIssues, 704 bills`,
-sha256 `7734910e58dd25ee063f441f47177a07efc65fb4c6e09dcc248b0ea73535cd36`.
+Current file: `33.7 MB`, `12 users, 770 assets, 14230 fuelIssues, 704 bills`,
+sha256 `16d90f6c89920463420fd4cceac99005d034fb8c12d0d4331299c7462298e922`.
 It carries the **rotated** password hashes — if you shipped an earlier copy,
 ship this over it.
 
-Rebuilt 31 Aug 2026. Contains the five-site August fuel import (362 issues,
-6,568 L) and the Badalgama tank correction: balance 726.718 L from a physical
-dip, with both TankDip records and the audit trail explaining why the earlier
-11.62 L figure was withdrawn. `fuelIssues` counts all rows, of which 14,043 are
-live and 10 voided.
+Rebuilt 31 Aug 2026, after Galagedara. Holds the five-site August import
+(362 issues), the Badalgama tank correction (726.718 L from a physical dip), and
+Galagedara/CEP-03F (177 issues, 8,152 L, carrying that site to 28 Aug).
+`fuelIssues` counts all rows, of which 14,220 are live and 10 voided.
 
 **This is the last full overwrite that is safe.** Once the server has real
 traffic, installing a locally-built database over it destroys whatever was

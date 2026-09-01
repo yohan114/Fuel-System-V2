@@ -217,6 +217,103 @@ export const SITES: Record<string, SiteProfile> = {
     ]),
   },
 
+  // ── Galagedara ────────────────────────────────────────────────────────────
+  "CEP-03F": {
+    project: "CEP-03F",
+    source: "Galagedara fuel & allocation workbook (May-Aug 2026)",
+    file: `${D}/Galagedara/Galagedara_Fuel_Monthly_and_Vehicle_Allocation.xlsx`,
+    notes:
+      "'Fuel Issues' is a MERGED view of three records — the site's diesel stock " +
+      "book (11 May - 26 Jul), the Fuel & Lubricant issue log (26 Jul - 1 Aug) " +
+      "and the daily photo sheets (2 - 28 Aug) — already de-duplicated where they " +
+      "overlap: 26 July is taken from the stock book only, because the issue log " +
+      "repeats the same twelve issues. Read this sheet and nothing else. The ten " +
+      "dated tabs restate rows it already contains, and its own 'Sources & Name " +
+      "Map' tab records the joins.\n" +
+      "Column 2 is the NORMALISED unit name and column 3 is what the record " +
+      "actually said; the workbook applied its own merges first, each backed by " +
+      "an unbroken meter chain across the spellings (HEX-39 to HEX-37 running " +
+      "7364.5 -> 7394.9; ZB-1980 through four spellings on 2315.9 -> 2320.5; five " +
+      "D4D-02 spellings on 5228.5 -> 5262.5). Reading column 2 inherits that work " +
+      "rather than redoing it worse.\n" +
+      "It also names what it deliberately did NOT merge, and those must stay " +
+      "apart: HEX-23 and HEX-33 drew fuel on the same day twelve times; LA-1359 " +
+      "and PH-9072 both drew on 6 Jul. Two units cannot fill twice under two " +
+      "names on one day, which is the test it applied.\n" +
+      "The 23 Aug page also exists in the E Package workbook, transcribed from " +
+      "the same photograph. It belongs HERE — Galagedara's version has the " +
+      "correct plate spellings and meter magnitudes. Do not also import it under " +
+      "CEP-03E.\n" +
+      "Receipts are complete only to 1 Aug: the 2-5 Aug sheets left the balance, " +
+      "issued and stock lines blank. Do not read a stock position from this file.",
+    spec: {
+      kind: "long",
+      sheet: "Fuel Issues",
+      headerMatch: /^Date$/i,
+      dateFormat: "serial",
+      // col 2 = normalised unit, 3 = as written, 5 = current meter, 6 = previous,
+      // 7 = which of the three records the row came from.
+      cols: { date: 0, label: 2, note: 7, fills: [{ litres: 4, meter: 5 }] },
+      skipLabels: ["Total"],
+      // A row with nothing in "As Written on Record" had no plate on the original
+      // document, so column 2 is an inference rather than a transcription. Exactly
+      // one row of 748 is like this: 25 Jul, 30 L, attributed to SR-13 — and
+      // SR-13 is half of the one pair the workbook explicitly refused to settle
+      // ("worth settling from the machine plates"), on a day SR-13 already has a
+      // 40 L fill. Weakest row in the file, in a month that carries issued
+      // invoices. It stays out until the site confirms the machine.
+      rowFilter: (r) => String(r[3] ?? "").trim() !== "",
+    },
+    // Each of these is a single mis-read digit, identified by where the figure
+    // has to sit between the readings either side of it. The LITRES are imported
+    // in every case; only the reading is dropped.
+    untrustedMeters: new Set([
+      // MG-07 runs 10852.5 (14 Aug) to 10866.2 (21 Aug), about 2 hours a day.
+      // 19 Aug's 10863 fits that line; 20 Aug's 10861.8 sits below the day
+      // before it and below the day after.
+      "2026-08-20|MG-07",
+      // PJ-6376 (HCC-09) is a crew cab in the 310,000 km band: 310379 on 11 Aug,
+      // 310887 on 20 Aug. 320508 is 310508 with a 2 for a 1 — it lands exactly
+      // between them once corrected. Its 6 Aug figure of 3009750 is the same
+      // hand adding a digit to 309750, but that row is already imported.
+      "2026-08-13|PJ-6376",
+      // PE-3723 reads 199192 on 14 Aug and 199926 on 24 Aug. 195776 on 22 Aug
+      // is 199776 with a 9 read as a 5; nothing else explains a 3,400 drop and
+      // a full recovery two days later.
+      "2026-08-22|PE-3723",
+      // HEX-23 has a NEW hour meter. The sheet runs 90.9, 98.5, 105.8, 113.7,
+      // 118, 134.7 across 20-27 Aug — coherent, about 7 hours a day, starting
+      // near zero. The machine's service history reaches 21,088 hours. Storing
+      // 134.7 as its latest reading would put every hours-since-service figure
+      // downstream into nonsense, and MeterReading has no way to record that a
+      // meter was changed. Same decision as ZA-2964 at Inginimitiya.
+      "2026-08-20|HEX-23", "2026-08-21|HEX-23", "2026-08-22|HEX-23",
+      "2026-08-23|HEX-23", "2026-08-24|HEX-23", "2026-08-27|HEX-23",
+      // DAB-5905 holds 70106 km on 12 Aug. One isolated 7153.1 on 24 Aug, a
+      // tenth of that, with no chain either side to arbitrate it.
+      "2026-08-24|DAB-5905",
+    ]),
+    holdBack: {
+      "LA-4225":
+        "4 rows, 142 L, 9-27 Aug. LA-4229 is one digit away but is the " +
+        "registration of TWO machines — DT-52, a tipper on KM, and WB-05, a " +
+        "water bowser on HOURS — and neither has ever drawn fuel or carried a " +
+        "reading, so nothing distinguishes them from history. The single meter " +
+        "on these rows, 281008 on 9 Aug, points at DT-52: as hours on a bowser " +
+        "it would be 32 years of continuous running. Suggestive, not decisive — " +
+        "and three of the four rows are written '41-4225', which matches neither " +
+        "plate, so the registration itself is in doubt. Ask the site.",
+      "DAI-9757":
+        "2 rows, 23 L, 24 and 27 Aug, meters 255 and 429. Nothing in the fleet " +
+        "is within a character. The site runs DAH-2491, DAG-4969 and DAB-5905, " +
+        "so the DA- series is real here and this is likely a genuine machine " +
+        "that was never registered — or a visiting one.",
+      "DAT-9762":
+        "1 row, 11 L, 28 Aug, meter 282. Same case as DAI-9757 and equally " +
+        "unmatched.",
+    },
+  },
+
   // ── ICDP Batti Lot-02 ─────────────────────────────────────────────────────
   "BATTI-02": {
     project: "BATTI-02",

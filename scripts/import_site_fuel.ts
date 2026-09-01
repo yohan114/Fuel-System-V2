@@ -83,9 +83,25 @@ async function importSite(key: string) {
   const assets: Asset[] = await prisma.asset.findMany({
     select: { id: true, code: true, regNo: true, meterType: true, projectId: true },
   });
-  const byCode = new Map(assets.map((a) => [alnum(a.code), a]));
-  const byReg = new Map(assets.filter((a) => a.regNo).map((a) => [alnum(a.regNo!), a]));
-  const look = (v: string) => byCode.get(alnum(v)) ?? byReg.get(alnum(v));
+  // Both indexes hold a LIST, not a single machine. Ten registrations in this
+  // fleet are shared by two or three different assets — LA-4229 is both DT-52, a
+  // tipper, and WB-05, a water bowser; FIORI is three separate truck mixers.
+  // Keyed by a plain Map, the later insert silently overwrote the earlier one and
+  // the single-candidate guard below could never see the collision: a lookup
+  // returned exactly one machine, so an ambiguous plate resolved confidently to
+  // whichever asset happened to load last.
+  const byCode = new Map<string, Asset[]>();
+  const byReg = new Map<string, Asset[]>();
+  const push = (m: Map<string, Asset[]>, k: string, a: Asset) => {
+    const list = m.get(k); if (list) list.push(a); else m.set(k, [a]);
+  };
+  for (const a of assets) {
+    push(byCode, alnum(a.code), a);
+    if (a.regNo) push(byReg, alnum(a.regNo), a);
+  }
+  /** Every machine a label could mean. Code beats registration; more than one
+   *  result means the label does not identify a single machine. */
+  const look = (v: string): Asset[] => byCode.get(alnum(v)) ?? byReg.get(alnum(v)) ?? [];
 
   // A handwritten plate loses one digit at a time — 6 read as 8, 1 as 7. Try the
   // string as written first, then single-digit substitutions, and accept the
@@ -97,20 +113,27 @@ async function importSite(key: string) {
     const aliased = p.aliases?.[label] ?? p.aliases?.[label.toUpperCase()];
     if (aliased) {
       const hit = look(aliased);
-      if (hit) return { asset: hit, how: `alias -> ${aliased}` };
+      if (hit.length === 1) return { asset: hit[0], how: `alias -> ${aliased}` };
+      if (hit.length > 1) {
+        note(label, `alias "${aliased}" is shared by ${hit.map((a) => a.code).join(", ")} — alias the CODE, not the registration`);
+        return null;
+      }
       note(label, `alias "${aliased}" is itself not in the fleet`);
       return null;
     }
     const direct = look(label);
-    if (direct) return { asset: direct, how: "exact" };
+    if (direct.length === 1) return { asset: direct[0], how: "exact" };
+    if (direct.length > 1) {
+      note(label, `is the registration of ${direct.map((a) => a.code).join(", ")} — cannot tell which`);
+      return null;
+    }
 
     const cands = new Map<string, Asset>();
     for (let i = 0; i < label.length; i++) {
       if (!/\d/.test(label[i])) continue;
       for (const d of "0123456789") {
         if (d === label[i]) continue;
-        const hit = look(label.slice(0, i) + d + label.slice(i + 1));
-        if (hit) cands.set(hit.id, hit);
+        for (const hit of look(label.slice(0, i) + d + label.slice(i + 1))) cands.set(hit.id, hit);
       }
     }
     if (cands.size === 1) return { asset: [...cands.values()][0], how: "one digit out" };
