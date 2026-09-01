@@ -22,7 +22,7 @@
 
 import Database from "better-sqlite3";
 import { prisma } from "../db";
-import { checkServiceMeter } from "./meter-trust";
+import { checkServiceMeter, DISTRUSTED_SERVICE_METERS } from "./meter-trust";
 
 export const DEFAULT_WORKSHOP_DB = "D:/Master system 1/data/workshopone.db";
 
@@ -33,6 +33,8 @@ export interface SyncResult {
   updated: number;
   unchanged: number;
   metersAdded: number;
+  /** Service meters excluded by hand — see DISTRUSTED_SERVICE_METERS. */
+  metersRuledOut: number;
   skippedNoMachine: number;
   skippedNoDate: number;
   migratedFromArchive: number;
@@ -102,7 +104,7 @@ function openWorkshop(path: string) {
 export async function syncWorkshopServices(opts?: { dbPath?: string }): Promise<SyncResult> {
   const dbPath = opts?.dbPath || process.env.WORKSHOP_DB_PATH || DEFAULT_WORKSHOP_DB;
   const result: SyncResult = {
-    ok: false, scanned: 0, created: 0, updated: 0, unchanged: 0, metersAdded: 0,
+    ok: false, scanned: 0, created: 0, updated: 0, unchanged: 0, metersAdded: 0, metersRuledOut: 0,
     skippedNoMachine: 0, skippedNoDate: 0, migratedFromArchive: 0,
     platesFilled: 0, plateConflicts: [], unresolvedLabels: [],
   };
@@ -295,7 +297,14 @@ export async function syncWorkshopServices(opts?: { dbPath?: string }): Promise<
       // A meter read at a service is a real reading — put it in the meter
       // history, but only when it can be trusted. WorkshopOne's meter column has
       // carried values up to 15,651,010,099, and some machines have two meters.
-      if (meter.value != null) {
+      //
+      // Readings the owner has ruled out by hand are dropped first. They have to
+      // be excluded HERE rather than by editing the record, because the block
+      // above rewrites meterAtService from WorkshopOne on every run.
+      const ruledOut = DISTRUSTED_SERVICE_METERS.get(sourceRef);
+      if (ruledOut) {
+        result.metersRuledOut++;
+      } else if (meter.value != null) {
         const already = await prisma.meterReading.findFirst({
           where: { assetId: asset.id, source: "SERVICE", value: meter.value, readingDate: data.serviceDate },
           select: { id: true },

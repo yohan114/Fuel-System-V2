@@ -15,6 +15,33 @@
 /** No hour meter in this fleet has run 100,000 hours; no odometer 2,000,000 km. */
 export const ABSOLUTE_MAX: Record<string, number> = { HOURS: 100_000, KM: 2_000_000 };
 
+/**
+ * Service meters the owner has ruled out by hand, keyed by the WorkshopOne job
+ * they came from (ServiceRecord.sourceRef). Their reading never enters the meter
+ * history, however plausible the arithmetic looks.
+ *
+ * This is a LIST rather than a rule on purpose. Every entry here has the same
+ * numeric shape as a legitimate meter replacement — an early high reading, then
+ * a lower series climbing from a new baseline — and no arithmetic separates the
+ * two. Twenty-one machines in this fleet share that shape and most of them are
+ * genuine replacements: BD-05 reads 265,102 km then 14,907, DT-32 94,434 then
+ * 6,786. A rule that caught DT-64 would take those with it.
+ *
+ * The sync rewrites ServiceRecord.meterAtService from WorkshopOne on every run,
+ * so editing the record locally does not hold. Excluding it here does.
+ */
+export const DISTRUSTED_SERVICE_METERS = new Map<string, string>([
+  [
+    "WSO:8",
+    'DT-64, 39,883 km on 2023-03-21. The machine reads 3,367 / 11,060 / 19,499 km ' +
+      'across 2024-25, so this caps it at a figure it has never since reached and ' +
+      'every later reading looks like a regression. WorkshopOne records it as a ' +
+      '"20000km service" with the next due at 59,883, and its vehicle_label is ' +
+      '"LP-1576    1618" — a plate with a second number appended. Ruled out by the ' +
+      'owner on 2026-08-31.',
+  ],
+]);
+
 export type MeterVerdict =
   | "ok"                 // consistent with what else is known about the machine
   | "absurd"             // beyond any physical possibility

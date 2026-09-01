@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   checkServiceMeter,
+  DISTRUSTED_SERVICE_METERS,
   isAbsurd,
   isProgressing,
   meterDeltaUsable,
@@ -117,5 +118,48 @@ describe("meterDeltaUsable", () => {
 
   it("returns no delta when there is no pair", () => {
     expect(meterDeltaUsable({ meterAtService: null, currentMeter: 5_000, meterType: "KM" }).usable).toBe(false);
+  });
+});
+
+// A service meter the owner has ruled out by hand.
+//
+// DT-64 reads 39,883 km at its March 2023 service, then 3,367 / 11,060 / 19,499
+// across 2024-25. checkServiceMeter passes that: isProgressing tolerates exactly
+// one drop, because a replaced odometer legitimately restarts from a low figure.
+// The arithmetic cannot tell a replaced meter from a wrong one — twenty-one
+// machines in this fleet share the shape and most are genuine replacements
+// (BD-05 265,102 km then 14,907; DT-32 94,434 then 6,786). So the exclusion is a
+// named list, not a rule: catching DT-64 with a threshold would take those too.
+//
+// It has to live in the sync rather than on the record, because the sync
+// rewrites ServiceRecord.meterAtService from WorkshopOne on every run — a local
+// edit is undone within five minutes.
+describe("service meters ruled out by hand", () => {
+  it("lists WSO:8 with a reason", () => {
+    expect(DISTRUSTED_SERVICE_METERS.has("WSO:8")).toBe(true);
+    expect(DISTRUSTED_SERVICE_METERS.get("WSO:8")).toMatch(/DT-64/);
+  });
+
+  it("is needed because the trust check alone would accept the reading", () => {
+    const verdict = checkServiceMeter({
+      value: 39883,
+      meterType: "KM",
+      reference: null,
+      ownSequenceInDateOrder: [39883, 3367, 11060, 19499],
+    });
+    expect(verdict.trusted).toBe(true);
+    expect(verdict.verdict).toBe("ok");
+  });
+
+  it("still accepts a genuine meter replacement, which is why this is a list", () => {
+    // BD-05: 265,102 km then a new odometer climbing 1,943 -> 14,907.
+    const verdict = checkServiceMeter({
+      value: 265102,
+      meterType: "KM",
+      reference: null,
+      ownSequenceInDateOrder: [265102, 1943, 8210, 14907],
+    });
+    expect(verdict.trusted).toBe(true);
+    expect(DISTRUSTED_SERVICE_METERS.has("WSO:804")).toBe(false);
   });
 });
