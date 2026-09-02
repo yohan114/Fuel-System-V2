@@ -33,9 +33,33 @@ die()  { printf '\n\033[1;31mFAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 mkdir -p "$LOCAL_DIR"
 
 say "Finding the newest backup on $HOST"
-newest="$(ssh "$HOST" "ls -1t ${REMOTE_DIR}/fuel-*.db.gz 2>/dev/null | head -1")" \
-  || die "could not reach $HOST — is ssh-agent running, or the host reachable?"
-[[ -n "$newest" ]] || die "no fuel-*.db.gz in ${REMOTE_DIR} on the server. Run deploy/backup-db.sh there first."
+# Ask for the listing AND a marker in one connection. `ls | head` exits 0 even
+# when ls found nothing, so without the marker an unreachable host and an empty
+# directory look identical — and the message then sends you to the wrong place.
+probe="$(ssh "$HOST" "
+  echo REACHED
+  ls -1t ${REMOTE_DIR}/fuel-*.db.gz 2>/dev/null | head -1
+  echo ---
+  ls -1 ${REMOTE_DIR} 2>/dev/null | head -5
+")" || die "could not reach $HOST. Check it is up and that 'ssh $HOST' works by hand."
+[[ "$probe" == REACHED* ]] || die "connected to $HOST but the command did not run"
+
+newest="$(sed -n '2p' <<<"$probe")"
+if [[ -z "$newest" ]]; then
+  echo >&2
+  echo "FAILED: connected fine, but ${REMOTE_DIR} holds no fuel-*.db.gz" >&2
+  others="$(sed -n '/^---$/,$p' <<<"$probe" | tail -n +2)"
+  if [[ -n "$others" ]]; then
+    echo "  what IS in that directory:" >&2
+    sed 's/^/    /' <<<"$others" >&2
+  else
+    echo "  that directory is empty or missing." >&2
+  fi
+  echo >&2
+  echo "  A backup has to be MADE on the server before it can be pulled. There:" >&2
+  echo "     sudo bash /var/www/fuelsystem/deploy/backup-db.sh" >&2
+  exit 1
+fi
 base="$(basename "$newest")"
 printf '    %s\n' "$base"
 
