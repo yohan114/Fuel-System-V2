@@ -28,7 +28,12 @@ KEEP="${KEEP:-20}"
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m    ok   %s\033[0m\n' "$*"; }
+warn() { printf '\033[1;33m    !    %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31mFAILED: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# node resolves modules against the CALLER's cwd, and Git Bash starts at / —
+# where better-sqlite3 does not exist. Anchor to the repo holding this script.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 mkdir -p "$LOCAL_DIR"
 
@@ -73,8 +78,13 @@ if [[ -f "${LOCAL_DIR}/${base}" ]]; then
 fi
 
 say "Fetching"
-scp -q "${HOST}:${newest}" "${LOCAL_DIR}/${base}"
-scp -q "${HOST}:${newest}.sha256" "${LOCAL_DIR}/${base}.sha256" 2>/dev/null || true
+# ONE scp for both files. As two calls, each prompts separately under password
+# auth and the second was quietly skipped — which is why the hash check kept
+# downgrading itself to "size only" even though the server had written a .sha256.
+if ! scp -q "${HOST}:${newest}" "${HOST}:${newest}.sha256" "${LOCAL_DIR}/" 2>/dev/null; then
+  scp -q "${HOST}:${newest}" "${LOCAL_DIR}/${base}"
+fi
+[[ -f "${LOCAL_DIR}/${base}" ]] || die "the transfer produced no file"
 
 say "Checking it arrived intact"
 if [[ -f "${LOCAL_DIR}/${base}.sha256" ]]; then
@@ -91,22 +101,30 @@ fi
 
 say "Opening it, to prove it is a database and not just bytes"
 gunzip -c "${LOCAL_DIR}/${base}" > "${LOCAL_DIR}/.verify.db"
-node -e '
-const D = require("better-sqlite3")(process.argv[1], { readonly: true });
-const chk = D.pragma("integrity_check")[0].integrity_check;
-if (chk !== "ok") { console.error("    integrity_check:", chk); process.exit(1); }
-const n = (s) => D.prepare(s).get().n;
-console.log("    integrity_check : ok");
-console.log("    users           :", n("select count(*) n from User"));
-console.log("    assets          :", n("select count(*) n from Asset"));
-console.log("    fuel issues     :", n("select count(*) n from FuelIssue where voided=0"));
-console.log("    bills           :", n("select count(*) n from Bill"));
-const latest = D.prepare("select max(issueDate) m from FuelIssue where voided=0").get().m;
-console.log("    latest issue    :", new Date(latest).toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" }));
-if (n("select count(*) n from User") === 0) { console.error("    zero users — this is not the live database"); process.exit(1); }
-' "${LOCAL_DIR}/.verify.db" || { rm -f "${LOCAL_DIR}/.verify.db" "${LOCAL_DIR}/${base}"; die "the file is not a usable database — discarded"; }
+
+set +e
+( cd "$REPO" && node "${REPO}/scripts/verify-backup.cjs" "${LOCAL_DIR}/.verify.db" ) \
+  > "${LOCAL_DIR}/.verify.out" 2>&1
+rc=$?
+set -e
+cat "${LOCAL_DIR}/.verify.out"
 rm -f "${LOCAL_DIR}/.verify.db"
-ok "restores and reads correctly"
+
+if [[ $rc -eq 0 ]]; then
+  rm -f "${LOCAL_DIR}/.verify.out"
+  ok "restores and reads correctly"
+elif grep -q "Cannot find module" "${LOCAL_DIR}/.verify.out"; then
+  # A file that FAILS the check is bad and goes. A check that could not RUN says
+  # nothing about the file. Deleting a good backup because a module was missing
+  # is the worst outcome available here, and it happened once before this guard
+  # existed.
+  rm -f "${LOCAL_DIR}/.verify.out"
+  warn "could not run the check — file KEPT, unverified"
+  echo "         run 'npm install' in ${REPO}, then re-run this script"
+else
+  rm -f "${LOCAL_DIR}/.verify.out" "${LOCAL_DIR}/${base}"
+  die "the file is not a usable database — discarded"
+fi
 
 say "Keeping the newest ${KEEP}"
 ls -1t "${LOCAL_DIR}"/fuel-*.db.gz 2>/dev/null | tail -n "+$((KEEP + 1))" | while IFS= read -r old; do
