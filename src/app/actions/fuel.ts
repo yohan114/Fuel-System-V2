@@ -11,6 +11,7 @@ import { revalidatePath } from "next/cache";
 import { errorMessage } from "@/lib/errors";
 import { logFuelIssueChange, diffSnapshots, periodKeyFor } from "@/lib/fuel/audit";
 import { colomboDayKey } from "@/lib/colombo-date";
+import { checkFuelMeter } from "@/lib/fuel/meter-guard";
 
 // How far back an admin may date a fuel issue before having to say why. A week
 // covers the ordinary case — a site sends its sheets in on Monday — without
@@ -100,17 +101,11 @@ export async function submitRequestAction(formData: FormData) {
         return { error: "Odometer/Hour reading must be a positive number" };
       }
 
-      // Check cumulative integrity
-      const latestReading = await prisma.meterReading.findFirst({
-        where: { assetId: asset.id, readingType: asset.meterType },
-        orderBy: [{ value: "desc" }, { readingDate: "desc" }],
-      });
-
-      if (latestReading && meterReading < latestReading.value) {
-        return {
-          error: `Reading value (${meterReading}) is lower than current reading (${latestReading.value}). Readings cannot go backwards.`,
-        };
-      }
+      // Cumulative integrity, against this machine's own FUEL readings only.
+      // Service meters are a different instrument and are excluded — see
+      // src/lib/fuel/meter-guard.ts for why that mattered on 132 machines.
+      const guard = await checkFuelMeter(prisma, asset.id, asset.meterType, meterReading, new Date());
+      if (!guard.ok) return { error: guard.error! };
     }
 
     const photo = await extractFileField(formData, "photo");
@@ -422,17 +417,11 @@ export async function recordDirectIssueAction(formData: FormData) {
         return { error: "Meter reading must be positive" };
       }
 
-      // Check cumulative integrity
-      const latestReading = await prisma.meterReading.findFirst({
-        where: { assetId: asset.id, readingType: asset.meterType },
-        orderBy: [{ value: "desc" }, { readingDate: "desc" }],
-      });
-
-      if (latestReading && meterReading < latestReading.value) {
-        return {
-          error: `Reading value (${meterReading}) is lower than the current reading (${latestReading.value}). Readings cannot go backwards.`,
-        };
-      }
+      // Cumulative integrity, against this machine's own FUEL readings only.
+      // Service meters are a different instrument and are excluded — see
+      // src/lib/fuel/meter-guard.ts for why that mattered on 132 machines.
+      const guard = await checkFuelMeter(prisma, asset.id, asset.meterType, meterReading, issueDate);
+      if (!guard.ok) return { error: guard.error! };
     }
 
     // Site fuel discipline: block if this would exceed the vehicle's daily cap.

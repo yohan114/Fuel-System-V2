@@ -9,6 +9,7 @@ import { revalidatePath } from "next/cache";
 import { getPriceForDate } from "@/lib/pricing";
 import { extractFileField } from "@/lib/upload";
 import { errorMessage } from "@/lib/errors";
+import { checkFuelMeter } from "@/lib/fuel/meter-guard";
 
 // 1. Create Bulk Tank (Admin only)
 export async function createBulkTankAction(formData: FormData) {
@@ -614,17 +615,11 @@ export async function workshopIssueFuelAction(formData: FormData) {
         return { error: "Odometer/Hour reading must be a positive number." };
       }
 
-      // Check cumulative integrity
-      const latestReading = await prisma.meterReading.findFirst({
-        where: { assetId: asset.id, readingType: asset.meterType },
-        orderBy: [{ value: "desc" }, { readingDate: "desc" }],
-      });
-
-      if (latestReading && meterReading < latestReading.value) {
-        return {
-          error: `Reading value (${meterReading}) is lower than current reading (${latestReading.value}). Readings cannot go backwards.`,
-        };
-      }
+      // Cumulative integrity, against this machine's own FUEL readings only.
+      // Service meters are a different instrument and are excluded — see
+      // src/lib/fuel/meter-guard.ts for why that mattered on 132 machines.
+      const guard = await checkFuelMeter(prisma, asset.id, asset.meterType, meterReading, issueDate);
+      if (!guard.ok) return { error: guard.error! };
     }
 
     // Optional pump/meter photo proof.
