@@ -38,13 +38,17 @@ say "Finding the newest backup on $HOST"
 # directory look identical — and the message then sends you to the wrong place.
 probe="$(ssh "$HOST" "
   echo REACHED
-  ls -1t ${REMOTE_DIR}/fuel-*.db.gz 2>/dev/null | head -1
+  printf 'NEWEST:%s\n' \"\$(ls -1t ${REMOTE_DIR}/fuel-*.db.gz 2>/dev/null | head -1)\"
   echo ---
   ls -1 ${REMOTE_DIR} 2>/dev/null | head -5
 ")" || die "could not reach $HOST. Check it is up and that 'ssh $HOST' works by hand."
 [[ "$probe" == REACHED* ]] || die "connected to $HOST but the command did not run"
 
-newest="$(sed -n '2p' <<<"$probe")"
+# NEWEST: is printed unconditionally, so it is empty rather than absent when
+# there are no backups. `ls | head` prints NOTHING when it matches nothing — not
+# a blank line — so reading a fixed line number picked up the --- separator and
+# handed it to basename.
+newest="$(sed -n 's/^NEWEST://p' <<<"$probe")"
 if [[ -z "$newest" ]]; then
   echo >&2
   echo "FAILED: connected fine, but ${REMOTE_DIR} holds no fuel-*.db.gz" >&2
