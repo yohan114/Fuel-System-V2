@@ -18,6 +18,20 @@ import type { FuelViewScope } from "../fuel/view-scope";
 // Shared by the screen, the PDF and the Excel export so all three agree; a
 // report that disagrees with its own download is worse than no report.
 
+/**
+ * Which site a row belongs to, when a reader picks one.
+ *
+ * "allocation" — the site the VEHICLE was posted to on the day, which is the
+ *                site charged for the fuel. Reconciles with the bill.
+ * "pump"       — the site whose TANK the fuel left, whoever ends up paying.
+ *                Reconciles with the storekeeper's own register.
+ *
+ * Galagedara in August 2026 is 20,943 L on allocation and 21,640 L at the pump.
+ * The 697 L between them is machines fuelling away from where they are posted,
+ * in both directions. Picking one silently is what makes the other look wrong.
+ */
+export type ReportSiteBasis = "allocation" | "pump";
+
 export interface FuelIssueReportFilter {
   from: Date;
   to: Date;
@@ -66,10 +80,17 @@ export interface FuelIssueReport {
 export function reportFilterForScope(
   scope: FuelViewScope,
   requestedSiteId?: string,
+  basis: ReportSiteBasis = "allocation",
 ): Pick<FuelIssueReportFilter, "projectId" | "pumpProjectId" | "none"> {
   switch (scope.kind) {
     case "all":
-      return { projectId: requestedSiteId || undefined };
+      // The only scope with a choice to make. A reader entitled to every site
+      // may ask either question of it; the other two scopes ARE the answer to
+      // one of them and the basis is not theirs to change — a pump operator
+      // reads their pump's book, a site login reads what its site is charged.
+      return basis === "pump"
+        ? { pumpProjectId: requestedSiteId || undefined }
+        : { projectId: requestedSiteId || undefined };
     case "pump":
       return { pumpProjectId: scope.projectId };
     case "allocation":

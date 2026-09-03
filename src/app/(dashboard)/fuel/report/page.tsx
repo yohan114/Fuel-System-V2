@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { fuelViewScope } from "@/lib/fuel/view-scope";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
-import { buildFuelIssueReport, parseReportParams, reportFilterForScope } from "@/lib/reports/fuel-issue-report";
+import { buildFuelIssueReport, parseReportParams, reportFilterForScope, type ReportSiteBasis } from "@/lib/reports/fuel-issue-report";
 import { fuelDate } from "@/lib/colombo-date";
 import { FileText, FileSpreadsheet, Filter, Search } from "lucide-react";
 
@@ -16,7 +16,7 @@ import { FileText, FileSpreadsheet, Filter, Search } from "lucide-react";
 // to PDF and Excel rather than making anyone re-key them.
 
 interface PageProps {
-  searchParams: Promise<{ from?: string; to?: string; site?: string; vehicle?: string; fuelKind?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; site?: string; vehicle?: string; fuelKind?: string; basis?: string }>;
 }
 
 const rs = (cents: number) => "Rs. " + Math.round(cents / 100).toLocaleString("en-LK");
@@ -33,7 +33,10 @@ export default async function FuelIssueReportPage(props: PageProps) {
   // book; a site login on the fuel its site is charged for; anything the scope
   // cannot resolve reports on nothing. Whatever the query string says.
   const scope = await fuelViewScope(session);
-  const scoped = reportFilterForScope(scope, p.site);
+  // Which question a site filter asks. Only a reader entitled to every site has
+  // the choice; the other scopes are already one answer or the other.
+  const basis: ReportSiteBasis = sp.basis === "pump" ? "pump" : "allocation";
+  const scoped = reportFilterForScope(scope, p.site, basis);
   const scopeSiteId = scoped.projectId ?? scoped.pumpProjectId;
   const locked = scope.kind !== "all";
 
@@ -53,6 +56,7 @@ export default async function FuelIssueReportPage(props: PageProps) {
   const qs = new URLSearchParams({
     from: p.fromStr, to: p.toStr,
     ...(scoped.projectId ? { site: scoped.projectId } : {}),
+    ...(scoped.pumpProjectId && scope.kind === "all" ? { site: scoped.pumpProjectId, basis: "pump" } : {}),
     ...(p.vehicle ? { vehicle: p.vehicle } : {}),
     ...(p.fuelKind ? { fuelKind: p.fuelKind } : {}),
   }).toString();
@@ -68,12 +72,13 @@ export default async function FuelIssueReportPage(props: PageProps) {
         </h1>
         <p className="text-xs text-gray-400 mt-1 max-w-4xl">
           {scoped.pumpProjectId ? (
-            <>Every issue dispensed from your pump — {siteName} — including machines visiting from other
-            sites. The Site column shows whose fuel it is: the vehicle&apos;s allocated site on the day,
-            which is the site that gets charged for it.</>
+            <>Every issue dispensed from the {siteName} pump — including machines visiting from other
+            sites, and excluding {siteName} machines that fuelled elsewhere. The Site column shows whose
+            fuel it is: the vehicle&apos;s allocated site on the day, which is the site charged for it.</>
           ) : (
             <>Every fuel issue for one vehicle or a whole site over a date range. Fuel is attributed to the
-            vehicle&apos;s allocated site on the day it was issued, not to the pump it was drawn from.</>
+            vehicle&apos;s allocated site on the day it was issued, not to the pump it was drawn from.
+            {!locked && <> To count a site by its own pump instead, change &ldquo;Count that site by&rdquo; below.</>}</>
           )}
         </p>
       </div>
@@ -97,6 +102,18 @@ export default async function FuelIssueReportPage(props: PageProps) {
               ))}
             </select>
           </div>
+          {/* Which question the Site box asks. Only offered to a reader entitled
+              to every site — a pump operator and a site login are each already
+              one answer, and letting them switch would widen what they can see. */}
+          {!locked && (
+            <div>
+              <label className={label}>Count that site by</label>
+              <select name="basis" defaultValue={basis} className={field}>
+                <option value="allocation">Vehicle&apos;s allocated site — what it is billed</option>
+                <option value="pump">The site&apos;s own pump — what left its tank</option>
+              </select>
+            </div>
+          )}
           <div>
             <label className={label}>Vehicle</label>
             <div className="relative">

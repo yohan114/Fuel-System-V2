@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { fuelViewScope } from "@/lib/fuel/view-scope";
-import { buildFuelIssueReport, parseReportParams, reportFilterForScope, type FuelIssueReport } from "@/lib/reports/fuel-issue-report";
+import { buildFuelIssueReport, parseReportParams, reportFilterForScope, type FuelIssueReport, type ReportSiteBasis } from "@/lib/reports/fuel-issue-report";
 import { Document, Page, Text, View, StyleSheet, renderToStream } from "@react-pdf/renderer";
 
 // The printable Fuel Issue Report — the sheet that gets signed and handed over.
@@ -121,7 +121,10 @@ export async function GET(request: NextRequest) {
   const p = parseReportParams((k) => searchParams.get(k));
   // The printout carries the reader's scope, not the query string's — this route
   // is a URL anyone logged in can type.
-  const scoped = reportFilterForScope(await fuelViewScope(session), p.site);
+  // The download must carry exactly what the screen showed. A sheet that
+  // disagrees with the page it came from is worse than no sheet.
+  const basis: ReportSiteBasis = searchParams.get("basis") === "pump" ? "pump" : "allocation";
+  const scoped = reportFilterForScope(await fuelViewScope(session), p.site, basis);
   const siteId = scoped.projectId ?? scoped.pumpProjectId;
 
   try {
