@@ -39,28 +39,99 @@ export async function GET(request: NextRequest) {
     ws1["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }];
     XLSX.utils.book_append_sheet(wb, ws1, "Site Summary");
 
-    // --- One worksheet per site: that site's vehicles for the month ----------
-    const taken = new Set<string>(["site summary", "reconciliation"]);
+    // --- One worksheet per site: that site's vehicles, then every issue ------
+    // Both numbers are carried on every row. The yard works in E&C codes, the
+    // driver's paperwork and the site's own registers in plates, and neither
+    // alone identifies a machine — ten registrations in this fleet are shared
+    // by two or three assets. Anyone reconciling this sheet against a daily
+    // issue note needs the plate; anyone reconciling it against the fleet
+    // register needs the code.
+    const taken = new Set<string>(["site summary", "reconciliation", "all issues"]);
     for (const s of r.sites) {
       const rows: (string | number)[][] = [
         [`${s.name} (${s.code}) — Fuel Issues — ${r.period.label}`],
         [],
-        ["Vehicle", "Description", "Fuel Issues", "Quantity (L)", "Cost (LKR)", "Assigned By"],
+        ["E&C No.", "Vehicle No.", "Description", "Fuel Issues", "Quantity (L)", "Cost (LKR)", "Assigned By"],
       ];
       for (const mac of s.machines)
         rows.push([
-          mac.code, mac.label, mac.issueCount, mac.litres, lkr(mac.costCents),
+          mac.code, mac.regNo ?? "", mac.label, mac.issueCount, mac.litres, lkr(mac.costCents),
           mac.postedIssues === mac.issueCount ? "posting" : `${mac.postedIssues} posting / ${mac.issueCount - mac.postedIssues} tank`,
         ]);
       rows.push([]);
-      rows.push(["TOTAL", `${s.machineCount} vehicles`, s.issueCount, s.litres, lkr(s.costCents), ""]);
+      rows.push(["TOTAL", "", `${s.machineCount} vehicles`, s.issueCount, s.litres, lkr(s.costCents), ""]);
+
+      // The same machines again, expanded issue by issue, vehicle by vehicle —
+      // the sheet equivalent of opening a row on the screen. Kept on the site's
+      // own tab rather than a separate workbook so a site can be sent one tab.
+      rows.push([], []);
+      rows.push([`Every fuel issue, vehicle by vehicle — ${s.name} (${s.code})`]);
+      const detailHeaderRow = rows.length;
+      rows.push(["E&C No.", "Vehicle No.", "Date", "Pump (site)", "Quantity (L)", "Rate (LKR/L)", "Cost (LKR)", "Meter", "Unit", "Issued To", "Attributed By", "Source"]);
+      for (const mac of s.machines) {
+        for (const i of mac.issues) {
+          rows.push([
+            mac.code,
+            mac.regNo ?? "",
+            i.day,
+            // Flagged when the machine fuelled somewhere other than the site it
+            // is billed to, which is normal for a travelling machine and looks
+            // like an error when it is not explained.
+            i.tankSite ? (i.tankSite === s.code ? i.tankSite : `${i.tankSite} (visiting)`) : "—",
+            i.litres,
+            lkr(i.pricePerLitre),
+            lkr(i.costCents),
+            i.meterReading ?? "",
+            i.readingType ?? "",
+            i.issuePerson ?? "",
+            i.rule,
+            i.source ?? "",
+          ]);
+        }
+        // A blank line between machines so the tab reads as a set of vehicles
+        // rather than one undifferentiated list.
+        if (mac.issues.length) rows.push([]);
+      }
+      rows.push(["TOTAL", "", "", "", s.litres, "", lkr(s.costCents), "", "", "", "", ""]);
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws["!cols"] = [{ wch: 16 }, { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 24 }];
-      ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+      ws["!cols"] = [
+        { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 13 }, { wch: 12 },
+        { wch: 15 }, { wch: 12 }, { wch: 7 }, { wch: 20 }, { wch: 13 }, { wch: 34 },
+      ];
+      ws["!merges"] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } },
+        { s: { r: detailHeaderRow - 1, c: 0 }, e: { r: detailHeaderRow - 1, c: 11 } },
+      ];
       // Tab named for the site, sanitised to what Excel accepts.
       XLSX.utils.book_append_sheet(wb, ws, excelSheetName(s.name, taken));
     }
+
+    // --- Every issue in the month on one tab, for filtering and pivoting -----
+    // The per-site tabs are for reading; this one is for working with. It is
+    // deliberately flat — one row per issue, no blank separators, no totals —
+    // so Excel's own filters and pivot tables work on it without cleaning.
+    const all: (string | number)[][] = [
+      ["Site Code", "Site", "E&C No.", "Vehicle No.", "Description", "Date", "Pump (site)", "Quantity (L)", "Rate (LKR/L)", "Cost (LKR)", "Meter", "Unit", "Issued To", "Attributed By", "Source"],
+    ];
+    for (const s of r.sites)
+      for (const mac of s.machines)
+        for (const i of mac.issues)
+          all.push([
+            s.code, s.name, mac.code, mac.regNo ?? "", mac.label, i.day,
+            i.tankSite ?? "", i.litres, lkr(i.pricePerLitre), lkr(i.costCents),
+            i.meterReading ?? "", i.readingType ?? "", i.issuePerson ?? "", i.rule, i.source ?? "",
+          ]);
+    const wsAll = XLSX.utils.aoa_to_sheet(all);
+    wsAll["!cols"] = [
+      { wch: 11 }, { wch: 26 }, { wch: 14 }, { wch: 14 }, { wch: 24 }, { wch: 12 }, { wch: 12 },
+      { wch: 13 }, { wch: 12 }, { wch: 15 }, { wch: 12 }, { wch: 7 }, { wch: 20 }, { wch: 13 }, { wch: 34 },
+    ];
+    // Autofilter on the header so the tab is usable the moment it opens.
+    // No frozen header pane: this build of SheetJS (0.18.5, community) does not
+    // write panes, and setting "!freeze" would look like it had worked.
+    wsAll["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(all.length - 1, 1), c: 14 } }) };
+    XLSX.utils.book_append_sheet(wb, wsAll, "All Issues");
 
     // --- Sheet 3: how every issue was assigned -------------------------------
     const checks: (string | number)[][] = [

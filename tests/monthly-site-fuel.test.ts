@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { indexAssignments, type AssignmentSpan } from "../src/lib/fuel/site-attribution";
 import { attributeIssue, excelSheetName } from "../src/lib/reports/monthly-site-fuel";
+import { colomboDayKey } from "../src/lib/colombo-date";
 
 const d = (s: string) => new Date(`${s}T00:00:00Z`);
 
@@ -100,5 +101,35 @@ describe("excelSheetName", () => {
     const taken = new Set<string>();
     expect(excelSheetName("", taken)).toBe("Site");
     expect(excelSheetName("///", taken)).toBe("Site (2)");
+  });
+});
+
+// The site sheet gained a per-machine issue list and both identifiers. These
+// guard the two things that were easy to get silently wrong when it did.
+describe("MachineIssueRow day keys", () => {
+  it("files an imported row under the Colombo day, not the UTC one", () => {
+    // Imported issues are stored at Colombo midnight, which is 18:30Z the
+    // evening before. Reading that with the host's zone puts a whole site's
+    // 4 August work under the 3rd, and the sheet then disagrees with the
+    // daily issue note it was typed from.
+    expect(colomboDayKey(new Date("2026-08-03T18:30:00.000Z"))).toBe("2026-08-04");
+    expect(colomboDayKey(new Date("2026-07-31T18:30:00.000Z"))).toBe("2026-08-01");
+  });
+
+  it("keeps a late-evening operator entry on the day the operator worked", () => {
+    // 23:45 Colombo on the 12th is 18:15Z the same day — the one case where the
+    // UTC date happens to agree, included so a future change that breaks the
+    // first case but not this one is still caught.
+    expect(colomboDayKey(new Date("2026-08-12T18:15:00.000Z"))).toBe("2026-08-12");
+    // 00:30 Colombo on the 13th is 19:00Z on the 12th, and must NOT read as the 12th.
+    expect(colomboDayKey(new Date("2026-08-12T19:00:00.000Z"))).toBe("2026-08-13");
+  });
+
+  it("orders a month's days as strings in the same order as dates", () => {
+    // The issue lists are sorted by this key rather than by Date, so the key
+    // has to be zero-padded — "2026-08-9" would sort after "2026-08-10".
+    const keys = ["2026-08-09", "2026-08-10", "2026-08-02"].sort((a, b) => a.localeCompare(b));
+    expect(keys).toEqual(["2026-08-02", "2026-08-09", "2026-08-10"]);
+    expect(colomboDayKey(new Date("2026-08-08T18:30:00.000Z"))).toBe("2026-08-09");
   });
 });

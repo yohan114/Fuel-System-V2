@@ -1,6 +1,7 @@
 import { prisma } from "../db";
 import { resolvePeriod } from "../billing/period";
 import { indexAssignments, assignedSiteOn, type SiteSpan } from "../fuel/site-attribution";
+import { colomboDayKey } from "../colombo-date";
 
 // Monthly fuel-issue summary, site by site, in which EVERY issue of the month
 // is attributed to exactly one site — the site totals always add back up to the
@@ -54,14 +55,42 @@ export function attributeIssue(
   return { projectId: null, rule: "unassigned" };
 }
 
+/** One fuel issue, as it appears under its machine. */
+export interface MachineIssueRow {
+  id: string;
+  /** Colombo calendar day, YYYY-MM-DD, via the shared colomboDayKey — an
+   *  imported row sits at 18:30Z the evening before, so the host's zone would
+   *  file the whole of a site's 4 August work under the 3rd. */
+  day: string;
+  litres: number;
+  costCents: number;
+  pricePerLitre: number;
+  meterReading: number | null;
+  readingType: string | null;
+  /** Site code of the tank the fuel physically came from, or null for a workshop issue. */
+  tankSite: string | null;
+  tankName: string | null;
+  /** Which rule attributed THIS issue to the site it is filed under. */
+  rule: AttributionRule;
+  issuePerson: string | null;
+  source: string | null;
+}
+
 export interface MachineRow {
   assetId: string;
+  /** The E&C fleet number — what the yard calls it. */
   code: string;
+  /** The number plate. Different machines share plates in this fleet, and some
+   *  machines have none, so this is shown beside the code rather than instead. */
+  regNo: string | null;
   label: string;
   litres: number;
   costCents: number;
   issueCount: number;
   postedIssues: number; // how many of this machine's issues came from a posting
+  /** Every issue behind the totals above, oldest first. Carried so the screen can
+   *  open a machine without a second round trip and the sheet can list them. */
+  issues: MachineIssueRow[];
 }
 
 export interface SiteRow {
@@ -115,13 +144,22 @@ export async function buildMonthlySiteFuel(opts: {
   const [issues, voidedCount, spans, tanks, projects] = await Promise.all([
     prisma.fuelIssue.findMany({
       where: { voided: false, issueDate: { gte: period.start, lte: period.end } },
+      // Never select photoData — the BLOB would be pulled for every issue of
+      // the month to build a summary that does not show pictures.
       select: {
+        id: true,
         litres: true,
         totalCost: true,
+        pricePerLitre: true,
         issueDate: true,
         bulkTankId: true,
-        asset: { select: { id: true, code: true, brand: true, model: true, projectId: true, category: { select: { name: true } } } },
+        meterReading: true,
+        readingType: true,
+        issuePerson: true,
+        source: true,
+        asset: { select: { id: true, code: true, regNo: true, brand: true, model: true, projectId: true, category: { select: { name: true } } } },
       },
+      orderBy: { issueDate: "asc" },
     }),
     prisma.fuelIssue.count({ where: { voided: true, issueDate: { gte: period.start, lte: period.end } } }),
     // Only spans that can touch the month; assignmentIndex resolves by day.
@@ -129,13 +167,18 @@ export async function buildMonthlySiteFuel(opts: {
       where: { startDate: { lte: period.end }, OR: [{ endDate: null }, { endDate: { gte: period.start } }] },
       select: { assetId: true, projectId: true, startDate: true, endDate: true },
     }),
-    prisma.bulkTank.findMany({ select: { id: true, projectId: true } }),
+    prisma.bulkTank.findMany({ select: { id: true, name: true, projectId: true } }),
     prisma.project.findMany({ select: { id: true, code: true, name: true } }),
   ]);
 
   const assignmentIndex = indexAssignments(spans);
   const tankProject = new Map(tanks.map((t) => [t.id, t.projectId]));
+  const tankById = new Map(tanks.map((t) => [t.id, t]));
   const projectById = new Map(projects.map((p) => [p.id, p]));
+
+  // The tank a machine fuelled AT is often not the site it is billed to — a
+  // visiting machine fills wherever it happens to be. Showing both is the point
+  // of opening a row, so the pump is resolved per issue rather than per site.
 
   const emptyRules = (): Record<AttributionRule, number> => ({ posted: 0, tank: 0, current: 0, unassigned: 0 });
   const byRule = emptyRules();
@@ -183,8 +226,9 @@ export async function buildMonthlySiteFuel(opts: {
       m = {
         assetId: a.id,
         code: a.code,
+        regNo: a.regNo,
         label: [a.brand, a.model].filter(Boolean).join(" ").trim() || a.category.name,
-        litres: 0, costCents: 0, issueCount: 0, postedIssues: 0,
+        litres: 0, costCents: 0, issueCount: 0, postedIssues: 0, issues: [],
       };
       site.machineMap.set(a.id, m);
     }
@@ -192,11 +236,34 @@ export async function buildMonthlySiteFuel(opts: {
     m.costCents += issue.totalCost;
     m.issueCount++;
     if (rule === "posted") m.postedIssues++;
+
+    const tank = issue.bulkTankId ? tankById.get(issue.bulkTankId) : undefined;
+    const tankProjectId = tank ? tank.projectId : null;
+    m.issues.push({
+      id: issue.id,
+      day: colomboDayKey(issue.issueDate),
+      litres: issue.litres,
+      costCents: issue.totalCost,
+      pricePerLitre: issue.pricePerLitre,
+      meterReading: issue.meterReading,
+      readingType: issue.readingType,
+      tankSite: tankProjectId ? projectById.get(tankProjectId)?.code ?? null : null,
+      tankName: tank ? tank.name : null,
+      rule,
+      issuePerson: issue.issuePerson,
+      source: issue.source,
+    });
   }
 
   const sites: SiteRow[] = [...acc.values()].map((s) => {
     const machines = [...s.machineMap.values()]
-      .map((m) => ({ ...m, litres: round2(m.litres) }))
+      .map((m) => ({
+        ...m,
+        litres: round2(m.litres),
+        // Oldest first: a machine's month reads as a sequence, and its meter
+        // readings only make sense in date order.
+        issues: [...m.issues].sort((x, y) => x.day.localeCompare(y.day) || x.id.localeCompare(y.id)),
+      }))
       .sort((x, y) => y.litres - x.litres || x.code.localeCompare(y.code));
     return {
       projectId: s.projectId, code: s.code, name: s.name,

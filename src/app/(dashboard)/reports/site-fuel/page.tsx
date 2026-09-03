@@ -1,6 +1,6 @@
 import React from "react";
 import Link from "next/link";
-import { FileSpreadsheet, ArrowLeft, CheckCircle2, AlertTriangle, MapPin, Fuel } from "lucide-react";
+import { FileSpreadsheet, ArrowLeft, CheckCircle2, AlertTriangle, MapPin, Fuel, ChevronRight } from "lucide-react";
 import { getSession } from "@/lib/auth";
 import { isSiteUser } from "@/lib/roles";
 import { currentMonthPeriod } from "@/lib/billing/period";
@@ -133,35 +133,102 @@ export default async function SiteFuelReportPage(props: PageProps) {
                   {s.byRule.tank > 0 ? `${s.byRule.posted} posted / ${s.byRule.tank} tank` : "all posted"}
                 </span>
               </summary>
-              <div className="border-t border-white/5 overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="bg-white/5 text-gray-400 font-semibold">
-                      <th className="px-5 py-2.5">Machine</th>
-                      <th className="px-4 py-2.5">Description</th>
-                      <th className="px-4 py-2.5 text-right">Issues</th>
-                      <th className="px-4 py-2.5 text-right">Litres</th>
-                      <th className="px-4 py-2.5 text-right">Cost</th>
-                      <th className="px-5 py-2.5 text-right">Assigned by</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {s.machines.map((m) => (
-                      <tr key={m.assetId} className="hover:bg-white/[0.02]">
-                        <td className="px-5 py-2.5">
-                          <Link href={`/fleet/${encodeURIComponent(m.code)}`} className="text-indigo-300 hover:text-indigo-200 font-mono font-semibold">{m.code}</Link>
-                        </td>
-                        <td className="px-4 py-2.5 text-gray-400 truncate max-w-[16rem]">{m.label}</td>
-                        <td className="px-4 py-2.5 text-right text-gray-300">{m.issueCount}</td>
-                        <td className="px-4 py-2.5 text-right text-white font-semibold">{L(m.litres)}</td>
-                        <td className="px-4 py-2.5 text-right text-emerald-300">{rs(m.costCents)}</td>
-                        <td className="px-5 py-2.5 text-right text-gray-500">
+              {/* One <details> per machine rather than a table row, so opening a
+                  vehicle needs no client JavaScript and the page stays a server
+                  component. The header row below keeps the columns readable. */}
+              <div className="border-t border-white/5">
+                <div className="bg-white/5 text-gray-400 font-semibold text-xs flex items-center gap-x-4 px-5 py-2.5">
+                  <span className="flex-1 min-w-[10rem]">Machine</span>
+                  <span className="hidden md:block flex-1 min-w-[8rem]">Description</span>
+                  <span className="w-16 text-right">Issues</span>
+                  <span className="w-24 text-right">Litres</span>
+                  <span className="w-28 text-right">Cost</span>
+                  <span className="w-32 text-right hidden lg:block">Assigned by</span>
+                </div>
+                <div className="divide-y divide-white/5">
+                  {s.machines.map((m) => (
+                    <details key={m.assetId} className="group/machine">
+                      <summary className="cursor-pointer list-none flex items-center gap-x-4 px-5 py-2.5 text-xs hover:bg-white/[0.02]">
+                        <span className="flex-1 min-w-[10rem] flex flex-wrap items-baseline gap-x-2">
+                          <ChevronRight className="w-3 h-3 text-gray-600 shrink-0 transition-transform group-open/machine:rotate-90" />
+                          {/* Both numbers, always. The yard says "HEX-37", the
+                              paperwork says the plate, and neither alone
+                              identifies a machine here — ten registrations in
+                              this fleet are shared by two or three assets. */}
+                          <span className="font-mono font-semibold text-indigo-300">{m.code}</span>
+                          {m.regNo && m.regNo !== m.code && (
+                            <span className="font-mono text-[10px] text-gray-500">{m.regNo}</span>
+                          )}
+                        </span>
+                        <span className="hidden md:block flex-1 min-w-[8rem] text-gray-400 truncate">{m.label}</span>
+                        <span className="w-16 text-right text-gray-300">{m.issueCount}</span>
+                        <span className="w-24 text-right text-white font-semibold">{L(m.litres)}</span>
+                        <span className="w-28 text-right text-emerald-300">{rs(m.costCents)}</span>
+                        <span className="w-32 text-right text-gray-500 hidden lg:block">
                           {m.postedIssues === m.issueCount ? "posting" : `${m.postedIssues} posting / ${m.issueCount - m.postedIssues} tank`}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </span>
+                      </summary>
+
+                      <div className="bg-[#0d0f1a] border-t border-white/5 px-5 py-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">
+                            {m.issueCount} fuel {m.issueCount === 1 ? "issue" : "issues"} in {report.period.label}
+                          </span>
+                          <Link href={`/fleet/${encodeURIComponent(m.code)}`} className="text-[10px] text-indigo-400 hover:text-indigo-300">
+                            Machine history →
+                          </Link>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-[11px]">
+                            <thead>
+                              <tr className="text-gray-500">
+                                <th className="py-1.5 pr-4 font-semibold">Date</th>
+                                <th className="py-1.5 pr-4 font-semibold">Pump</th>
+                                <th className="py-1.5 pr-4 font-semibold text-right">Litres</th>
+                                <th className="py-1.5 pr-4 font-semibold text-right">Rate</th>
+                                <th className="py-1.5 pr-4 font-semibold text-right">Cost</th>
+                                <th className="py-1.5 pr-4 font-semibold text-right">Meter</th>
+                                <th className="py-1.5 font-semibold">Issued to</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                              {m.issues.map((i) => (
+                                <tr key={i.id} className="text-gray-300">
+                                  <td className="py-1.5 pr-4 font-mono whitespace-nowrap">{i.day}</td>
+                                  <td className="py-1.5 pr-4">
+                                    {/* A machine posted to one site often fuels at
+                                        another. Flagging it explains a row that
+                                        would otherwise look misfiled. */}
+                                    <span className="font-mono text-gray-400">{i.tankSite ?? "—"}</span>
+                                    {i.tankSite && i.tankSite !== s.code && (
+                                      <span className="ml-1.5 text-[9px] text-amber-400/80">visiting</span>
+                                    )}
+                                  </td>
+                                  <td className="py-1.5 pr-4 text-right text-white font-semibold">{L(i.litres)}</td>
+                                  <td className="py-1.5 pr-4 text-right text-gray-500">{(i.pricePerLitre / 100).toFixed(2)}</td>
+                                  <td className="py-1.5 pr-4 text-right text-emerald-300/80">{rs(i.costCents)}</td>
+                                  <td className="py-1.5 pr-4 text-right font-mono text-gray-500">
+                                    {i.meterReading === null ? "—" : `${i.meterReading.toLocaleString()}${i.readingType === "HOURS" ? " h" : i.readingType === "KM" ? " km" : ""}`}
+                                  </td>
+                                  <td className="py-1.5 text-gray-500 truncate max-w-[12rem]">{i.issuePerson || "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t border-white/10 text-gray-400 font-semibold">
+                                <td className="py-1.5 pr-4" colSpan={2}>Total</td>
+                                <td className="py-1.5 pr-4 text-right text-white">{L(m.litres)}</td>
+                                <td className="py-1.5 pr-4" />
+                                <td className="py-1.5 pr-4 text-right text-emerald-300">{rs(m.costCents)}</td>
+                                <td className="py-1.5 pr-4" colSpan={2} />
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      </div>
+                    </details>
+                  ))}
+                </div>
               </div>
             </details>
           ))}
