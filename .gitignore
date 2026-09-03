@@ -107,3 +107,7 @@ backups/
 data/app-ship.db.sha256
 data/new-passwords-*.txt
 data/app.db.pre-rotate-*
+
+# Scratch space for one-off audits — holds page images and throwaway probes.
+.audit_tmp/
+tmp-*.cjs
