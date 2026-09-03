@@ -4,10 +4,10 @@ import { FileSpreadsheet, ArrowLeft, CheckCircle2, AlertTriangle, MapPin, Fuel, 
 import { getSession } from "@/lib/auth";
 import { isSiteUser } from "@/lib/roles";
 import { currentMonthPeriod } from "@/lib/billing/period";
-import { buildMonthlySiteFuel, UNASSIGNED_ID } from "@/lib/reports/monthly-site-fuel";
+import { buildMonthlySiteFuel, UNASSIGNED_ID, type ReportBasis } from "@/lib/reports/monthly-site-fuel";
 
 interface PageProps {
-  searchParams: Promise<{ year?: string; month?: string }>;
+  searchParams: Promise<{ year?: string; month?: string; basis?: string }>;
 }
 
 const rs = (cents: number) => "Rs. " + (cents / 100).toLocaleString("en-LK", { maximumFractionDigits: 0 });
@@ -25,8 +25,12 @@ export default async function SiteFuelReportPage(props: PageProps) {
 
   // A site user only ever sees their own site.
   const projectId = isSiteUser(session.role) ? session.projectId ?? undefined : undefined;
-  const report = await buildMonthlySiteFuel({ year, month, projectId });
+  // Default to the pump: this sheet is read by sites, and a site counts what
+  // left its own tank. "billed" is the invoicing view and stays one click away.
+  const basis: ReportBasis = sp.basis === "billed" ? "billed" : "pump";
+  const report = await buildMonthlySiteFuel({ year, month, projectId, basis });
   const { totals, byRule, reconciliation } = report;
+  const byPump = basis === "pump";
 
   const months = [
     "January", "February", "March", "April", "May", "June",
@@ -43,11 +47,13 @@ export default async function SiteFuelReportPage(props: PageProps) {
           </Link>
           <h1 className="text-xl font-bold text-white tracking-wide">Monthly Fuel Issue Summary — Site Wise</h1>
           <p className="text-xs text-gray-400 mt-1">
-            Every fuel issue in the month attributed to one site, by where the machine was posted on the day it fuelled.
+            {byPump
+              ? "Every fuel issue grouped under the site whose pump it came out of, whatever site the machine is allocated to."
+              : "Every fuel issue attributed to the site that pays for it, by where the machine was posted on the day it fuelled."}
           </p>
         </div>
         <a
-          href={`/api/reports/site-fuel/xlsx?year=${year}&month=${month}`}
+          href={`/api/reports/site-fuel/xlsx?year=${year}&month=${month}&basis=${basis}`}
           className="flex items-center gap-2 bg-[#121420] border border-white/5 hover:border-emerald-500/20 hover:bg-[#1b1e30] text-gray-300 hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-md active:scale-95 transition-all h-fit"
         >
           <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
@@ -55,7 +61,31 @@ export default async function SiteFuelReportPage(props: PageProps) {
         </a>
       </div>
 
+      {/* Plain links, not a form control: the basis belongs in the URL so a
+          view can be bookmarked and sent to somebody, and so the sheet's
+          download link carries the same choice. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mr-1">Count fuel by</span>
+        {([
+          { key: "pump", label: "The pump it came from", hint: "what left each site's tank" },
+          { key: "billed", label: "The site billed for it", hint: "what each site pays for" },
+        ] as const).map((opt) => (
+          <Link
+            key={opt.key}
+            href={`/reports/site-fuel?year=${year}&month=${month}&basis=${opt.key}`}
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all ${
+              basis === opt.key
+                ? "bg-indigo-600/20 border-indigo-500/40 text-indigo-200"
+                : "bg-[#121420] border-white/5 text-gray-400 hover:text-gray-200 hover:border-white/10"}`}
+          >
+            {opt.label}
+            <span className="block text-[9px] font-normal text-gray-500 mt-0.5">{opt.hint}</span>
+          </Link>
+        ))}
+      </div>
+
       <form method="GET" action="/reports/site-fuel" className="bg-[#121420] border border-white/5 rounded-2xl p-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <input type="hidden" name="basis" value={basis} />
         <div>
           <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Month</label>
           <select name="month" defaultValue={month} className="w-full bg-[#1b1e30] border border-white/5 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-indigo-500/50">
@@ -132,15 +162,25 @@ export default async function SiteFuelReportPage(props: PageProps) {
                     the month. "From its pump" is what the site's own tank
                     register and monthly consumption report count. They differ
                     whenever a machine fuels away from where it is posted. */}
+                {/* The active basis in white, its counterpart beside it in grey.
+                    Whichever way the sheet is read, the other answer is one
+                    glance away instead of one support question away. */}
                 <span className="w-28 text-right">
                   <span className="block text-sm font-bold text-white">{L(s.litres)} L</span>
-                  <span className="block text-[9px] text-gray-500 uppercase tracking-wider">billed</span>
+                  <span className="block text-[9px] text-indigo-300/70 uppercase tracking-wider">
+                    {byPump ? "from its pump" : "billed"}
+                  </span>
                 </span>
                 <span className="w-28 text-right">
-                  <span className={`block text-sm font-bold ${s.pumpLitres === s.litres ? "text-gray-400" : "text-sky-300"}`}>
-                    {s.pumpIssueCount === 0 ? "—" : `${L(s.pumpLitres)} L`}
+                  <span className={`block text-sm font-semibold ${
+                    (byPump ? s.billedLitres : s.pumpLitres) === s.litres ? "text-gray-600" : "text-sky-300/80"}`}>
+                    {byPump
+                      ? `${L(s.billedLitres)} L`
+                      : s.pumpIssueCount === 0 ? "no tank" : `${L(s.pumpLitres)} L`}
                   </span>
-                  <span className="block text-[9px] text-gray-500 uppercase tracking-wider">from its pump</span>
+                  <span className="block text-[9px] text-gray-600 uppercase tracking-wider">
+                    {byPump ? "billed" : "from its pump"}
+                  </span>
                 </span>
                 <span className="text-xs text-emerald-300 w-32 text-right">{rs(s.costCents)}</span>
                 <span className="text-[10px] text-gray-500 w-24 text-right">
@@ -253,12 +293,11 @@ export default async function SiteFuelReportPage(props: PageProps) {
             <span className="text-xs text-gray-400">{totals.issueCount.toLocaleString()} issues</span>
             <span className="w-28 text-right">
               <span className="block text-sm font-bold text-white">{L(totals.litres)} L</span>
-              <span className="block text-[9px] text-gray-500 uppercase tracking-wider">billed</span>
+              <span className="block text-[9px] text-indigo-300/70 uppercase tracking-wider">
+                {byPump ? "from pumps" : "billed"}
+              </span>
             </span>
-            <span className="w-28 text-right">
-              <span className="block text-sm font-bold text-gray-400">{L(totals.pumpLitres)} L</span>
-              <span className="block text-[9px] text-gray-500 uppercase tracking-wider">from pumps</span>
-            </span>
+            <span className="w-28 text-right" />
             <span className="text-xs text-emerald-300 w-32 text-right">{rs(totals.costCents)}</span>
             <span className="w-24" />
           </div>
@@ -266,11 +305,23 @@ export default async function SiteFuelReportPage(props: PageProps) {
           {/* The two columns will not agree, and someone will read that as a
               fault unless it is said plainly on the page. */}
           <p className="text-[11px] text-gray-500 px-5 leading-relaxed">
-            <strong className="text-gray-400">Billed</strong> is what this sheet charges each site — every issue of the month lands on exactly
-            one site, so these add up to {L(totals.litres)} L.{" "}
-            <strong className="text-gray-400">From its pump</strong> is what physically left that site&apos;s tank, which is what the site&apos;s own
-            register counts. They differ whenever a machine fuels away from where it is posted: a visitor&apos;s fill shows on the pump that
-            served it but is billed to the visitor&apos;s own site. Sites with no tank of their own show no pump figure at all.
+            {byPump ? (
+              <>
+                Showing <strong className="text-gray-300">what came out of each site&apos;s pump</strong> — every fuel issue counted against the
+                tank that served it, whatever site the machine is allocated to. A visiting machine&apos;s fill counts here, at the pump that
+                gave it. Sites with no tank of their own do not appear.{" "}
+                <strong className="text-gray-400">Billed</strong> beside it is what the same site would be charged, which is the figure an
+                invoice uses: Galagedara&apos;s two read 21,640 L and 21,050 L for August, the difference being 840 L out to visitors and 250 L
+                back from its own machines fuelling away.
+              </>
+            ) : (
+              <>
+                Showing <strong className="text-gray-300">what each site is billed</strong> — every issue of the month attributed to exactly
+                one site by where the machine was posted on the day, so these add up to {L(totals.litres)} L.{" "}
+                <strong className="text-gray-400">From its pump</strong> beside it is what physically left that site&apos;s tank, which is what the
+                storekeeper&apos;s register counts. They differ whenever a machine fuels away from where it is posted.
+              </>
+            )}
           </p>
         </div>
       )}

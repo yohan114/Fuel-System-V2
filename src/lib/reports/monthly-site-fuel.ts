@@ -24,6 +24,27 @@ import { colomboDayKey } from "../colombo-date";
 
 export type AttributionRule = "posted" | "tank" | "current" | "unassigned";
 
+/**
+ * Which question the sheet answers.
+ *
+ * "pump"   — group every issue under the site whose tank it came out of, and
+ *            never mind where the machine is allocated. This is what a site's
+ *            own storekeeper counts: their register records what left their
+ *            pump, to whoever drove up to it.
+ *
+ * "billed" — group every issue under the site that pays for it, resolved
+ *            against the machine's posting on the day. This is what an invoice
+ *            is built from, and it is the only basis under which a machine that
+ *            visits another site's pump still costs its own project money.
+ *
+ * They differ by exactly the traffic between sites. For Galagedara in August
+ * 2026: 21,640 L left its pump, 840 L of that went into visiting machines and
+ * was billed elsewhere, 250 L came back the other way, and 21,050 L was billed.
+ * Neither figure is more correct — they are answers to different questions, and
+ * quoting one when the other was asked for is what makes them look wrong.
+ */
+export type ReportBasis = "pump" | "billed";
+
 export interface AttributionInput {
   assetId: string;
   issueDate: Date;
@@ -120,10 +141,19 @@ export interface SiteRow {
   pumpLitres: number;
   pumpCostCents: number;
   pumpIssueCount: number;
+  /** Fuel BILLED to this site, computed on both bases so a row can always show
+   *  its counterpart. On the "billed" basis this equals `litres`; on the "pump"
+   *  basis it is the figure the invoice would use instead. */
+  billedLitres: number;
+  billedIssueCount: number;
 }
 
 export interface MonthlySiteFuelReport {
   period: { year: number; month: number; periodKey: string; label: string; start: Date; end: Date };
+  /** Which question these figures answer. Every caller that prints a total
+   *  should print this too — the same site is 21,640 L on one basis and
+   *  21,050 L on the other, and a number without its basis is an argument. */
+  basis: ReportBasis;
   sites: SiteRow[];
   totals: {
     litres: number; costCents: number; issueCount: number; machineCount: number;
@@ -161,8 +191,12 @@ export async function buildMonthlySiteFuel(opts: {
   year: number;
   month: number;
   projectId?: string;
+  /** Defaults to "pump": a site sheet is read by the site, and the site counts
+   *  its pump. Pass "billed" for the invoicing view. */
+  basis?: ReportBasis;
 }): Promise<MonthlySiteFuelReport> {
   const period = resolvePeriod(opts.year, opts.month);
+  const basis: ReportBasis = opts.basis ?? "pump";
 
   const [issues, voidedCount, spans, tanks, projects] = await Promise.all([
     prisma.fuelIssue.findMany({
@@ -219,6 +253,7 @@ export async function buildMonthlySiteFuel(opts: {
         litres: 0, costCents: 0, issueCount: 0, machineCount: 0,
         machines: [], byRule: emptyRules(), machineMap: new Map(),
         pumpLitres: 0, pumpCostCents: 0, pumpIssueCount: 0,
+        billedLitres: 0, billedIssueCount: 0,
       };
       acc.set(id, row);
     }
@@ -229,6 +264,9 @@ export async function buildMonthlySiteFuel(opts: {
   // out, which is what a site's own tank register records. Accumulated for every
   // issue including ones a site filter later drops, then filtered alongside.
   const pumpAcc = new Map<string, { litres: number; costCents: number; issueCount: number }>();
+  // The other basis, tallied alongside, so every row can show both figures
+  // whichever one it is sorted and totalled by.
+  const billedAcc = new Map<string, { litres: number; issueCount: number }>();
   for (const issue of issues) {
     const pumpProjectId = issue.bulkTankId ? tankProject.get(issue.bulkTankId) ?? null : null;
     if (pumpProjectId && (!opts.projectId || pumpProjectId === opts.projectId)) {
@@ -239,12 +277,31 @@ export async function buildMonthlySiteFuel(opts: {
       p.issueCount++;
     }
 
-    const { projectId, rule } = attributeIssue(assignmentIndex, tankProject, {
+    const billedTo = attributeIssue(assignmentIndex, tankProject, {
       assetId: issue.asset.id,
       issueDate: issue.issueDate,
       bulkTankId: issue.bulkTankId,
       assetProjectId: issue.asset.projectId,
-    });
+    }).projectId ?? UNASSIGNED_ID;
+    if (!opts.projectId || billedTo === opts.projectId) {
+      let b = billedAcc.get(billedTo);
+      if (!b) { b = { litres: 0, issueCount: 0 }; billedAcc.set(billedTo, b); }
+      b.litres += issue.litres;
+      b.issueCount++;
+    }
+
+    // On the pump basis the tank IS the answer — no cascade, no posting lookup,
+    // and a machine allocated somewhere else still counts against the pump that
+    // served it. An issue with no tank has no pump and falls to unassigned
+    // rather than being quietly routed somewhere by a fallback.
+    const { projectId, rule } = basis === "pump"
+      ? { projectId: pumpProjectId, rule: (pumpProjectId ? "tank" : "unassigned") as AttributionRule }
+      : attributeIssue(assignmentIndex, tankProject, {
+          assetId: issue.asset.id,
+          issueDate: issue.issueDate,
+          bulkTankId: issue.bulkTankId,
+          assetProjectId: issue.asset.projectId,
+        });
 
     // A site filter is applied after attribution — filtering the query by the
     // asset's project would reintroduce the current-pointer bug this report exists to avoid.
@@ -310,6 +367,8 @@ export async function buildMonthlySiteFuel(opts: {
       pumpLitres: round2(pump?.litres ?? 0),
       pumpCostCents: pump?.costCents ?? 0,
       pumpIssueCount: pump?.issueCount ?? 0,
+      billedLitres: round2(billedAcc.get(s.projectId)?.litres ?? 0),
+      billedIssueCount: billedAcc.get(s.projectId)?.issueCount ?? 0,
     };
   });
 
@@ -325,6 +384,8 @@ export async function buildMonthlySiteFuel(opts: {
       litres: 0, costCents: 0, issueCount: 0, machineCount: 0,
       machines: [], byRule: emptyRules(),
       pumpLitres: round2(pump.litres), pumpCostCents: pump.costCents, pumpIssueCount: pump.issueCount,
+      billedLitres: round2(billedAcc.get(projectId)?.litres ?? 0),
+      billedIssueCount: billedAcc.get(projectId)?.issueCount ?? 0,
     });
   }
   // Biggest consumer first; the unassigned bucket always sits last so it reads as an exception.
@@ -362,6 +423,6 @@ export async function buildMonthlySiteFuel(opts: {
 
   return {
     period: { year: period.year, month: period.month, periodKey: period.periodKey, label, start: period.start, end: period.end },
-    sites, totals, byRule, voidedExcluded: voidedCount, reconciliation,
+    basis, sites, totals, byRule, voidedExcluded: voidedCount, reconciliation,
   };
 }

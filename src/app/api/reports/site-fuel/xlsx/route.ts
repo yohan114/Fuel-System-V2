@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { isSiteUser } from "@/lib/roles";
 import { resolvePeriod, currentMonthPeriod } from "@/lib/billing/period";
-import { buildMonthlySiteFuel, UNASSIGNED_ID, excelSheetName } from "@/lib/reports/monthly-site-fuel";
+import { buildMonthlySiteFuel, UNASSIGNED_ID, excelSheetName, type ReportBasis } from "@/lib/reports/monthly-site-fuel";
 import { errorMessageOr } from "@/lib/errors";
 import * as XLSX from "xlsx";
 
@@ -18,9 +18,15 @@ export async function GET(request: NextRequest) {
   const m = parseInt(searchParams.get("month") || "", 10);
   const period = y && m >= 1 && m <= 12 ? resolvePeriod(y, m) : currentMonthPeriod(new Date());
   const projectId = isSiteUser(session.role) ? session.projectId ?? undefined : undefined;
+  // Same default as the screen: a site sheet is read by the site, and the site
+  // counts its own pump.
+  const basis: ReportBasis = searchParams.get("basis") === "billed" ? "billed" : "pump";
 
   try {
-    const r = await buildMonthlySiteFuel({ year: period.year, month: period.month, projectId });
+    const r = await buildMonthlySiteFuel({ year: period.year, month: period.month, projectId, basis });
+    const byPump = r.basis === "pump";
+    const primary = byPump ? "Litres From Its Pump" : "Litres Billed";
+    const secondary = byPump ? "Litres Billed" : "Litres From Its Pump";
     const lkr = (cents: number) => Math.round(cents) / 100;
     const wb = XLSX.utils.book_new();
 
@@ -32,24 +38,33 @@ export async function GET(request: NextRequest) {
     // and be billed at another.
     const summary: (string | number)[][] = [
       [`Monthly Fuel Issue Summary — Site Wise — ${r.period.label}`],
+      [byPump
+        ? "Counted by THE PUMP THE FUEL CAME FROM — every issue against the tank that served it, whatever site the machine is allocated to."
+        : "Counted by THE SITE BILLED FOR IT — every issue against the site the machine was posted to on the day."],
       [],
-      ["Site Code", "Site", "Machines", "Issues", "Litres Billed", "Cost (LKR)", "Issues at Its Pump", "Litres From Its Pump", "By Posting", "By Tank"],
+      ["Site Code", "Site", "Machines", "Issues", primary, "Cost (LKR)", secondary, "By Posting", "By Tank"],
     ];
     for (const s of r.sites)
       summary.push([
         s.code, s.name, s.machineCount, s.issueCount, s.litres, lkr(s.costCents),
-        s.pumpIssueCount, s.pumpIssueCount === 0 ? "no tank" : s.pumpLitres,
+        byPump ? s.billedLitres : (s.pumpIssueCount === 0 ? "no tank" : s.pumpLitres),
         s.byRule.posted, s.byRule.tank,
       ]);
     summary.push([]);
-    summary.push(["", "TOTAL", r.totals.machineCount, r.totals.issueCount, r.totals.litres, lkr(r.totals.costCents), "", r.totals.pumpLitres, r.byRule.posted, r.byRule.tank]);
+    summary.push(["", "TOTAL", r.totals.machineCount, r.totals.issueCount, r.totals.litres, lkr(r.totals.costCents), "", r.byRule.posted, r.byRule.tank]);
     summary.push([]);
-    summary.push(["Litres Billed = every issue of the month attributed to exactly one site. These add up to the month total."]);
-    summary.push(["Litres From Its Pump = what physically left that site's tank, whoever was billed. These do NOT add up the same way,"]);
-    summary.push(["because a visiting machine's fill is counted at the pump that served it and billed to the visitor's own site."]);
+    summary.push([byPump
+      ? "Litres From Its Pump = what physically left that site's tank, whoever was billed. A visiting machine's fill counts here, at the pump that gave it."
+      : "Litres Billed = every issue of the month attributed to exactly one site. These add up to the month total."]);
+    summary.push([byPump
+      ? "Litres Billed = what the same site would be charged, by where each machine was posted on the day. That is the figure an invoice uses."
+      : "Litres From Its Pump = what physically left that site's tank. These do NOT add up the same way, because a fill is counted at the pump"]);
+    summary.push([byPump
+      ? "The two differ by traffic between sites: Galagedara for August 2026 reads 21,640 L from its pump and 21,050 L billed."
+      : "that served it and billed to the visitor's own site. Sites with no tank of their own have no pump figure at all."]);
     const ws1 = XLSX.utils.aoa_to_sheet(summary);
-    ws1["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 10 }, { wch: 9 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 11 }, { wch: 10 }];
-    ws1["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }];
+    ws1["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 10 }, { wch: 9 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 11 }, { wch: 10 }];
+    ws1["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } }];
     XLSX.utils.book_append_sheet(wb, ws1, "Site Summary");
 
     // --- One worksheet per site: that site's vehicles, then every issue ------
@@ -72,8 +87,10 @@ export async function GET(request: NextRequest) {
           mac.postedIssues === mac.issueCount ? "posting" : `${mac.postedIssues} posting / ${mac.issueCount - mac.postedIssues} tank`,
         ]);
       rows.push([]);
-      rows.push(["TOTAL", "", `${s.machineCount} vehicles`, s.issueCount, s.litres, lkr(s.costCents), "billed to this site"]);
-      rows.push(["", "", "out of this site's own pump", s.pumpIssueCount, s.pumpIssueCount === 0 ? "no tank" : s.pumpLitres, lkr(s.pumpCostCents), "whoever was billed"]);
+      rows.push(["TOTAL", "", `${s.machineCount} vehicles`, s.issueCount, s.litres, lkr(s.costCents), byPump ? "out of this site's pump" : "billed to this site"]);
+      rows.push(["", "", byPump ? "for comparison, billed to this site" : "for comparison, out of this site's pump",
+        byPump ? s.billedIssueCount : s.pumpIssueCount,
+        byPump ? s.billedLitres : (s.pumpIssueCount === 0 ? "no tank" : s.pumpLitres), "", ""]);
 
       // The same machines again, expanded issue by issue, vehicle by vehicle —
       // the sheet equivalent of opening a row on the screen. Kept on the site's
@@ -174,7 +191,7 @@ export async function GET(request: NextRequest) {
     XLSX.utils.book_append_sheet(wb, ws3, "Reconciliation");
 
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-    const name = `fuel-issues-by-site-${r.period.periodKey}.xlsx`;
+    const name = `fuel-issues-by-${byPump ? "pump" : "billing"}-${r.period.periodKey}.xlsx`;
     return new NextResponse(buf, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

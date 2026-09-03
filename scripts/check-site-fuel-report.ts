@@ -10,7 +10,7 @@
 // that the workbook Excel would open has the tabs and columns claimed.
 
 import * as XLSX from "xlsx";
-import { buildMonthlySiteFuel, excelSheetName } from "../src/lib/reports/monthly-site-fuel";
+import { buildMonthlySiteFuel, excelSheetName, type ReportBasis } from "../src/lib/reports/monthly-site-fuel";
 
 const year = Number(process.argv[2]) || 2026;
 const month = Number(process.argv[3]) || 8;
@@ -18,7 +18,17 @@ const month = Number(process.argv[3]) || 8;
 const L = (n: number) => Math.round(n * 100) / 100;
 
 async function main() {
-  const r = await buildMonthlySiteFuel({ year, month });
+  // Both bases, because the whole point of the option is that they differ, and
+  // the thing that must stay true either way is that every issue is counted once.
+  for (const b of ["pump", "billed"] as ReportBasis[]) {
+    const x = await buildMonthlySiteFuel({ year, month, basis: b });
+    const sum = L(x.sites.reduce((a, s) => a + s.litres, 0));
+    const ok = Math.abs(sum - x.totals.litres) < 0.01 && x.totals.issueCount === x.reconciliation.issuesInMonth;
+    console.log(`  basis=${b.padEnd(7)} ${String(x.sites.length).padStart(3)} sites  ${String(x.totals.issueCount).padStart(5)} issues  ${String(L(x.totals.litres)).padStart(11)} L  ${ok ? "reconciles" : "<-- DOES NOT RECONCILE"}`);
+    if (!ok) process.exitCode = 1;
+  }
+
+  const r = await buildMonthlySiteFuel({ year, month, basis: (process.env.BASIS as ReportBasis) || "pump" });
 
   console.log(`\n=== ${r.period.label} ===`);
   console.log(`  sites ${r.sites.length}   machines ${r.totals.machineCount}   issues ${r.totals.issueCount}   ${L(r.totals.litres)} L`);
