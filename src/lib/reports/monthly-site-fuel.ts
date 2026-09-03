@@ -97,18 +97,41 @@ export interface SiteRow {
   projectId: string; // UNASSIGNED_ID when no site could be resolved
   code: string;
   name: string;
+  /** Fuel BILLED to this site: every issue attributed here by the cascade.
+   *  These are the figures that add back up to the month total. */
   litres: number;
   costCents: number;
   issueCount: number;
   machineCount: number;
   machines: MachineRow[];
   byRule: Record<AttributionRule, number>;
+  /** Fuel that came OUT OF THIS SITE'S PUMP, whoever it was billed to.
+   *
+   *  A different question from the one above, and the one a storekeeper asks:
+   *  their own tank register and monthly consumption report count what left the
+   *  pump. A visiting machine's fill appears here but is billed to its own site,
+   *  and one of this site's machines filling elsewhere is billed here but does
+   *  not appear here. For Galagedara in August the two read 21,640 and 21,050 —
+   *  840 L out to visitors, 250 L back from its own machines fuelling away.
+   *
+   *  These deliberately do NOT add up to the month total, because a site with no
+   *  tank has none and fuel can be counted at one site and billed at another.
+   *  Never sum this column and expect the month. */
+  pumpLitres: number;
+  pumpCostCents: number;
+  pumpIssueCount: number;
 }
 
 export interface MonthlySiteFuelReport {
   period: { year: number; month: number; periodKey: string; label: string; start: Date; end: Date };
   sites: SiteRow[];
-  totals: { litres: number; costCents: number; issueCount: number; machineCount: number };
+  totals: {
+    litres: number; costCents: number; issueCount: number; machineCount: number;
+    /** Fuel that left a site pump anywhere this month. Lower than `litres` by
+     *  whatever was issued with no tank attached — a workshop entry, say — so
+     *  the two are not expected to agree. */
+    pumpLitres: number;
+  };
   byRule: Record<AttributionRule, number>;
   voidedExcluded: number;
   // Proof the sheet balances: site rows re-summed vs the month's own total.
@@ -195,13 +218,27 @@ export async function buildMonthlySiteFuel(opts: {
         name: p?.name ?? "Unassigned",
         litres: 0, costCents: 0, issueCount: 0, machineCount: 0,
         machines: [], byRule: emptyRules(), machineMap: new Map(),
+        pumpLitres: 0, pumpCostCents: 0, pumpIssueCount: 0,
       };
       acc.set(id, row);
     }
     return row;
   };
 
+  // Counted independently of attribution: this is where the fuel physically came
+  // out, which is what a site's own tank register records. Accumulated for every
+  // issue including ones a site filter later drops, then filtered alongside.
+  const pumpAcc = new Map<string, { litres: number; costCents: number; issueCount: number }>();
   for (const issue of issues) {
+    const pumpProjectId = issue.bulkTankId ? tankProject.get(issue.bulkTankId) ?? null : null;
+    if (pumpProjectId && (!opts.projectId || pumpProjectId === opts.projectId)) {
+      let p = pumpAcc.get(pumpProjectId);
+      if (!p) { p = { litres: 0, costCents: 0, issueCount: 0 }; pumpAcc.set(pumpProjectId, p); }
+      p.litres += issue.litres;
+      p.costCents += issue.totalCost;
+      p.issueCount++;
+    }
+
     const { projectId, rule } = attributeIssue(assignmentIndex, tankProject, {
       assetId: issue.asset.id,
       issueDate: issue.issueDate,
@@ -265,12 +302,31 @@ export async function buildMonthlySiteFuel(opts: {
         issues: [...m.issues].sort((x, y) => x.day.localeCompare(y.day) || x.id.localeCompare(y.id)),
       }))
       .sort((x, y) => y.litres - x.litres || x.code.localeCompare(y.code));
+    const pump = pumpAcc.get(s.projectId);
     return {
       projectId: s.projectId, code: s.code, name: s.name,
       litres: round2(s.litres), costCents: s.costCents, issueCount: s.issueCount,
       machineCount: machines.length, machines, byRule: s.byRule,
+      pumpLitres: round2(pump?.litres ?? 0),
+      pumpCostCents: pump?.costCents ?? 0,
+      pumpIssueCount: pump?.issueCount ?? 0,
     };
   });
+
+  // A site whose pump issued fuel that was ALL billed elsewhere has no
+  // attributed row and would otherwise vanish from a sheet that is supposed to
+  // show what left its tank. PALO is exactly that in August 2026: one 30 L fill
+  // to a machine posted to another site.
+  for (const [projectId, pump] of pumpAcc) {
+    if (sites.some((s) => s.projectId === projectId)) continue;
+    const p = projectById.get(projectId);
+    sites.push({
+      projectId, code: p?.code ?? "—", name: p?.name ?? "—",
+      litres: 0, costCents: 0, issueCount: 0, machineCount: 0,
+      machines: [], byRule: emptyRules(),
+      pumpLitres: round2(pump.litres), pumpCostCents: pump.costCents, pumpIssueCount: pump.issueCount,
+    });
+  }
   // Biggest consumer first; the unassigned bucket always sits last so it reads as an exception.
   sites.sort((x, y) =>
     (x.projectId === UNASSIGNED_ID ? 1 : 0) - (y.projectId === UNASSIGNED_ID ? 1 : 0) ||
@@ -281,9 +337,12 @@ export async function buildMonthlySiteFuel(opts: {
       t.litres = round2(t.litres + s.litres);
       t.costCents += s.costCents;
       t.issueCount += s.issueCount;
+      // Safe to sum here, unlike per-site comparisons: each issue belongs to at
+      // most one pump, so no litre is counted twice across sites.
+      t.pumpLitres = round2(t.pumpLitres + s.pumpLitres);
       return t;
     },
-    { litres: 0, costCents: 0, issueCount: 0, machineCount: 0 },
+    { litres: 0, costCents: 0, issueCount: 0, machineCount: 0, pumpLitres: 0 },
   );
   totals.machineCount = new Set(sites.flatMap((s) => s.machines.map((m) => m.assetId))).size;
 

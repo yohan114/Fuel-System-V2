@@ -24,6 +24,21 @@ async function main() {
   console.log(`  sites ${r.sites.length}   machines ${r.totals.machineCount}   issues ${r.totals.issueCount}   ${L(r.totals.litres)} L`);
   console.log(`  reconciliation balanced: ${r.reconciliation.balanced}`);
 
+  // Billed against pump. These are MEANT to differ per site. What must hold is
+  // that the billed column still sums to the month, and that no site reports
+  // pump fuel its tank never issued.
+  console.log(`\n  site         billed          from its pump      difference`);
+  for (const s of [...r.sites].sort((a, b) => b.pumpLitres - a.pumpLitres).slice(0, 8)) {
+    const pump = s.pumpIssueCount ? `${L(s.pumpLitres)} L` : "no tank";
+    const diff = s.pumpIssueCount ? L(s.pumpLitres - s.litres) : "";
+    console.log(`    ${s.code.padEnd(12)}${String(L(s.litres)).padStart(10)} L ${String(pump).padStart(16)}${String(diff).padStart(15)}`);
+  }
+  const billedSum = L(r.sites.reduce((a, s) => a + s.litres, 0));
+  const pumpSum = L(r.sites.reduce((a, s) => a + s.pumpLitres, 0));
+  console.log(`\n  billed column sums to ${billedSum}  (month total ${L(r.totals.litres)})${Math.abs(billedSum - r.totals.litres) < 0.01 ? "  MATCH" : "  <-- MISMATCH"}`);
+  console.log(`  pump column sums to   ${pumpSum}  (report says ${L(r.totals.pumpLitres)})${Math.abs(pumpSum - r.totals.pumpLitres) < 0.01 ? "  MATCH" : "  <-- MISMATCH"}`);
+  if (Math.abs(billedSum - r.totals.litres) > 0.01 || Math.abs(pumpSum - r.totals.pumpLitres) > 0.01) process.exitCode = 1;
+
   // The change added a per-machine issue list. If it disagrees with the totals
   // that were already correct, the list is wrong — that is the whole check.
   let listed = 0;

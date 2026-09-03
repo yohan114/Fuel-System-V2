@@ -127,7 +127,21 @@ export default async function SiteFuelReportPage(props: PageProps) {
                 <span className="text-white font-semibold text-sm flex-1 min-w-[8rem]">{s.name}</span>
                 <span className="text-xs text-gray-400">{s.machineCount} machines</span>
                 <span className="text-xs text-gray-400">{s.issueCount.toLocaleString()} issues</span>
-                <span className="text-sm font-bold text-white w-28 text-right">{L(s.litres)} L</span>
+                {/* Two different questions, both asked constantly. "Billed" is
+                    what this sheet attributes to the site and what adds up to
+                    the month. "From its pump" is what the site's own tank
+                    register and monthly consumption report count. They differ
+                    whenever a machine fuels away from where it is posted. */}
+                <span className="w-28 text-right">
+                  <span className="block text-sm font-bold text-white">{L(s.litres)} L</span>
+                  <span className="block text-[9px] text-gray-500 uppercase tracking-wider">billed</span>
+                </span>
+                <span className="w-28 text-right">
+                  <span className={`block text-sm font-bold ${s.pumpLitres === s.litres ? "text-gray-400" : "text-sky-300"}`}>
+                    {s.pumpIssueCount === 0 ? "—" : `${L(s.pumpLitres)} L`}
+                  </span>
+                  <span className="block text-[9px] text-gray-500 uppercase tracking-wider">from its pump</span>
+                </span>
                 <span className="text-xs text-emerald-300 w-32 text-right">{rs(s.costCents)}</span>
                 <span className="text-[10px] text-gray-500 w-24 text-right">
                   {s.byRule.tank > 0 ? `${s.byRule.posted} posted / ${s.byRule.tank} tank` : "all posted"}
@@ -237,10 +251,27 @@ export default async function SiteFuelReportPage(props: PageProps) {
             <span className="text-xs font-bold text-white uppercase tracking-wider flex-1">Month Total</span>
             <span className="text-xs text-gray-400">{totals.machineCount} machines</span>
             <span className="text-xs text-gray-400">{totals.issueCount.toLocaleString()} issues</span>
-            <span className="text-sm font-bold text-white w-28 text-right">{L(totals.litres)} L</span>
+            <span className="w-28 text-right">
+              <span className="block text-sm font-bold text-white">{L(totals.litres)} L</span>
+              <span className="block text-[9px] text-gray-500 uppercase tracking-wider">billed</span>
+            </span>
+            <span className="w-28 text-right">
+              <span className="block text-sm font-bold text-gray-400">{L(totals.pumpLitres)} L</span>
+              <span className="block text-[9px] text-gray-500 uppercase tracking-wider">from pumps</span>
+            </span>
             <span className="text-xs text-emerald-300 w-32 text-right">{rs(totals.costCents)}</span>
             <span className="w-24" />
           </div>
+
+          {/* The two columns will not agree, and someone will read that as a
+              fault unless it is said plainly on the page. */}
+          <p className="text-[11px] text-gray-500 px-5 leading-relaxed">
+            <strong className="text-gray-400">Billed</strong> is what this sheet charges each site — every issue of the month lands on exactly
+            one site, so these add up to {L(totals.litres)} L.{" "}
+            <strong className="text-gray-400">From its pump</strong> is what physically left that site&apos;s tank, which is what the site&apos;s own
+            register counts. They differ whenever a machine fuels away from where it is posted: a visitor&apos;s fill shows on the pump that
+            served it but is billed to the visitor&apos;s own site. Sites with no tank of their own show no pump figure at all.
+          </p>
         </div>
       )}
     </div>

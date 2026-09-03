@@ -25,18 +25,31 @@ export async function GET(request: NextRequest) {
     const wb = XLSX.utils.book_new();
 
     // --- Sheet 1: site summary ------------------------------------------------
+    // Two litre columns, because two different questions get asked of this sheet
+    // and answering only one of them is what sends people back to ask again.
+    // "Billed" adds up to the month; "From Its Pump" is what each site's own
+    // tank register counts and does not, because a machine can fuel at one site
+    // and be billed at another.
     const summary: (string | number)[][] = [
       [`Monthly Fuel Issue Summary — Site Wise — ${r.period.label}`],
       [],
-      ["Site Code", "Site", "Machines", "Issues", "Litres", "Cost (LKR)", "By Posting", "By Tank"],
+      ["Site Code", "Site", "Machines", "Issues", "Litres Billed", "Cost (LKR)", "Issues at Its Pump", "Litres From Its Pump", "By Posting", "By Tank"],
     ];
     for (const s of r.sites)
-      summary.push([s.code, s.name, s.machineCount, s.issueCount, s.litres, lkr(s.costCents), s.byRule.posted, s.byRule.tank]);
+      summary.push([
+        s.code, s.name, s.machineCount, s.issueCount, s.litres, lkr(s.costCents),
+        s.pumpIssueCount, s.pumpIssueCount === 0 ? "no tank" : s.pumpLitres,
+        s.byRule.posted, s.byRule.tank,
+      ]);
     summary.push([]);
-    summary.push(["", "TOTAL", r.totals.machineCount, r.totals.issueCount, r.totals.litres, lkr(r.totals.costCents), r.byRule.posted, r.byRule.tank]);
+    summary.push(["", "TOTAL", r.totals.machineCount, r.totals.issueCount, r.totals.litres, lkr(r.totals.costCents), "", r.totals.pumpLitres, r.byRule.posted, r.byRule.tank]);
+    summary.push([]);
+    summary.push(["Litres Billed = every issue of the month attributed to exactly one site. These add up to the month total."]);
+    summary.push(["Litres From Its Pump = what physically left that site's tank, whoever was billed. These do NOT add up the same way,"]);
+    summary.push(["because a visiting machine's fill is counted at the pump that served it and billed to the visitor's own site."]);
     const ws1 = XLSX.utils.aoa_to_sheet(summary);
-    ws1["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 10 }, { wch: 9 }, { wch: 12 }, { wch: 16 }, { wch: 11 }, { wch: 10 }];
-    ws1["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }];
+    ws1["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 10 }, { wch: 9 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 11 }, { wch: 10 }];
+    ws1["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }];
     XLSX.utils.book_append_sheet(wb, ws1, "Site Summary");
 
     // --- One worksheet per site: that site's vehicles, then every issue ------
@@ -59,7 +72,8 @@ export async function GET(request: NextRequest) {
           mac.postedIssues === mac.issueCount ? "posting" : `${mac.postedIssues} posting / ${mac.issueCount - mac.postedIssues} tank`,
         ]);
       rows.push([]);
-      rows.push(["TOTAL", "", `${s.machineCount} vehicles`, s.issueCount, s.litres, lkr(s.costCents), ""]);
+      rows.push(["TOTAL", "", `${s.machineCount} vehicles`, s.issueCount, s.litres, lkr(s.costCents), "billed to this site"]);
+      rows.push(["", "", "out of this site's own pump", s.pumpIssueCount, s.pumpIssueCount === 0 ? "no tank" : s.pumpLitres, lkr(s.pumpCostCents), "whoever was billed"]);
 
       // The same machines again, expanded issue by issue, vehicle by vehicle —
       // the sheet equivalent of opening a row on the screen. Kept on the site's
