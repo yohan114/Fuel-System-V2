@@ -38,6 +38,18 @@ const { randomUUID } = require("crypto");
 const APPLY = process.argv.includes("--apply");
 const DB_PATH = process.env.DB || "data/app.db";
 
+// The default is relative, so running this from anywhere but the repo root
+// points it somewhere else — and better-sqlite3 CREATES a database rather than
+// complaining, so the next line to fail is a confusing "no such table" from a
+// file that did not exist a moment ago. Run from a git worktree, where there is
+// no data/app.db, and it silently makes one. Refuse instead.
+if (!require("node:fs").existsSync(DB_PATH)) {
+  console.error(`\nno database at ${DB_PATH}`);
+  console.error(`  cwd is ${process.cwd()}`);
+  console.error(`  pass an absolute path:  DB=/var/lib/fuel-system/app.db node ${process.argv[1].split(/[\\/]/).pop()}\n`);
+  process.exit(2);
+}
+
 // id → the machine its fuel is recorded under. Same code = a repeat of the same
 // row; a different code = a duplicate asset record, and the fuel lives there.
 const TARGETS = [
