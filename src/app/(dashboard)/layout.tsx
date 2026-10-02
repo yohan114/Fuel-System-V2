@@ -1,5 +1,5 @@
 import React from "react";
-import { getSession } from "@/lib/auth";
+import { getSession, loadCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { logoutAction } from "@/app/actions/auth";
@@ -33,23 +33,21 @@ import {
   Filter as FilterIcon
 } from "lucide-react";
 
-import { prisma } from "@/lib/db";
-
 interface LayoutProps {
   children: React.ReactNode;
 }
 
 export default async function DashboardLayout({ children }: LayoutProps) {
   const session = await getSession();
-  
+
   if (!session) {
     redirect("/login");
   }
 
-  // Verify that the user still exists in the database (e.g. after a DB reset)
-  const user = await prisma.user.findUnique({
-    where: { id: session.userId },
-  });
+  // loadCurrentUser is React.cache()'d, so the page beneath this layout
+  // reuses the same SELECT instead of running its own — one round-trip for
+  // the whole render, not one per level of the tree.
+  const user = await loadCurrentUser();
 
   if (!user || !user.active) {
     redirect("/login");

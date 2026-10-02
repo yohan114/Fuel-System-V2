@@ -158,48 +158,52 @@ export async function aggregateFuelData(filter: ReportFilter) {
     trendTotals[dayKey].costCents += issue.totalCost;
   }
 
-  // Calculate efficiency & running for assets in breakdown
+  // Boundary meter readings for every asset in the breakdown, in TWO bulk
+  // queries instead of one findFirst per asset per boundary. The old loop
+  // issued 2 × N SQLite round-trips (~400 on a 200-asset fleet) and was the
+  // dominant cost of this page; the groupBys below are two index-covered
+  // scans regardless of fleet size.
+  //
+  // The "first" reading is the HIGHEST value recorded on or before `from` —
+  // mirrors the old `orderBy [{ value: "desc" }, { readingDate: "desc" }]`
+  // against `readingDate: { lte: from }`. When no such reading exists we fall
+  // back to the LOWEST reading inside the window, same as the original.
+  // The "last" reading is the HIGHEST value on or before `to`.
+  const assetIdList = Object.keys(assetTotals);
+  const [firstBefore, firstInWindow, lastUpToEnd] = assetIdList.length === 0
+    ? [[], [], []]
+    : await Promise.all([
+        prisma.meterReading.groupBy({
+          by: ["assetId"],
+          where: { assetId: { in: assetIdList }, readingDate: { lte: from } },
+          _max: { value: true },
+        }),
+        prisma.meterReading.groupBy({
+          by: ["assetId"],
+          where: { assetId: { in: assetIdList }, readingDate: { gte: from, lte: to } },
+          _min: { value: true },
+        }),
+        prisma.meterReading.groupBy({
+          by: ["assetId"],
+          where: { assetId: { in: assetIdList }, readingDate: { lte: to } },
+          _max: { value: true },
+        }),
+      ]);
+
+  const firstBeforeMap = new Map(firstBefore.map((r) => [r.assetId, r._max.value]));
+  const firstInWindowMap = new Map(firstInWindow.map((r) => [r.assetId, r._min.value]));
+  const lastUpToEndMap = new Map(lastUpToEnd.map((r) => [r.assetId, r._max.value]));
+
   const assetsList = [];
   for (const [aId, total] of Object.entries(assetTotals)) {
-    // Find the boundary readings to compute the mileage/hours run in the window
-    // 1. Earliest reading in window (or latest before the start date as anchor)
-    const firstReading = await prisma.meterReading.findFirst({
-      where: {
-        assetId: aId,
-        readingDate: { lte: from },
-      },
-      orderBy: [
-        { value: "desc" },
-        { readingDate: "desc" }
-      ],
-    }) || await prisma.meterReading.findFirst({
-      where: {
-        assetId: aId,
-        readingDate: { gte: from, lte: to },
-      },
-      orderBy: [
-        { value: "asc" },
-        { readingDate: "asc" }
-      ],
-    });
-
-    // 2. Latest reading in window (on or before end date)
-    const lastReading = await prisma.meterReading.findFirst({
-      where: {
-        assetId: aId,
-        readingDate: { lte: to },
-      },
-      orderBy: [
-        { value: "desc" },
-        { readingDate: "desc" }
-      ],
-    });
+    const firstValue = firstBeforeMap.get(aId) ?? firstInWindowMap.get(aId) ?? null;
+    const lastValue = lastUpToEndMap.get(aId) ?? null;
 
     let runningDelta = 0;
-    let efficiency = null;
+    let efficiency: number | null = null;
 
-    if (firstReading && lastReading && lastReading.value > firstReading.value) {
-      runningDelta = lastReading.value - firstReading.value;
+    if (firstValue != null && lastValue != null && lastValue > firstValue) {
+      runningDelta = lastValue - firstValue;
       if (total.litres > 0) {
         if (total.meterType === "KM") {
           efficiency = runningDelta / total.litres; // km/L

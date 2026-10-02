@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { prisma } from "./db";
@@ -65,42 +66,42 @@ export async function deleteSession() {
   cookieStore.delete(COOKIE_NAME);
 }
 
-export async function getSession(): Promise<SessionPayload | null> {
+// React.cache dedupes within a single request. Previously every dashboard
+// render verified the JWT twice (once in the layout, once in the page) and
+// read the user row twice as well — four round-trips per click just to prove
+// who you are. With cache() the layout, the page, and any server action in
+// between all see the same resolved session/user without rechecking.
+export const getSession = cache(async function getSession(): Promise<SessionPayload | null> {
   try {
     const cookieStore = await cookies();
     const token = cookieStore.get(COOKIE_NAME)?.value;
     if (!token) return null;
     const { payload } = await jwtVerify(token, getSecret());
     return payload as unknown as SessionPayload;
-  } catch (err) {
+  } catch {
     return null;
   }
-}
+});
 
-export async function requireUser() {
+// Cached per-request so the layout's existence-check and the page's
+// requireUser() share one SELECT. Returns null for the unauthenticated case
+// so callers can decide between redirect and throw.
+export const loadCurrentUser = cache(async function loadCurrentUser() {
   // The TEST_ENV bypass returns the admin user without a session — it must
   // never be reachable in production, even if the env var leaks onto the box.
   if (process.env.TEST_ENV === "true" && process.env.NODE_ENV !== "production") {
-    const user = await prisma.user.findFirst({
-      where: { username: "admin" },
-    });
-    if (!user) throw new Error("UNAUTHORIZED");
-    return user;
+    return prisma.user.findFirst({ where: { username: "admin" } });
   }
-
   const session = await getSession();
-  if (!session) {
-    throw new Error("UNAUTHORIZED");
-  }
+  if (!session) return null;
+  return prisma.user.findUnique({ where: { id: session.userId } });
+});
 
-  const user = await prisma.user.findUnique({
-    where: { id: session.userId },
-  });
-
+export async function requireUser() {
+  const user = await loadCurrentUser();
   if (!user || !user.active) {
     throw new Error("UNAUTHORIZED");
   }
-
   return user;
 }
 

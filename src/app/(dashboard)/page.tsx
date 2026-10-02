@@ -32,20 +32,11 @@ export default async function DashboardPage() {
   const user = await requireUser();
   const isAdmin = user.role === "ADMIN";
 
-  // The pumps an admin may record a fuel issue against, with the balance each
-  // holds so the choice is made with the stock figure in view.
-  const recordableTanks = isAdmin
-    ? await prisma.bulkTank.findMany({
-        select: { id: true, name: true, balance: true, fuelKind: true },
-        orderBy: { name: "asc" },
-      })
-    : [];
-
   // Calculate current calendar month boundaries in Colombo timezone
   const now = new Date();
   const colomboTodayStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
   const [colomboYear, colomboMonth, colomboDay] = colomboTodayStr.split("-").map(Number);
-  
+
   const startOfMonth = new Date(colomboYear, colomboMonth - 1, 1);
   const endOfMonth = new Date(colomboYear, colomboMonth, 0, 23, 59, 59, 999);
   const logDate = new Date(colomboYear, colomboMonth - 1, colomboDay);
@@ -108,29 +99,90 @@ export default async function DashboardPage() {
 
   const assetIdIn = (ids: Set<string> | null) => (ids ? { assetId: { in: [...ids] } } : {});
 
-  // 1. KPI metrics — Active Fleet + Pending Approvals scoped to the site's live fleet.
-  const activeAssetsCount = await prisma.asset.count({
-    where: {
-      status: "ACTIVE",
-      ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
-    },
-  });
-
-  const pendingRequestsCount = await prisma.fuelRequest.count({
-    where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
-  });
-
-  // 2. This month's fuel, attributed to the site. Fetch the candidate issues, keep
-  // only those the attribution assigns here; the KPI sums (Spend/Volume), the
-  // daily trend and the product split all derive from this one filtered list.
-  const monthRaw = await prisma.fuelIssue.findMany({
-    where: {
-      issueDate: { gte: startOfMonth, lte: endOfMonth },
-      ...assetIdIn(fuelAllowedIds),
-    },
-    orderBy: { issueDate: "asc" },
-    include: { asset: { select: { projectId: true } } },
-  });
+  // All the independent reads below run in parallel — none of them need any
+  // other's result. On SQLite the gains are modest per query, but there are
+  // eight of them and they used to be awaited in strict order. In parallel the
+  // whole dashboard pays close to the cost of its single slowest query, not
+  // their sum.
+  const [
+    recordableTanks,
+    activeAssetsCount,
+    pendingRequestsCount,
+    monthRaw,
+    priceRows,
+    assets,
+    recentRaw,
+    pendingRequests,
+    scraperAlert,
+  ] = await Promise.all([
+    isAdmin
+      ? prisma.bulkTank.findMany({
+          select: { id: true, name: true, balance: true, fuelKind: true },
+          orderBy: { name: "asc" },
+        })
+      : Promise.resolve([] as { id: string; name: string; balance: number; fuelKind: string }[]),
+    prisma.asset.count({
+      where: {
+        status: "ACTIVE",
+        ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
+      },
+    }),
+    prisma.fuelRequest.count({
+      where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
+    }),
+    prisma.fuelIssue.findMany({
+      where: {
+        issueDate: { gte: startOfMonth, lte: endOfMonth },
+        ...assetIdIn(fuelAllowedIds),
+      },
+      orderBy: { issueDate: "asc" },
+      include: { asset: { select: { projectId: true } } },
+    }),
+    prisma.fuelPrice.findMany({ orderBy: { effectiveFrom: "desc" } }),
+    prisma.asset.findMany({
+      where: {
+        status: { in: ["ACTIVE", "INACTIVE"] },
+        ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
+      },
+      select: {
+        id: true,
+        code: true,
+        meterType: true,
+        regNo: true,
+        status: true,
+        dailyConditions: {
+          where: { logDate },
+          take: 1,
+        },
+      },
+      orderBy: { code: "asc" },
+    }),
+    prisma.fuelIssue.findMany({
+      where: { ...assetIdIn(fuelAllowedIds) },
+      take: fuelAllowedIds ? 40 : 5,
+      orderBy: { issueDate: "desc" },
+      include: {
+        asset: true,
+        issuedBy: true,
+      },
+    }),
+    prisma.fuelRequest.findMany({
+      where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
+      take: 5,
+      orderBy: { createdAt: "desc" },
+      include: {
+        asset: true,
+        requestedBy: true,
+      },
+    }),
+    prisma.auditLog.findFirst({
+      where: {
+        action: "PRICE_REFRESH",
+        summary: { contains: "failed" },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
   const issuesThisMonth = isSite
     ? monthRaw.filter((i) => issueMatchesSite(i.assetId, i.issueDate, i.asset.projectId))
     : monthRaw;
@@ -171,67 +223,19 @@ export default async function DashboardPage() {
 
   const trendData = Object.values(dailyGroups).sort((a, b) => a.date.localeCompare(b.date));
 
-  // 3. Latest active price per product (diesel, petrol, kerosene)
-  const priceRows = await prisma.fuelPrice.findMany({ orderBy: { effectiveFrom: "desc" } });
+  // Latest active price per product (diesel, petrol, kerosene …) — the
+  // priceRows above are ordered newest-first, so .find() picks each product's
+  // most recent snapshot.
   const pumpPrices = FUEL_KINDS.map((k) => ({
     kind: k,
     price: priceRows.find((p) => p.fuelKind === k.code) ?? null,
   })).filter((p) => p.price != null || p.kind.code === "AUTO_DIESEL" || p.kind.code === "SUPER_DIESEL");
 
-  // 4. Fetch assets for Condition Widget and Quick Actions — the site's live fleet.
-  const assets = await prisma.asset.findMany({
-    where: {
-      status: { in: ["ACTIVE", "INACTIVE"] },
-      ...(currentFleetIds ? { id: { in: [...currentFleetIds] } } : {}),
-    },
-    select: {
-      id: true, 
-      code: true, 
-      meterType: true, 
-      regNo: true, 
-      status: true,
-      dailyConditions: {
-        where: { logDate },
-        take: 1,
-      }
-    },
-    orderBy: { code: "asc" },
-  });
-
-  // 5. Recent dispatches — attributed to the site (over-fetch, then filter + trim).
-  const recentRaw = await prisma.fuelIssue.findMany({
-    where: { ...assetIdIn(fuelAllowedIds) },
-    take: fuelAllowedIds ? 40 : 5,
-    orderBy: { issueDate: "desc" },
-    include: {
-      asset: true,
-      issuedBy: true,
-    },
-  });
+  // Recent dispatches — attributed to the site (over-fetch, then filter + trim).
   const recentIssues = (isSite
     ? recentRaw.filter((i) => issueMatchesSite(i.assetId, i.issueDate, i.asset.projectId))
     : recentRaw
   ).slice(0, 5);
-
-  // 6. Pending requests — the site's live fleet only.
-  const pendingRequests = await prisma.fuelRequest.findMany({
-    where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
-    take: 5,
-    orderBy: { createdAt: "desc" },
-    include: {
-      asset: true,
-      requestedBy: true,
-    },
-  });
-
-  // 7. Find recent warning alerts (like failed price scraping)
-  const scraperAlert = await prisma.auditLog.findFirst({
-    where: {
-      action: "PRICE_REFRESH",
-      summary: { contains: "failed" },
-    },
-    orderBy: { createdAt: "desc" },
-  });
 
   return (
     <div className="space-y-8">

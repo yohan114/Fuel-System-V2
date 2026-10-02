@@ -3,6 +3,14 @@
 // without an external cron.
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Apply the SQLite PRAGMAs (WAL, cache, mmap, …) before anything else can
+    // open the first query path. Doing it here means the very first request
+    // the server serves already runs against a tuned database — otherwise
+    // whichever page loses the race boots the connection with the vanilla
+    // rollback-journal defaults and pays the slow price once.
+    const { prismaReady } = await import("@/lib/db");
+    await prismaReady;
+
     const { startPriceScheduler } = await import("@/lib/prices/scheduler");
     startPriceScheduler();
 

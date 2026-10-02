@@ -177,25 +177,36 @@ export default async function FuelIssuesPage(props: PageProps) {
   // How many times each issue on screen has been touched, for the badge on the
   // history button. The trail itself is fetched only when someone opens it.
   //
-  // Deliberately NOT `entityId: { in: [...the page's ids] }`. This page shows a
-  // thousand rows, twenty thousand under a pump filter, and every id becomes a
-  // bound parameter — past SQLite's limit, which is how this page came to
-  // return a server error the moment the history lookup was added. Grouping the
-  // whole FuelIssue slice of the audit log costs no parameters at all and scales
-  // with how often anyone edits fuel, not with how much fuel there is.
+  // Scoped to the ids actually on screen, chunked so no single `in` ever gets
+  // close to SQLite's SQLITE_MAX_VARIABLE_NUMBER (999 on legacy builds, 32766
+  // on current ones — 500 is well under both). The previous "group every
+  // FuelIssue audit row ever written" avoided the parameter risk but grew with
+  // the audit log forever, so the page got slower every month even when the
+  // view was small.
   const isAdmin = session.role === "ADMIN";
   const historyCount = new Map<string, number>();
   const tankName = new Map<string, string>();
   if (isAdmin) {
-    const [counts, tanks] = await Promise.all([
-      prisma.auditLog.groupBy({
-        by: ["entityId"],
-        where: { entity: "FuelIssue" },
-        _count: { _all: true },
-      }),
+    const CHUNK = 500;
+    const issueIds = issues.map((i) => i.id);
+    const chunks: string[][] = [];
+    for (let k = 0; k < issueIds.length; k += CHUNK) chunks.push(issueIds.slice(k, k + CHUNK));
+
+    const [countChunks, tanks] = await Promise.all([
+      Promise.all(
+        chunks.map((ids) =>
+          prisma.auditLog.groupBy({
+            by: ["entityId"],
+            where: { entity: "FuelIssue", entityId: { in: ids } },
+            _count: { _all: true },
+          }),
+        ),
+      ),
       prisma.bulkTank.findMany({ select: { id: true, name: true } }),
     ]);
-    for (const c of counts) if (c.entityId) historyCount.set(c.entityId, c._count._all);
+    for (const counts of countChunks) {
+      for (const c of counts) if (c.entityId) historyCount.set(c.entityId, c._count._all);
+    }
     for (const t of tanks) tankName.set(t.id, t.name);
   }
 
