@@ -48,6 +48,7 @@ model User {
   tankDips         TankDip[]     @relation("TankDipRecordedBy")
 
   serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
+  apiKeys          ApiKey[]        @relation("ApiKeyCreatedBy")
 }
 
 model Category {
@@ -1067,4 +1068,21 @@ model AssetFilter {
 
   @@index([assetId])
   @@index([filterId])
+}
+
+model ApiKey {
+  id          String    @id @default(uuid())
+  name        String
+  keyPrefix   String    // e.g. "fs_live_a1b2..."
+  keyHash     String    @unique // SHA-256 hash of the complete secret key
+  scopes      String    @default("*") // Comma-separated permissions, e.g. "read:fleet,write:fuel" or "*"
+  active      Boolean   @default(true)
+  createdById String?
+  createdBy   User?     @relation("ApiKeyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+
+  @@index([keyPrefix])
+  @@index([active])
 }

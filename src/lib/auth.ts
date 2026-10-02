@@ -36,6 +36,23 @@ export interface SessionPayload {
   bulkTankId: string | null;
 }
 
+export async function signJwtToken(payload: SessionPayload): Promise<string> {
+  return new SignJWT(payload as any)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(getSecret());
+}
+
+export async function verifyJwtToken(token: string): Promise<SessionPayload | null> {
+  try {
+    const { payload } = await jwtVerify(token, getSecret());
+    return payload as unknown as SessionPayload;
+  } catch {
+    return null;
+  }
+}
+
 export async function createSession(
   userId: string, 
   username: string, 
@@ -45,11 +62,7 @@ export async function createSession(
   bulkTankId: string | null = null
 ) {
   const payload: SessionPayload = { userId, username, role, name, projectId, bulkTankId };
-  const token = await new SignJWT(payload as any)
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("7d")
-    .sign(getSecret());
+  const token = await signJwtToken(payload);
 
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {
