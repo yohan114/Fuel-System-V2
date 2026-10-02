@@ -82,6 +82,7 @@ export default async function BillDetailPage(props: PageProps) {
 
   const fuelIssues = await prisma.fuelIssue.findMany({
     where: { assetId: bill.assetId, issueDate: { gte: bill.periodStart, lte: bill.periodEnd } },
+    omit: { photoData: true },
     orderBy: { issueDate: "asc" },
   });
 

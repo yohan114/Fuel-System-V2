@@ -9,10 +9,10 @@ generator client {
 model User {
   id               String        @id @default(uuid())
   username         String        @unique
-  email            String?
+  email            String?       @unique
   name             String
   passwordHash     String
-  role             String        // "ADMIN" | "USER" | "ALLOCATOR" | "WORKSHOP"
+  role             String        // "ADMIN" | "USER" | "ALLOCATOR" | "WORKSHOP" | "SITE_PUMP"
   active           Boolean       @default(true)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -211,6 +211,7 @@ model AssetAssignment {
 
   @@index([assetId, startDate])
   @@index([projectId, startDate])
+  @@index([projectId])
 }
 
 // Site-vehicle allocation master layer: one clean record per vehicle per site
@@ -373,6 +374,7 @@ model FuelIssue {
   // date-range on the whole fleet (reports) and per-vehicle (billing/service),
   // always excluding voided rows. Without these, every such query full-scans.
   @@index([assetId, issueDate])
+  @@index([assetId, voided, issueDate])
   @@index([issueDate])
   @@index([bulkTankId])
 }
@@ -451,6 +453,9 @@ model MeterReading {
 
   linkedIssueId  String?    @unique
   linkedIssue    FuelIssue? @relation("LinkedIssueMeterReading", fields: [linkedIssueId], references: [id])
+
+  @@index([assetId, readingDate])
+  @@index([assetId, value])
 }
 
 model AuditLog {
@@ -561,6 +566,7 @@ model DailyCondition {
 
   @@unique([assetId, logDate])
   @@index([assetId, logDate])
+  @@index([logDate])
 }
 
 model BulkTank {

@@ -139,7 +139,7 @@ export default async function DashboardLayout({ children }: LayoutProps) {
       { label: "Breakdown Log", href: "/breakdowns", icon: AlertTriangle },
       { label: "Alerts", href: "/alerts", icon: Bell }
     );
-  } else {
+  } else if (session.role === "USER") {
     // USER role
     navItems.push(
       { label: "Fleet Directory", href: "/fleet", icon: Car },

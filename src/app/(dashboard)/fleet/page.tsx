@@ -1,6 +1,7 @@
 import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import { prisma } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
 import { Search, Filter, Car, Gauge, Plus } from "lucide-react";
@@ -23,7 +24,7 @@ export default async function FleetPage(props: PageProps) {
   });
 
   // 2. Build where clause
-  const where: any = {
+  const where: Prisma.AssetWhereInput = {
     status: {
       in: ["ACTIVE", "INACTIVE"], // Excluding DISPOSED assets by default
     },

@@ -32,8 +32,18 @@ const PORT = process.env.PORT ?? "3300";
 //   isCsrfOriginAllowed("192.168.8.200:3300", [...old list...]) === false
 //   isCsrfOriginAllowed("192.168.8.200:3300", [...this list...]) === true
 //
-// A wildcard matches exactly one label, so "*.ec-workshops.online" covers
-// fuelsystem.ec-workshops.online but not the bare apex.
+import os from "os";
+
+const localIps = Object.values(os.networkInterfaces())
+  .flat()
+  .filter((iface): iface is os.NetworkInterfaceInfo => !!iface && iface.family === "IPv4" && !iface.internal)
+  .map((iface) => iface.address);
+
+const extraOrigins = (process.env.ADDITIONAL_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const ALLOWED_ORIGINS = [
   // Production, through Cloudflare. Named literally as well as covered by the
   // wildcard below, so narrowing the wildcard later cannot silently kill every
@@ -49,6 +59,10 @@ const ALLOWED_ORIGINS = [
   `localhost:${PORT}`,
   // Site machines reach the server by LAN address, not by name.
   `192.168.8.200:${PORT}`,
+  "192.168.8.200",
+  ...localIps,
+  ...localIps.map((ip) => `${ip}:${PORT}`),
+  ...extraOrigins,
 ];
 
 const nextConfig: NextConfig = {

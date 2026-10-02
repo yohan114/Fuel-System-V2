@@ -84,34 +84,43 @@ export default async function FuelIssuesPage(props: PageProps) {
     scopeWhere = { bulkTank: { projectId: pumpSite } };
   } else if (effectiveSite) {
     // Restrict the query to assets ever posted to the site (or currently pinned
-    // to it); the exact per-issue attribution check runs below once each issue's
-    // site resolves.
-    const spans = await prisma.assetAssignment.findMany({ where: { projectId: effectiveSite }, select: { assetId: true }, distinct: ["assetId"] });
-    const pinned = await prisma.asset.findMany({ where: { projectId: effectiveSite }, select: { id: true } });
-    scopeWhere = { assetId: { in: [...new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)])] } };
+    // to it), plus pumps located at the site; the exact per-issue attribution
+    // check runs below once each issue's site resolves.
+    const [spans, pinned, siteTanks] = await Promise.all([
+      prisma.assetAssignment.findMany({ where: { projectId: effectiveSite }, select: { assetId: true }, distinct: ["assetId"] }),
+      prisma.asset.findMany({ where: { projectId: effectiveSite }, select: { id: true } }),
+      prisma.bulkTank.findMany({ where: { projectId: effectiveSite }, select: { id: true } }),
+    ]);
+    const candidateAssetIds = [...new Set<string>([...spans.map((s) => s.assetId), ...pinned.map((a) => a.id)])];
+    const tankIds = siteTanks.map((t) => t.id);
+    if (tankIds.length > 0) {
+      scopeWhere = {
+        OR: [
+          { assetId: { in: candidateAssetIds } },
+          { bulkTankId: { in: tankIds } },
+        ],
+      };
+    } else {
+      scopeWhere = { assetId: { in: candidateAssetIds } };
+    }
   }
   Object.assign(where, scopeWhere);
 
   // 2. Query dispatches (most-recent first, capped)
+  const takeLimit = tankFilter || effectiveSite ? PUMP_LIMIT : ISSUE_LIMIT;
   let issues = await prisma.fuelIssue.findMany({
     where,
     omit: { photoData: true },
     include: { asset: { include: { project: true } }, issuedBy: true },
     orderBy: { issueDate: "desc" },
-    // A site filter is applied in memory below, after attribution — so the cap
-    // has to cover the site's whole candidate pool or older rows silently
-    // vanish from the filtered list. Nine sites draw on more than a thousand
-    // candidate issues (Wadakada 4,700), which made "show me this site's fuel"
-    // quietly return only the recent part of it.
-    take: tankFilter || effectiveSite ? PUMP_LIMIT : ISSUE_LIMIT,
+    take: takeLimit,
   });
 
   // The true number behind the cap, so a truncated list says so rather than
   // looking like the whole story.
-  // Counted from the query, so it only means "the whole matching set" while no
-  // site filter is on — a site is resolved per issue in memory below, and the
-  // exact figure for that case is set after filtering.
-  let matchingTotal = await prisma.fuelIssue.count({ where });
+  const rawCandidateCount = await prisma.fuelIssue.count({ where });
+  const isCapped = rawCandidateCount > takeLimit;
+  let matchingTotal = rawCandidateCount;
   // ?tank= is scoped as well. The rows themselves already fail closed for another
   // site's pump — the tank clause ANDs with the operator's — but the header reads
   // the tank directly, so without this it would name a pump the operator has no
@@ -155,7 +164,10 @@ export default async function FuelIssuesPage(props: PageProps) {
   // operator dispensed — already scoped correctly in SQL by their tank.
   if (effectiveSite && !pumpSite) {
     issues = issues.filter((i) => siteOfIssue(i)?.id === effectiveSite);
-    matchingTotal = issues.length; // the pre-attribution count would overstate it
+    if (!isCapped) {
+      // When not capped by takeLimit, all candidates were processed so issues.length is exact
+      matchingTotal = issues.length;
+    }
   }
 
   // Dropdown option sources. The issuer list obeys the same scope as the log, so
@@ -527,8 +539,11 @@ export default async function FuelIssuesPage(props: PageProps) {
           <div className="px-4 py-2.5 border-t border-white/5 text-[10px] text-gray-500 flex items-center justify-between gap-3">
             <span>
               Showing {issues.length.toLocaleString()}
-              {matchingTotal > issues.length ? ` of ${matchingTotal.toLocaleString()}` : ""} issue
-              {issues.length === 1 ? "" : "s"}
+              {isCapped
+                ? ` of ${issues.length.toLocaleString()}+ issues (capped at latest ${takeLimit.toLocaleString()} records — narrow filters to see older)`
+                : matchingTotal > issues.length
+                ? ` of ${matchingTotal.toLocaleString()} issues`
+                : ` issue${issues.length === 1 ? "" : "s"}`}
             </span>
             <span className="hidden sm:inline text-gray-600">Scroll inside the table — the header stays put</span>
           </div>

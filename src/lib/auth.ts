@@ -87,9 +87,12 @@ export const getSession = cache(async function getSession(): Promise<SessionPayl
 // requireUser() share one SELECT. Returns null for the unauthenticated case
 // so callers can decide between redirect and throw.
 export const loadCurrentUser = cache(async function loadCurrentUser() {
-  // The TEST_ENV bypass returns the admin user without a session — it must
-  // never be reachable in production, even if the env var leaks onto the box.
-  if (process.env.TEST_ENV === "true" && process.env.NODE_ENV !== "production") {
+  // The TEST_ENV bypass returns the admin user without a session — strictly
+  // guarded so running next dev on a server never accidentally bypasses auth.
+  if (
+    process.env.TEST_ENV === "true" &&
+    (process.env.NODE_ENV === "test" || process.env.VITEST !== undefined || !process.env.NEXT_RUNTIME)
+  ) {
     return prisma.user.findFirst({ where: { username: "admin" } });
   }
   const session = await getSession();

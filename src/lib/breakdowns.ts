@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import { colomboDayKey } from "./colombo-date";
 
 // Breakdown "episodes" derived from the daily condition log. A run of
 // consecutive calendar days flagged BREAKDOWN is one episode; a WORKING day or
@@ -46,10 +47,9 @@ function nextDay(day: string): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
-// logDate rows are written as server-local midnight of the intended calendar
-// day (see actions/condition.ts), so local getters reconstruct that day.
+// logDate rows are tied to the Colombo calendar day, so colomboDayKey reconstructs that day.
 function dayOf(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return colomboDayKey(d);
 }
 
 // Pure: rows for ONE asset, sorted ascending by day, one row per day.

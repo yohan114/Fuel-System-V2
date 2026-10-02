@@ -1,6 +1,7 @@
 import { isSiteUser, billingScope } from "@/lib/roles";
 import React from "react";
 import { prisma } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth";
 import { currentMonthPeriod } from "@/lib/billing/period";
 import { VARIANCE_THRESHOLD, formatVariancePct } from "@/lib/reports/recommended";
@@ -86,7 +87,7 @@ export default async function BillingPage(props: PageProps) {
   const activeSite = scope.kind === "project" ? scope.projectId : siteFilter;
   const bySplit = activeSite !== "all" && activeSite !== "unassigned";
 
-  const where: any = { periodKey };
+  const where: Prisma.BillWhereInput = { periodKey };
   if (activeSite === "unassigned") where.projectId = null;
   if (statusFilter !== "all") where.status = statusFilter;
 

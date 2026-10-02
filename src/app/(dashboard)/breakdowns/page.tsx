@@ -14,10 +14,10 @@ interface PageProps {
 const YM_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 function monthTitle(ym: string) {
-  return new Date(`${ym}-01T00:00:00`).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  return new Date(`${ym}-01T00:00:00+05:30`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "Asia/Colombo" });
 }
 function fmtDay(day: string) {
-  return new Date(`${day}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return new Date(`${day}T00:00:00+05:30`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Asia/Colombo" });
 }
 
 export default async function BreakdownsPage(props: PageProps) {

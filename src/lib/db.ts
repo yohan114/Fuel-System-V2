@@ -71,9 +71,13 @@ async function initPragmas() {
     "PRAGMA foreign_keys=ON",
   ];
   for (const s of stmts) {
-    try { await prisma.$executeRawUnsafe(s); }
-    catch (err) {
+    try {
+      await prisma.$executeRawUnsafe(s);
+    } catch (err) {
       console.error(`[db] failed to apply ${s}:`, err);
+      if (s.includes("journal_mode=WAL")) {
+        throw new Error(`[db] Critical: failed to apply ${s}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 }

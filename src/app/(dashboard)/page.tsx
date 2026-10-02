@@ -5,7 +5,8 @@ import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import { fuelDateShort, colomboDayKey } from "@/lib/colombo-date";
 import React from "react";
 import { prisma } from "@/lib/db";
-import { getSession, requireUser } from "@/lib/auth";
+import { loadCurrentUser } from "@/lib/auth";
+import { currentMonthPeriod } from "@/lib/billing/period";
 import QuickActions from "./components/QuickActions";
 import DashboardCharts from "./components/DashboardCharts";
 import ConditionWidget from "./components/ConditionWidget";
@@ -26,19 +27,18 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 export default async function DashboardPage() {
-  const session = await getSession();
-  if (!session) return null;
+  const user = await loadCurrentUser();
+  if (!user || !user.active) {
+    redirect("/login");
+  }
 
-  const user = await requireUser();
   const isAdmin = user.role === "ADMIN";
 
   // Calculate current calendar month boundaries in Colombo timezone
   const now = new Date();
+  const { start: startOfMonth, end: endOfMonth } = currentMonthPeriod(now);
   const colomboTodayStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
   const [colomboYear, colomboMonth, colomboDay] = colomboTodayStr.split("-").map(Number);
-
-  const startOfMonth = new Date(colomboYear, colomboMonth - 1, 1);
-  const endOfMonth = new Date(colomboYear, colomboMonth, 0, 23, 59, 59, 999);
   const logDate = new Date(colomboYear, colomboMonth - 1, colomboDay);
 
   const colomboHour = parseInt(
@@ -136,6 +136,7 @@ export default async function DashboardPage() {
         ...assetIdIn(fuelAllowedIds),
       },
       orderBy: { issueDate: "asc" },
+      omit: { photoData: true },
       include: { asset: { select: { projectId: true } } },
     }),
     prisma.fuelPrice.findMany({ orderBy: { effectiveFrom: "desc" } }),
@@ -161,6 +162,7 @@ export default async function DashboardPage() {
       where: { ...assetIdIn(fuelAllowedIds) },
       take: fuelAllowedIds ? 40 : 5,
       orderBy: { issueDate: "desc" },
+      omit: { photoData: true },
       include: {
         asset: true,
         issuedBy: true,
@@ -170,6 +172,7 @@ export default async function DashboardPage() {
       where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
       take: 5,
       orderBy: { createdAt: "desc" },
+      omit: { photoData: true },
       include: {
         asset: true,
         requestedBy: true,
@@ -242,7 +245,7 @@ export default async function DashboardPage() {
       {/* Welcome Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-wide">Ayubowan, {session.name}</h1>
+          <h1 className="text-2xl font-bold text-white tracking-wide">Ayubowan, {user.name}</h1>
           <p className="text-xs text-gray-400 mt-1 font-medium">
             Here is the fleet fuel dashboard for {now.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
           </p>
@@ -340,7 +343,7 @@ export default async function DashboardPage() {
                 <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/10 rounded-xl p-3.5 text-xs text-red-200">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <span>
-                    Price Scraper failed: <em>{scraperAlert.summary.split(":")[1]?.trim() || "HTTP 403 Blocked"}</em>. 
+                    Price Scraper failed: <em>{scraperAlert.summary.includes(":") ? scraperAlert.summary.split(":")[1]?.trim() : scraperAlert.summary || "HTTP 403 Blocked"}</em>. 
                     Prices continue to reference active manual settings.
                   </span>
                 </div>
