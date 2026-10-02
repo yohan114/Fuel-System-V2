@@ -1,21 +1,22 @@
 import { prisma } from "../db";
+import { colomboDayKey, colomboDayStart } from "../colombo-date";
 
 // Helper to filter meter reading sources based on project to prevent cross-contamination.
 function getMeterSourcesForProject(projectCode?: string | null): string[] {
   if (!projectCode) return [];
+  const common = ["MANUAL", "FUEL_ISSUE", "GOOGLE_ESTIMATE", "REPAIR_RESUME", "INSTRUMENT_RESET"];
   if (projectCode === "CEP-03-ABC") {
-    return ["CEP-03-ABC_START", "CEP-03-ABC_END"];
+    return ["CEP-03-ABC_START", "CEP-03-ABC_END", ...common];
   }
   if (projectCode === "CEP-03") {
-    return ["DAILY_SHEET_START", "DAILY_SHEET_END"];
+    return ["DAILY_SHEET_START", "DAILY_SHEET_END", ...common];
   }
   return [
     `SUMMARY_${projectCode}_START`,
     `SUMMARY_${projectCode}_END`,
     "SUMMARY_START",
     "SUMMARY_END",
-    "MANUAL",
-    "FUEL_ISSUE"
+    ...common
   ];
 }
 
@@ -27,7 +28,16 @@ export interface RunningDelta {
   opening: number | null;
   closing: number | null;
   delta: number;
+  outageDays?: number;
+  estimatedDays?: number;
 }
+
+export interface WindowDeltaResult extends RunningDelta {
+  outageDays: number;
+  estimatedDays: number;
+}
+
+const DAY = 86_400_000;
 
 // What a machine can physically record in a day. The same bounds the asset
 // merge tool uses to decide whether two records could be one machine.
@@ -82,16 +92,21 @@ export function coherentMeterDelta(
 // the earliest reading inside the window. Closing = last reading on/before the
 // period end. Delta is clamped to 0 when there is no forward growth (guards
 // against odometer resets / back-dated corrections).
-export async function computeRunningDelta(
+// Resolves meter growth across a billing window [start, end], handling:
+// - Standard continuous physical meters
+// - Outage windows with Google-estimated readings
+// - Instrument replacement / reset epochs (prevents cross-epoch false subtraction)
+// - Sub-window delta accumulation clamped by physical ceilings
+export async function resolveWindowDelta(
   assetId: string,
   meterType: "KM" | "HOURS",
   start: Date,
   end: Date,
   projectCode?: string | null
-): Promise<RunningDelta> {
+): Promise<WindowDeltaResult> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
-    include: { project: true }
+    include: { project: true },
   });
   const isGampaha = asset?.project?.code === "GB";
 
@@ -107,169 +122,287 @@ export async function computeRunningDelta(
 
     if (manualReadings.length > 0) {
       const sum = manualReadings.reduce((acc, r) => acc + r.value, 0);
-      const values = manualReadings.map(r => r.value);
+      const values = manualReadings.map((r) => r.value);
       const minVal = Math.min(...values);
       const maxVal = Math.max(...values);
       return {
         opening: minVal,
         closing: maxVal,
         delta: sum,
+        outageDays: 0,
+        estimatedDays: 0,
       };
     }
   }
 
-  const allowedSources = getMeterSourcesForProject(projectCode || asset?.project?.code);
-
-  const closing = await prisma.meterReading.findFirst({
-    where: { 
-      assetId, 
-      readingType: meterType, 
-      readingDate: { lte: end },
-      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {})
+  // 1. Fetch outages overlapping the period [start, end]
+  const outages = await prisma.meterOutage.findMany({
+    where: {
+      assetId,
+      startDate: { lte: end },
+      OR: [{ endDate: null }, { endDate: { gte: start } }],
     },
-    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
+    orderBy: { startDate: "asc" },
   });
 
-  if (!closing) {
-    return { opening: null, closing: null, delta: 0 };
+  let outageDays = 0;
+  for (const o of outages) {
+    const oStart = o.startDate < start ? start : o.startDate;
+    const oEnd = !o.endDate || o.endDate > end ? end : o.endDate;
+    const days = Math.max(
+      1,
+      Math.round(
+        (colomboDayStart(colomboDayKey(oEnd)).getTime() -
+          colomboDayStart(colomboDayKey(oStart)).getTime()) /
+          DAY
+      ) + 1
+    );
+    outageDays += days;
   }
 
-  const isClosingAbc = closing.source?.startsWith("CEP-03-ABC") ?? false;
-  const compatibilityFilter = isClosingAbc
-    ? { source: { startsWith: "CEP-03-ABC" } }
-    : { NOT: { source: { startsWith: "CEP-03-ABC" } } };
-
-  let opening = await prisma.meterReading.findFirst({
-    where: { 
-      assetId, 
-      readingType: meterType, 
+  // 2. Check for instrument epoch: find latest INSTRUMENT_RESET on or before start
+  const resetBeforeStart = await prisma.meterReading.findFirst({
+    where: {
+      assetId,
+      readingType: meterType,
+      source: "INSTRUMENT_RESET",
       readingDate: { lte: start },
-      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
-      ...compatibilityFilter
     },
-    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
+    orderBy: { readingDate: "desc" },
+  });
+  const epochStart = resetBeforeStart?.readingDate ?? null;
+
+  // Check if any replacement occurred during [start, end]
+  const replacedInWindow =
+    outages.some(
+      (o) =>
+        o.instrumentContinuity === "replaced" &&
+        o.endDate &&
+        o.endDate >= start &&
+        o.endDate <= end
+    ) ||
+    (await prisma.meterReading.findFirst({
+      where: {
+        assetId,
+        readingType: meterType,
+        source: "INSTRUMENT_RESET",
+        readingDate: { gt: start, lte: end },
+      },
+    })) !== null;
+
+  const allowedSources = getMeterSourcesForProject(projectCode || asset?.project?.code);
+  const epochFilter = epochStart ? { readingDate: { gte: epochStart } } : {};
+
+  // If no outages and no replacement in window: standard fast path
+  if (outages.length === 0 && !replacedInWindow) {
+    const closing = await prisma.meterReading.findFirst({
+      where: {
+        assetId,
+        readingType: meterType,
+        readingDate: { lte: end },
+        ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
+        ...epochFilter,
+      },
+      orderBy: [{ readingDate: "desc" }, { value: "desc" }],
+    });
+
+    if (!closing) {
+      return { opening: null, closing: null, delta: 0, outageDays: 0, estimatedDays: 0 };
+    }
+
+    const isClosingAbc = closing.source?.startsWith("CEP-03-ABC") ?? false;
+    const compatibilityFilter = isClosingAbc
+      ? { source: { startsWith: "CEP-03-ABC" } }
+      : { NOT: { source: { startsWith: "CEP-03-ABC" } } };
+
+    let opening = await prisma.meterReading.findFirst({
+      where: {
+        assetId,
+        readingType: meterType,
+        readingDate: { lte: start },
+        ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
+        ...compatibilityFilter,
+        ...epochFilter,
+      },
+      orderBy: [{ readingDate: "desc" }, { value: "desc" }],
+    });
+
+    const thresholdDate = new Date(start.getTime() - 31 * DAY);
+    if (!opening || opening.readingDate < thresholdDate) {
+      const fallback = await prisma.meterReading.findFirst({
+        where: {
+          assetId,
+          readingType: meterType,
+          readingDate: { gte: start, lte: end },
+          ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
+          ...compatibilityFilter,
+          ...epochFilter,
+        },
+        orderBy: [{ readingDate: "asc" }, { value: "asc" }],
+      });
+      if (fallback) {
+        opening = fallback;
+      }
+    }
+
+    if (opening && closing && closing.value < opening.value) {
+      return { opening: null, closing: null, delta: 0, outageDays: 0, estimatedDays: 0 };
+    }
+
+    let delta = 0;
+    if (opening && closing && closing.value > opening.value) {
+      delta = closing.value - opening.value;
+    }
+
+    const estimatedCount = await prisma.meterReading.count({
+      where: {
+        assetId,
+        readingType: meterType,
+        source: "GOOGLE_ESTIMATE",
+        readingDate: { gte: start, lte: end },
+      },
+    });
+
+    return {
+      opening: opening ? opening.value : null,
+      closing: closing ? closing.value : null,
+      delta,
+      outageDays: 0,
+      estimatedDays: estimatedCount > 0 ? estimatedCount : 0,
+    };
+  }
+
+  // 3. Multi-subwindow path across outages:
+  const allReadings = await prisma.meterReading.findMany({
+    where: {
+      assetId,
+      readingType: meterType,
+      readingDate: {
+        gte: new Date(start.getTime() - 31 * DAY),
+        lte: end,
+      },
+      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
+    },
+    orderBy: [{ readingDate: "asc" }, { value: "asc" }],
   });
 
-  const thresholdDate = new Date(start.getTime() - 31 * 24 * 60 * 60 * 1000);
-  if (!opening || opening.readingDate < thresholdDate) {
-    const fallback = await prisma.meterReading.findFirst({
-      where: { 
-        assetId, 
-        readingType: meterType, 
-        readingDate: { gte: start, lte: end },
-        ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
-        ...compatibilityFilter
-      },
-      orderBy: [{ readingDate: "asc" }, { value: "asc" }],
+  const googleDates = new Set(
+    allReadings
+      .filter((r) => r.source === "GOOGLE_ESTIMATE" && r.readingDate >= start && r.readingDate <= end)
+      .map((r) => colomboDayKey(r.readingDate))
+  );
+  const estimatedDays = Math.max(outageDays, googleDates.size);
+
+  let totalDelta = 0;
+  const sortedOutages = [...outages].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+  interface SubWindow {
+    type: "PHYSICAL" | "GOOGLE";
+    subStart: Date;
+    subEnd: Date;
+  }
+  const subWindows: SubWindow[] = [];
+  let cur = start;
+
+  for (const o of sortedOutages) {
+    const oStart = o.startDate < cur ? cur : o.startDate;
+    const oEnd = !o.endDate || o.endDate > end ? end : o.endDate;
+
+    if (oStart > cur) {
+      subWindows.push({ type: "PHYSICAL", subStart: cur, subEnd: oStart });
+    }
+    subWindows.push({
+      type: "GOOGLE",
+      subStart: oStart,
+      subEnd: oEnd,
     });
-    if (fallback) {
-      opening = fallback;
+    cur = oEnd;
+    if (cur >= end) break;
+  }
+
+  if (cur < end) {
+    subWindows.push({ type: "PHYSICAL", subStart: cur, subEnd: end });
+  }
+
+  for (const sw of subWindows) {
+    const swDays = Math.max(1, (sw.subEnd.getTime() - sw.subStart.getTime()) / DAY);
+    const maxAllowed = (meterType === "KM" ? 200 : 24) * swDays;
+
+    if (sw.type === "GOOGLE") {
+      const gReadings = allReadings.filter(
+        (r) => r.readingDate >= sw.subStart && r.readingDate <= sw.subEnd
+      );
+      if (gReadings.length >= 2) {
+        const deltaG = gReadings[gReadings.length - 1].value - gReadings[0].value;
+        if (deltaG > 0 && deltaG <= maxAllowed) {
+          totalDelta += deltaG;
+        }
+      }
+    } else {
+      const pReadings = allReadings.filter(
+        (r) => r.source !== "GOOGLE_ESTIMATE" && r.readingDate >= sw.subStart && r.readingDate <= sw.subEnd
+      );
+      if (pReadings.length >= 2) {
+        const deltaP = pReadings[pReadings.length - 1].value - pReadings[0].value;
+        if (deltaP > 0 && deltaP <= maxAllowed) {
+          totalDelta += deltaP;
+        }
+      } else if (pReadings.length === 1) {
+        const prev = allReadings
+          .filter((r) => r.source !== "GOOGLE_ESTIMATE" && r.readingDate <= sw.subStart)
+          .pop();
+        if (prev && pReadings[0].value > prev.value) {
+          const deltaP = pReadings[0].value - prev.value;
+          if (deltaP <= maxAllowed) totalDelta += deltaP;
+        }
+      }
     }
   }
 
-  // A closing reading below its opening cannot describe one machine's month: a
-  // meter counts up. The charge was already safe — delta stayed 0 and the bill
-  // fell to the guaranteed minimum — but the pair was still returned, so eleven
-  // draft invoices printed things like "opening 2,641,740, closing 265,980" for
-  // a client to read. An unusable meter must report nothing rather than a figure
-  // nobody can defend across a table.
-  //
-  // The cause is almost always a keying slip in the source sheet — a digit added
-  // (SC-10's 2,641,740 for 264,174) or dropped (HCC-07's 33,972 for 383,xxx) —
-  // or a meter that was physically replaced and restarted low. None of those are
-  // measurements of this month's work.
-  if (opening && closing && closing.value < opening.value) {
-    return { opening: null, closing: null, delta: 0 };
-  }
+  let openingVal: number | null = null;
+  let closingVal: number | null = null;
 
-  let delta = 0;
-  if (opening && closing && closing.value > opening.value) {
-    delta = closing.value - opening.value;
+  if (!replacedInWindow) {
+    const validReadings = allReadings.filter((r) => r.readingDate >= start && r.readingDate <= end);
+    if (validReadings.length > 0) {
+      openingVal = validReadings[0].value;
+      closingVal = validReadings[validReadings.length - 1].value;
+      if (closingVal < openingVal) {
+        openingVal = null;
+        closingVal = null;
+      }
+    }
   }
 
   return {
-    opening: opening ? opening.value : null,
-    closing: closing ? closing.value : null,
-    delta,
+    opening: openingVal,
+    closing: closingVal,
+    delta: Math.round(totalDelta * 10) / 10,
+    outageDays,
+    estimatedDays,
   };
 }
 
-// Cumulative meter growth across an arbitrary [start, end] window, source-
-// aware. Used for per-site billing segments: a vehicle is one physical meter,
-// so its growth while posted to a site is simply closing(window) − opening(window)
-// calculated within its compatible/allowed site sources.
+// Cumulative meter growth within [start, end] for a given meter type.
+export async function computeRunningDelta(
+  assetId: string,
+  meterType: "KM" | "HOURS",
+  start: Date,
+  end: Date,
+  projectCode?: string | null
+): Promise<WindowDeltaResult> {
+  return resolveWindowDelta(assetId, meterType, start, end, projectCode);
+}
+
+// Cumulative meter growth across an arbitrary [start, end] window, source-aware.
 export async function computeWindowDelta(
   assetId: string,
   meterType: "KM" | "HOURS",
   start: Date,
   end: Date,
   projectCode?: string | null
-): Promise<RunningDelta> {
-  const allowedSources = getMeterSourcesForProject(projectCode);
-
-  const closing = await prisma.meterReading.findFirst({
-    where: { 
-      assetId, 
-      readingType: meterType, 
-      readingDate: { lte: end },
-      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {})
-    },
-    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
-  });
-
-  if (!closing) {
-    return { opening: null, closing: null, delta: 0 };
-  }
-
-  const isClosingAbc = closing.source?.startsWith("CEP-03-ABC") ?? false;
-  const compatibilityFilter = isClosingAbc
-    ? { source: { startsWith: "CEP-03-ABC" } }
-    : { NOT: { source: { startsWith: "CEP-03-ABC" } } };
-
-  let opening = await prisma.meterReading.findFirst({
-    where: { 
-      assetId, 
-      readingType: meterType, 
-      readingDate: { lte: start },
-      ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
-      ...compatibilityFilter
-    },
-    orderBy: [{ readingDate: "desc" }, { value: "desc" }],
-  });
-
-  const threshold = new Date(start.getTime() - 31 * 24 * 60 * 60 * 1000);
-  if (!opening || opening.readingDate < threshold) {
-    const fallback = await prisma.meterReading.findFirst({
-      where: { 
-        assetId, 
-        readingType: meterType, 
-        readingDate: { gte: start, lte: end },
-        ...(allowedSources.length > 0 ? { source: { in: allowedSources } } : {}),
-        ...compatibilityFilter
-      },
-      orderBy: [{ readingDate: "asc" }, { value: "asc" }],
-    });
-    if (fallback) {
-      opening = fallback;
-    }
-  }
-
-  // Same rule as computeRunningDelta: a meter that reads lower at the end of the
-  // window than at the start is not a measurement, so report nothing rather than
-  // a pair a client would query.
-  if (opening && closing && closing.value < opening.value) {
-    return { opening: null, closing: null, delta: 0 };
-  }
-
-  let delta = 0;
-  if (opening && closing && closing.value > opening.value) {
-    delta = closing.value - opening.value;
-  }
-  return {
-    opening: opening ? opening.value : null,
-    closing: closing ? closing.value : null,
-    delta,
-  };
+): Promise<WindowDeltaResult> {
+  return resolveWindowDelta(assetId, meterType, start, end, projectCode);
 }
 
 // Total fuel issued + cost for the asset within an arbitrary [start, end]

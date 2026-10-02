@@ -83,11 +83,45 @@ export async function addReadingAction(formData: FormData) {
       }
     }
 
-    // Get the latest reading of the same type for this asset
+    const sourceParam = formData.get("source")?.toString().trim();
+    const isEstimated = formData.get("isEstimated") === "true";
+
+    // Check active outage
+    const openOutage = await prisma.meterOutage.findFirst({
+      where: {
+        assetId: asset.id,
+        endDate: null,
+        startDate: { lte: readingDate },
+      },
+    });
+
+    let source = "MANUAL";
+    if (sourceParam) {
+      source = sourceParam;
+    } else if (isEstimated || openOutage) {
+      source = "GOOGLE_ESTIMATE";
+    }
+
+    // Find latest instrument reset before or on readingDate (start of epoch)
+    const latestReset = await prisma.meterReading.findFirst({
+      where: {
+        assetId: asset.id,
+        readingType: asset.meterType,
+        source: "INSTRUMENT_RESET",
+        readingDate: { lte: readingDate },
+      },
+      orderBy: { readingDate: "desc" },
+    });
+
+    const epochFilter = latestReset ? { readingDate: { gte: latestReset.readingDate } } : {};
+
+    // Get the latest reading of the same type for this asset in the current epoch
     const latestReading = await prisma.meterReading.findFirst({
       where: {
         assetId: asset.id,
         readingType: asset.meterType,
+        readingDate: { lte: readingDate },
+        ...epochFilter,
       },
       orderBy: [
         { value: "desc" },
@@ -95,7 +129,7 @@ export async function addReadingAction(formData: FormData) {
       ]
     });
 
-    if (latestReading && value < latestReading.value) {
+    if (source !== "INSTRUMENT_RESET" && latestReading && value < latestReading.value) {
       if (user.role === "ADMIN" && adminOverride) {
         // Proceed with admin override
       } else {
@@ -114,7 +148,7 @@ export async function addReadingAction(formData: FormData) {
           value,
           readingType: asset.meterType,
           readingDate,
-          source: "MANUAL",
+          source,
           recordedById: user.id,
         },
       });
@@ -125,7 +159,7 @@ export async function addReadingAction(formData: FormData) {
           action: "CREATE",
           entity: "MeterReading",
           entityId: reading.id,
-          summary: `Logged reading ${value} ${asset.meterType} for asset ${asset.code}${adminOverride ? " (Admin Override)" : ""}`,
+          summary: `Logged ${source === "GOOGLE_ESTIMATE" ? "Google-estimated " : ""}reading ${value} ${asset.meterType} for asset ${asset.code}${adminOverride ? " (Admin Override)" : ""}`,
         },
       });
     });

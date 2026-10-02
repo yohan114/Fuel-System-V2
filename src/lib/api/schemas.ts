@@ -117,3 +117,25 @@ export const createServiceRecordSchema = z.object({
 });
 
 export const updateServiceRecordSchema = createServiceRecordSchema.partial();
+
+// Meter Outage Schemas
+export const openMeterOutageSchema = z.object({
+  assetId: z.string().min(1, "Asset ID is required"),
+  startDate: z.string().optional(),
+  reason: z.string().min(1, "Reason is required"),
+  notes: z.string().optional().nullable(),
+});
+
+export const closeMeterOutageSchema = z.object({
+  endDate: z.string().optional(),
+  resolution: z.enum(["repaired", "replaced"]),
+  resumeReading: z.number().nonnegative("Resume reading must be non-negative"),
+  resolutionNotes: z.string().optional().nullable(),
+});
+
+export const editMeterOutageSchema = z.object({
+  startDate: z.string().optional(),
+  reason: z.string().min(1).optional(),
+  notes: z.string().optional().nullable(),
+  resolutionNotes: z.string().optional().nullable(),
+});

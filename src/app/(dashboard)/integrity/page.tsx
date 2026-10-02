@@ -23,6 +23,7 @@ const TYPE_LABELS: Record<string, string> = {
   DUPLICATE_REFUEL: "Duplicate refuel",
   BREAKDOWN_FUELING: "Fueled on breakdown day",
   METER_REGRESSION: "Meter regression",
+  UNREPORTED_METER_OUTAGE: "Unreported meter outage",
 };
 
 export default async function IntegrityPage(props: PageProps) {

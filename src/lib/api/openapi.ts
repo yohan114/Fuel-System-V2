@@ -449,6 +449,110 @@ export function getOpenApiSpec() {
           responses: { 200: { description: "API key revoked" } },
         },
       },
+      "/meter-outages": {
+        get: {
+          summary: "List meter outages with filters and pagination",
+          tags: ["Meter Outages"],
+          parameters: [
+            { name: "assetId", in: "query", schema: { type: "string" } },
+            { name: "status", in: "query", schema: { type: "string", enum: ["open", "closed", "all"] } },
+            { name: "from", in: "query", schema: { type: "string", format: "date" } },
+            { name: "to", in: "query", schema: { type: "string", format: "date" } },
+            { name: "page", in: "query", schema: { type: "integer" } },
+            { name: "perPage", in: "query", schema: { type: "integer" } },
+          ],
+          responses: { 200: { description: "Paginated list of meter outages" } },
+        },
+        post: {
+          summary: "Open a new meter outage for an asset",
+          tags: ["Meter Outages"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["assetId", "reason"],
+                  properties: {
+                    assetId: { type: "string" },
+                    startDate: { type: "string", format: "date" },
+                    reason: { type: "string" },
+                    notes: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: "Meter outage opened" },
+            409: { description: "Asset already has an active meter outage" },
+          },
+        },
+      },
+      "/meter-outages/{id}": {
+        get: {
+          summary: "Get meter outage by ID",
+          tags: ["Meter Outages"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Meter outage details" }, 404: { description: "Not found" } },
+        },
+        patch: {
+          summary: "Edit meter outage details (Admin only)",
+          tags: ["Meter Outages"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    startDate: { type: "string", format: "date" },
+                    reason: { type: "string" },
+                    notes: { type: "string" },
+                    resolutionNotes: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          responses: { 200: { description: "Updated outage details" }, 403: { description: "Admin required" } },
+        },
+        delete: {
+          summary: "Cancel and delete meter outage (Admin only)",
+          tags: ["Meter Outages"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Outage deleted" }, 403: { description: "Admin required" } },
+        },
+      },
+      "/meter-outages/{id}/close": {
+        patch: {
+          summary: "Close an active meter outage and record resume reading",
+          tags: ["Meter Outages"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["resolution", "resumeReading"],
+                  properties: {
+                    endDate: { type: "string", format: "date" },
+                    resolution: { type: "string", enum: ["repaired", "replaced"] },
+                    resumeReading: { type: "number" },
+                    resolutionNotes: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Outage closed and resumption reading created" },
+            400: { description: "Outage already closed or invalid reading" },
+          },
+        },
+      },
     },
   };
 }

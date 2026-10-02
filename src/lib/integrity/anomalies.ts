@@ -12,7 +12,8 @@ export type AnomalyType =
   | "CONSUMPTION_SPIKE"
   | "DUPLICATE_REFUEL"
   | "BREAKDOWN_FUELING"
-  | "METER_REGRESSION";
+  | "METER_REGRESSION"
+  | "UNREPORTED_METER_OUTAGE";
 
 export type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -67,20 +68,39 @@ export async function detectAnomalies(opts: {
     return { findings: [], counts: { high: 0, medium: 0, low: 0, total: 0 } };
   }
 
-  // Batch the breakdown days and readings for all active assets in the window.
-  const [breakdowns, readings] = await Promise.all([
+  // Batch the breakdown days, readings and outages for all active assets in the window.
+  const [breakdowns, readings, outages] = await Promise.all([
     prisma.dailyCondition.findMany({
       where: { assetId: { in: assetIds }, status: "BREAKDOWN", logDate: { gte: from, lte: to } },
       select: { assetId: true, logDate: true },
     }),
     prisma.meterReading.findMany({
       where: { assetId: { in: assetIds }, readingDate: { gte: from, lte: to } },
-      select: { assetId: true, readingType: true, value: true, readingDate: true },
+      select: { assetId: true, readingType: true, value: true, readingDate: true, source: true },
       orderBy: [{ assetId: "asc" }, { readingDate: "asc" }],
+    }),
+    prisma.meterOutage.findMany({
+      where: {
+        assetId: { in: assetIds },
+        startDate: { lte: to },
+        OR: [{ endDate: null }, { endDate: { gte: from } }],
+      },
     }),
   ]);
 
   const breakdownSet = new Set(breakdowns.map((b) => `${b.assetId}|${dayKey(b.logDate)}`));
+
+  const readingsByAsset = new Map<string, typeof readings>();
+  for (const r of readings) {
+    if (!readingsByAsset.has(r.assetId)) readingsByAsset.set(r.assetId, []);
+    readingsByAsset.get(r.assetId)!.push(r);
+  }
+
+  const outagesByAsset = new Map<string, typeof outages>();
+  for (const o of outages) {
+    if (!outagesByAsset.has(o.assetId)) outagesByAsset.set(o.assetId, []);
+    outagesByAsset.get(o.assetId)!.push(o);
+  }
 
   const findings: AnomalyFinding[] = [];
 
@@ -158,9 +178,50 @@ export async function detectAnomalies(opts: {
         });
       }
     }
+
+    // 5. Unreported meter outage: vehicle has fuel issues but no meter readings for >7 days and no open outage.
+    const assetOutages = outagesByAsset.get(assetId) || [];
+    const hasOpenOutage = assetOutages.some((o) => !o.endDate || o.endDate >= to);
+    if (!hasOpenOutage && list.length > 0) {
+      const assetReadings = readingsByAsset.get(assetId) || [];
+      const firstIssue = list[0].issueDate;
+      const lastIssue = list[list.length - 1].issueDate;
+      if (assetReadings.length === 0) {
+        const spanDays = Math.round((lastIssue.getTime() - firstIssue.getTime()) / (24 * 60 * 60 * 1000));
+        if (spanDays >= 7) {
+          findings.push({
+            ...base,
+            type: "UNREPORTED_METER_OUTAGE",
+            severity: "HIGH",
+            message: `Vehicle had ${list.length} fuel issues across ${spanDays} days with no meter readings and no open meter outage.`,
+            date: dayKey(firstIssue),
+          });
+        }
+      } else {
+        const readingTimes = assetReadings.map((r) => r.readingDate.getTime());
+        const unmeteredIssues = list.filter((i) => {
+          const t = i.issueDate.getTime();
+          return !readingTimes.some((rt) => Math.abs(rt - t) <= 7 * 24 * 60 * 60 * 1000);
+        });
+        if (unmeteredIssues.length > 0) {
+          const firstUnmetered = unmeteredIssues[0].issueDate;
+          const lastUnmetered = unmeteredIssues[unmeteredIssues.length - 1].issueDate;
+          const unmeteredSpan = Math.round((lastUnmetered.getTime() - firstUnmetered.getTime()) / (24 * 60 * 60 * 1000));
+          if (unmeteredSpan >= 7) {
+            findings.push({
+              ...base,
+              type: "UNREPORTED_METER_OUTAGE",
+              severity: "HIGH",
+              message: `Vehicle received fuel over ${unmeteredSpan} days without meter readings within 7 days and no open meter outage.`,
+              date: dayKey(firstUnmetered),
+            });
+          }
+        }
+      }
+    }
   }
 
-  // 5. Meter regression: a reading lower than an earlier one (rollback/replacement).
+  // 6. Meter regression: a reading lower than an earlier one (rollback/replacement).
   let curAsset = "";
   let curType = "";
   let maxSeen = -Infinity;
@@ -168,6 +229,11 @@ export async function detectAnomalies(opts: {
     if (r.assetId !== curAsset || r.readingType !== curType) {
       curAsset = r.assetId;
       curType = r.readingType;
+      maxSeen = r.value;
+      continue;
+    }
+    // If instrument was intentionally replaced/reset, reset maxSeen
+    if (r.source === "INSTRUMENT_RESET") {
       maxSeen = r.value;
       continue;
     }

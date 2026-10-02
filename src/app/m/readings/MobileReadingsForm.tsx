@@ -21,6 +21,7 @@ export default function MobileReadingsForm({ assets }: { assets: AssetOption[] }
   const [searchQuery, setSearchQuery] = useState("");
   const [readingValue, setReadingValue] = useState("");
   const [allowLower, setAllowLower] = useState(false);
+  const [isBrokenMeter, setIsBrokenMeter] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -74,6 +75,10 @@ export default function MobileReadingsForm({ assets }: { assets: AssetOption[] }
     formData.append("assetId", selectedAssetId);
     formData.append("value", readingValue);
     formData.append("readingDate", colomboToday);
+    if (isBrokenMeter) {
+      formData.append("isEstimated", "true");
+      formData.append("source", "GOOGLE_ESTIMATE");
+    }
     if (allowLower) formData.append("adminOverride", "true");
 
     startTransition(async () => {
@@ -185,6 +190,40 @@ export default function MobileReadingsForm({ assets }: { assets: AssetOption[] }
             {selectedAsset?.meterType || "KM/HOURS"}
           </span>
         </div>
+
+        {/* Meter status switch */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setIsBrokenMeter(false)}
+            className={`py-1.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+              !isBrokenMeter
+                ? "bg-emerald-600 text-white shadow"
+                : "bg-slate-950 text-slate-400 hover:text-white"
+            }`}
+          >
+            <Gauge className="w-3.5 h-3.5" />
+            Working
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsBrokenMeter(true)}
+            className={`py-1.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+              isBrokenMeter
+                ? "bg-amber-600 text-white shadow"
+                : "bg-slate-950 text-slate-400 hover:text-white"
+            }`}
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            Broken (Google)
+          </button>
+        </div>
+
+        {isBrokenMeter && (
+          <p className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2 rounded-xl border border-amber-500/20">
+            Meter is down. Enter route distance estimated from Google Maps or GPS.
+          </p>
+        )}
 
         <div className="relative">
           <input

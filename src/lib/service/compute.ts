@@ -91,7 +91,23 @@ export async function computeServiceStatus(assetId: string, asOf: Date = new Dat
   let currentMeter: number | null = null;
 
   if (anchorDate) {
-    if (lastService?.meterAtService != null) {
+    const replacementOutage = await prisma.meterOutage.findFirst({
+      where: {
+        assetId,
+        instrumentContinuity: "replaced",
+        endDate: { gte: anchorDate, lte: asOf },
+      },
+    });
+
+    const hasOutages = await prisma.meterOutage.findFirst({
+      where: {
+        assetId,
+        startDate: { lte: asOf },
+        OR: [{ endDate: null }, { endDate: { gte: anchorDate } }],
+      },
+    });
+
+    if (lastService?.meterAtService != null && !hasOutages) {
       // Baseline is the meter read at the service. The current reading is the
       // meter captured on the most recent fuel issue since — fuel issues are by
       // far the densest source of readings in this fleet, denser than the
@@ -110,14 +126,12 @@ export async function computeServiceStatus(assetId: string, asOf: Date = new Dat
         orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }],
         select: { meterReading: true },
       });
-      // Only subtract when both readings come off the same instrument. Some
-      // machines carry two meters — DT-43's service records climb past 190,000
-      // while its fuel issues read 28,600 — and subtracting across them is
-      // meaningless. When that happens the fuel figure below is the evidence.
+      // Only subtract when both readings come off the same instrument.
       const check = meterDeltaUsable({
         meterAtService: lastService.meterAtService,
         currentMeter: latestIssue?.meterReading ?? null,
         meterType: basisMeter,
+        replacementDate: replacementOutage?.endDate ?? null,
       });
       currentMeter = latestIssue?.meterReading ?? null;
       recordedSince = check.usable ? check.delta : null;
@@ -125,7 +139,11 @@ export async function computeServiceStatus(assetId: string, asOf: Date = new Dat
     } else {
       const rd = await computeWindowDelta(assetId, basisMeter, anchorDate, asOf, asset.project?.code);
       recordedSince = rd.delta;
-      meterNote = "no meter was recorded at the last service — measured across the window instead";
+      if (hasOutages) {
+        meterNote = `measured across meter outage window (${rd.estimatedDays} estimated days)`;
+      } else {
+        meterNote = "no meter was recorded at the last service — measured across the window instead";
+      }
     }
 
     // A machine cannot run more than 24 hours a day, and nothing in this fleet

@@ -49,6 +49,8 @@ model User {
 
   serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
   apiKeys          ApiKey[]        @relation("ApiKeyCreatedBy")
+  openedOutages    MeterOutage[]   @relation("MeterOutageOpenedBy")
+  closedOutages    MeterOutage[]   @relation("MeterOutageClosedBy")
 }
 
 model Category {
@@ -160,6 +162,7 @@ model Asset {
   filters       AssetFilter[]
   allocations   VehicleAllocation[]
   billingOverrides BillingSiteOverride[]
+  meterOutages  MeterOutage[]
 }
 
 // A saved, time-bounded posting of one asset to one project/site. This is the
@@ -459,6 +462,34 @@ model MeterReading {
   @@index([assetId, value])
 }
 
+// A period during which a vehicle's physical meter is not working.
+// Google-estimated readings taken during this window belong to the outage;
+// the window closes with a physical reading that either resumes (repair) or
+// restarts (replacement) the instrument.
+model MeterOutage {
+  id                   String    @id @default(uuid())
+
+  assetId              String
+  asset                Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  startDate            DateTime  // Colombo day the meter was last known good
+  openedById           String
+  openedBy             User      @relation("MeterOutageOpenedBy", fields: [openedById], references: [id])
+  reason               String?
+
+  endDate              DateTime? // null = still broken
+  endPhysicalMeter     Float?    // the reading entered when it resumes
+  instrumentContinuity String?   // "repaired" | "replaced"; null while open
+  closedById           String?
+  closedBy             User?     @relation("MeterOutageClosedBy", fields: [closedById], references: [id])
+  closeNote            String?
+
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([assetId, startDate])
+}
+
 model AuditLog {
   id             String    @id @default(uuid())
   action         String    // "CREATE" | "UPDATE" | "DELETE" | "APPROVE" | "REJECT" | "LOGIN" | "PRICE_REFRESH" | "BACKUP"
@@ -748,6 +779,7 @@ model Bill {
 
   // Fuel-derived units (when no meter readings exist)
   derivedFromFuel Boolean @default(false)
+  estimatedMeterDays Int @default(0) // days of the period that used GOOGLE_ESTIMATE
   fuelConsMidRate Float?  // mid consumption rate used (L/hr or L/km)
 
   // Fuel-derived options and raw meter units

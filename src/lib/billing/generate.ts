@@ -396,6 +396,7 @@ export async function generateBillForAsset(
   let openingMeter: number | null = null;
   let closingMeter: number | null = null;
   let actualUnits = 0;
+  let estimatedMeterDays = 0;
   let derivedFromFuel = false;
   let fuelConsMidRate: number | null = null;
 
@@ -405,6 +406,7 @@ export async function generateBillForAsset(
     openingMeter = rd.opening;
     closingMeter = rd.closing;
     actualUnits = rd.delta;
+    estimatedMeterDays = rd.estimatedDays ?? 0;
   } else {
     actualUnits = await countWorkingDays(asset.id, period.start, period.end);
   }
@@ -584,6 +586,7 @@ export async function generateBillForAsset(
     grandTotalCents: totals.grandTotalCents,
     generatedById: opts.actorId ?? null,
     derivedFromFuel,
+    estimatedMeterDays,
     fuelConsMidRate,
     breakdownDays,
     breakdownDeductCents,
@@ -664,6 +667,7 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
   const segInputs: SegmentInput[] = [];
   let openingMeter: number | null = null;
   let closingMeter: number | null = null;
+  let totalEstimatedDays = 0;
   let potLitres = 0;
   let potCents = 0;
   for (const seg of segments) {
@@ -673,6 +677,7 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
       rawUnits = rd.delta;
       if (openingMeter === null && rd.opening != null) openingMeter = rd.opening;
       if (rd.closing != null) closingMeter = rd.closing;
+      totalEstimatedDays += rd.estimatedDays ?? 0;
     } else {
       rawUnits = await countWorkingDays(asset.id, seg.start, seg.end);
     }
@@ -809,6 +814,7 @@ async function persistSegmentedBill(args: SegmentedArgs): Promise<{ status: Gene
     grandTotalCents,
     generatedById: actorId,
     derivedFromFuel,
+    estimatedMeterDays: totalEstimatedDays,
     fuelConsMidRate,
     breakdownDays,
     breakdownDeductCents,

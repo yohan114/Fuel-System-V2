@@ -140,10 +140,22 @@ export function meterDeltaUsable(opts: {
   meterAtService: number | null;
   currentMeter: number | null;
   meterType: string;
+  replacementDate?: Date | string | null;
 }): { usable: boolean; delta: number | null; reason: string } {
-  const { meterAtService, currentMeter, meterType } = opts;
+  const { meterAtService, currentMeter, meterType, replacementDate } = opts;
   if (meterAtService == null || currentMeter == null) {
     return { usable: false, delta: null, reason: "no meter pair to subtract" };
+  }
+  if (replacementDate) {
+    const dStr =
+      typeof replacementDate === "string"
+        ? replacementDate
+        : new Date(replacementDate).toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
+    return {
+      usable: false,
+      delta: null,
+      reason: `meter was replaced on ${dStr}; the two readings are not the same instrument`,
+    };
   }
   if (isAbsurd(meterAtService, meterType) || isAbsurd(currentMeter, meterType)) {
     return { usable: false, delta: null, reason: "one of the readings is not a possible meter value" };

@@ -136,6 +136,13 @@ export default async function AssetDetailPage(props: PageProps) {
     include: { recordedBy: true },
   });
 
+  const meterOutages = await prisma.meterOutage.findMany({
+    where: { assetId: asset.id },
+    include: { openedBy: { select: { name: true } }, closedBy: { select: { name: true } } },
+    orderBy: { startDate: "desc" },
+  });
+  const activeOutage = meterOutages.find((o) => o.endDate === null);
+
   // Service planner data for the Service tab.
   const serviceStatus = await computeServiceStatus(asset.id);
   const serviceRecords = await prisma.serviceRecord.findMany({
@@ -639,39 +646,124 @@ export default async function AssetDetailPage(props: PageProps) {
 
           {/* C. Readings Log */}
           {activeTab === "readings" && (
-            <div className="overflow-x-auto">
-              {readings.length === 0 ? (
-                <div className="text-center py-8 text-xs text-gray-500">No readings found.</div>
-              ) : (
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="text-gray-400 font-semibold border-b border-white/5 pb-2">
-                      <th className="py-3">Date</th>
-                      <th className="py-3">Reading Value ({asset.meterType})</th>
-                      <th className="py-3">Source</th>
-                      <th className="py-3">Logged By</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {readings.map((reading) => (
-                      <tr key={reading.id} className="hover:bg-white/[0.01]">
-                        <td className="py-3.5 text-gray-300 font-medium">
-                          {new Date(reading.readingDate).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })}
-                        </td>
-                        <td className="py-3.5 text-white font-bold font-mono text-sm">
-                          {reading.value.toLocaleString()} {asset.meterType}
-                        </td>
-                        <td className="py-3.5 capitalize">
-                          <span className="bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400">
-                            {reading.source.replace("_", " ")}
-                          </span>
-                        </td>
-                        <td className="py-3.5 text-gray-400">{reading.recordedBy.name}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div className="space-y-6">
+              {activeOutage && (
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold text-amber-300">
+                        Active Meter Outage Since {new Date(activeOutage.startDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                      </div>
+                      <div className="text-[11px] text-amber-200/80 mt-0.5">
+                        Physical meter not working{activeOutage.reason ? `: ${activeOutage.reason}` : ""}. Readings are being estimated.
+                      </div>
+                    </div>
+                  </div>
+                  <Link
+                    href="/readings"
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold"
+                  >
+                    Manage Outage
+                  </Link>
+                </div>
               )}
+
+              {meterOutages.length > 0 && (
+                <div className="bg-[#121420] border border-white/5 rounded-xl p-4">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">
+                    Meter Outage Spans & Instrument History ({meterOutages.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {meterOutages.map((o) => (
+                      <div
+                        key={o.id}
+                        className="bg-white/[0.02] border border-white/5 rounded-lg p-2.5 flex items-center justify-between text-xs"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${o.endDate ? "bg-emerald-400" : "bg-amber-400"}`} />
+                          <span className="text-gray-300">
+                            {new Date(o.startDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                            {" → "}
+                            {o.endDate
+                              ? new Date(o.endDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+                              : "Ongoing (Active)"}
+                          </span>
+                          {o.reason && <span className="text-gray-500 italic">({o.reason})</span>}
+                        </div>
+                        <div className="flex items-center gap-2 font-mono">
+                          {o.instrumentContinuity && (
+                            <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                              o.instrumentContinuity === "replaced"
+                                ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            }`}>
+                              {o.instrumentContinuity}
+                            </span>
+                          )}
+                          {o.endPhysicalMeter !== null && (
+                            <span className="text-white font-bold">
+                              {o.endPhysicalMeter.toLocaleString()} {asset.meterType}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                {readings.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-gray-500">No readings found.</div>
+                ) : (
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="text-gray-400 font-semibold border-b border-white/5 pb-2">
+                        <th className="py-3">Date</th>
+                        <th className="py-3">Reading Value ({asset.meterType})</th>
+                        <th className="py-3">Source</th>
+                        <th className="py-3">Logged By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {readings.map((reading) => {
+                        const s = reading.source;
+                        return (
+                          <tr key={reading.id} className="hover:bg-white/[0.01]">
+                            <td className="py-3.5 text-gray-300 font-medium">
+                              {new Date(reading.readingDate).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" })}
+                            </td>
+                            <td className="py-3.5 text-white font-bold font-mono text-sm">
+                              {reading.value.toLocaleString()} {asset.meterType}
+                            </td>
+                            <td className="py-3.5 whitespace-nowrap">
+                              {s === "GOOGLE_ESTIMATE" ? (
+                                <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded text-[9px] font-bold">
+                                  GOOGLE ESTIMATE
+                                </span>
+                              ) : s === "INSTRUMENT_RESET" ? (
+                                <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2 py-0.5 rounded text-[9px] font-bold">
+                                  NEW METER (RESET)
+                                </span>
+                              ) : s === "REPAIR_RESUME" ? (
+                                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded text-[9px] font-bold">
+                                  REPAIRED RESUME
+                                </span>
+                              ) : (
+                                <span className="bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400">
+                                  {s.replace(/_/g, " ")}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3.5 text-gray-400">{reading.recordedBy.name}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
 

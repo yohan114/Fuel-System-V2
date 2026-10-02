@@ -221,6 +221,7 @@ export default async function ReportsPage(props: PageProps) {
                   <th className="py-2.5">Litres</th>
                   <th className="py-2.5">Total Cost</th>
                   <th className="py-2.5">Actual Meter</th>
+                  <th className="py-2.5">Est. Days</th>
                   <th className="py-2.5">Recommended</th>
                   <th className="py-2.5">Variance</th>
                   <th className="py-2.5 text-right">Economy</th>
@@ -230,8 +231,8 @@ export default async function ReportsPage(props: PageProps) {
                 {data.assetBreakdown.slice(0, 15).map((asset, idx) => {
                   const formattedEff = asset.efficiency !== null
                     ? asset.meterType === "KM"
-                      ? `${asset.efficiency.toFixed(2)} km/L`
-                      : `${asset.efficiency.toFixed(2)} L/hr`
+                    ? `${asset.efficiency.toFixed(2)} km/L`
+                    : `${asset.efficiency.toFixed(2)} L/hr`
                     : "—";
 
                   return (
@@ -255,6 +256,18 @@ export default async function ReportsPage(props: PageProps) {
                       </td>
                       <td className="py-3 text-gray-400 font-mono">
                         {asset.runningDelta > 0 ? `${asset.runningDelta.toLocaleString()} ${asset.meterType}` : "—"}
+                      </td>
+                      <td className="py-3 font-mono">
+                        {asset.estimatedDays > 0 ? (
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                            title={`${asset.estimatedDays} days under meter outage / Google estimation`}
+                          >
+                            {asset.estimatedDays}d
+                          </span>
+                        ) : (
+                          <span className="text-gray-600">—</span>
+                        )}
                       </td>
                       <td className="py-3 text-gray-300 font-mono">
                         {asset.recommended != null

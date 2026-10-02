@@ -59,7 +59,8 @@ export function roleAllowsScope(role: string, requiredScope?: string): boolean {
       requiredScope.startsWith("read:") ||
       requiredScope === "write:fuel" ||
       requiredScope === "write:readings" ||
-      requiredScope === "write:services"
+      requiredScope === "write:services" ||
+      requiredScope === "write:meter-outages"
     );
   }
   if (role === "SITE_PUMP") {
@@ -67,7 +68,8 @@ export function roleAllowsScope(role: string, requiredScope?: string): boolean {
       requiredScope.startsWith("read:") ||
       requiredScope === "write:fuel" ||
       requiredScope === "write:readings" ||
-      requiredScope === "write:conditions"
+      requiredScope === "write:conditions" ||
+      requiredScope === "write:meter-outages"
     );
   }
   if (role === "USER") {

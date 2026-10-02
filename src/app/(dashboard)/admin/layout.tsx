@@ -16,6 +16,7 @@ import {
   FileSpreadsheet,
   FileCode2,
   ShieldCheck,
+  Gauge,
 } from "lucide-react";
 
 interface AdminLayoutProps {
@@ -51,6 +52,7 @@ export default async function AdminLayout({ children }: AdminLayoutProps) {
     { label: "Operational Alerts", href: "/admin/alerts", icon: Bell },
     { label: "Outbound Mail", href: "/admin/mail", icon: Mail },
     { label: "Data Import Hub", href: "/admin/import", icon: FileSpreadsheet },
+    { label: "Meter Outages", href: "/admin/meter-outages", icon: Gauge },
     { label: "API Keys", href: "/admin/api-keys", icon: Key },
     { label: "REST API Docs", href: "/admin/api-docs", icon: FileCode2 },
     { label: "Billing Settings", href: "/admin/billing", icon: Receipt },

@@ -170,8 +170,8 @@ export async function aggregateFuelData(filter: ReportFilter) {
   // back to the LOWEST reading inside the window, same as the original.
   // The "last" reading is the HIGHEST value on or before `to`.
   const assetIdList = Object.keys(assetTotals);
-  const [firstBefore, firstInWindow, lastUpToEnd] = assetIdList.length === 0
-    ? [[], [], []]
+  const [firstBefore, firstInWindow, lastUpToEnd, outages, googleReadings] = assetIdList.length === 0
+    ? [[], [], [], [], []]
     : await Promise.all([
         prisma.meterReading.groupBy({
           by: ["assetId"],
@@ -188,11 +188,38 @@ export async function aggregateFuelData(filter: ReportFilter) {
           where: { assetId: { in: assetIdList }, readingDate: { lte: to } },
           _max: { value: true },
         }),
+        prisma.meterOutage.findMany({
+          where: {
+            assetId: { in: assetIdList },
+            startDate: { lte: to },
+            OR: [{ endDate: null }, { endDate: { gte: from } }],
+          },
+        }),
+        prisma.meterReading.findMany({
+          where: {
+            assetId: { in: assetIdList },
+            source: "GOOGLE_ESTIMATE",
+            readingDate: { gte: from, lte: to },
+          },
+          select: { assetId: true, readingDate: true },
+        }),
       ]);
 
   const firstBeforeMap = new Map(firstBefore.map((r) => [r.assetId, r._max.value]));
   const firstInWindowMap = new Map(firstInWindow.map((r) => [r.assetId, r._min.value]));
   const lastUpToEndMap = new Map(lastUpToEnd.map((r) => [r.assetId, r._max.value]));
+
+  const outagesByAsset = new Map<string, typeof outages>();
+  for (const o of outages) {
+    if (!outagesByAsset.has(o.assetId)) outagesByAsset.set(o.assetId, []);
+    outagesByAsset.get(o.assetId)!.push(o);
+  }
+
+  const googleDatesByAsset = new Map<string, Set<string>>();
+  for (const r of googleReadings) {
+    if (!googleDatesByAsset.has(r.assetId)) googleDatesByAsset.set(r.assetId, new Set());
+    googleDatesByAsset.get(r.assetId)!.add(colomboDayKey(r.readingDate));
+  }
 
   const assetsList = [];
   for (const [aId, total] of Object.entries(assetTotals)) {
@@ -213,6 +240,19 @@ export async function aggregateFuelData(filter: ReportFilter) {
       }
     }
 
+    const assetOutages = outagesByAsset.get(aId) || [];
+    let outageDays = 0;
+    for (const o of assetOutages) {
+      const oStart = o.startDate < from ? from : o.startDate;
+      const oEnd = !o.endDate || o.endDate > to ? to : o.endDate;
+      if (oEnd >= oStart) {
+        const days = Math.ceil((oEnd.getTime() - oStart.getTime()) / (24 * 60 * 60 * 1000));
+        outageDays += Math.max(1, days);
+      }
+    }
+    const gCount = googleDatesByAsset.get(aId)?.size ?? 0;
+    const estimatedDays = Math.max(outageDays, gCount);
+
     const recommended = recommendedUnits(total.litres, total.fuelConsTyp);
     const v = varianceFlag(runningDelta, recommended);
     assetsList.push({
@@ -222,6 +262,7 @@ export async function aggregateFuelData(filter: ReportFilter) {
       recommended,
       variancePct: v.variancePct,
       flag: v.flag,
+      estimatedDays,
     });
   }
 

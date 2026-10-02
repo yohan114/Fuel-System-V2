@@ -503,6 +503,15 @@ export default async function BillDetailPage(props: PageProps) {
         </div>
       )}
 
+      {bill.estimatedMeterDays > 0 && (
+        <div className="bg-amber-500/5 border border-amber-500/15 rounded-2xl p-4 text-xs text-amber-300 flex items-start gap-3">
+          <span className="text-amber-400 font-bold uppercase tracking-wider text-[10px] shrink-0 mt-0.5">Notice</span>
+          <p>
+            {bill.estimatedMeterDays} {bill.estimatedMeterDays === 1 ? "day" : "days"} of this period used Google-estimated distance due to a vehicle meter outage.
+          </p>
+        </div>
+      )}
+
       {bill.notes && (
         <div className="bg-[#121420] border border-white/5 rounded-2xl p-5 text-xs text-gray-400">
           <span className="text-gray-500 font-semibold uppercase tracking-wider text-[10px]">Notes</span>

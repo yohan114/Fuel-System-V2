@@ -151,6 +151,31 @@ export async function collectAlerts(opts: { projectId?: string; isAdmin: boolean
     }
   }
 
+  // 9. Meter down >14 days (open meter outages without resolution).
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+  const longMeterOutages = await prisma.meterOutage.findMany({
+    where: {
+      endDate: null,
+      startDate: { lte: fourteenDaysAgo },
+      ...(projectId ? { asset: { projectId } } : {}),
+    },
+    include: {
+      asset: { select: { code: true } },
+    },
+  });
+
+  if (longMeterOutages.length > 0) {
+    const codes = longMeterOutages.map((o) => o.asset.code);
+    alerts.push({
+      key: "meter-outages-long",
+      category: "DATA",
+      severity: "MEDIUM",
+      title: `${longMeterOutages.length} meter${longMeterOutages.length !== 1 ? "s" : ""} down >14 days`,
+      detail: `Meter outage open >14 days: ${codes.slice(0, 5).join(", ")}${codes.length > 5 ? "…" : ""}. Requires repair or replacement.`,
+      href: "/admin/meter-outages",
+    });
+  }
+
   alerts.sort((a, b) => rank[a.severity] - rank[b.severity]);
   return alerts;
 }

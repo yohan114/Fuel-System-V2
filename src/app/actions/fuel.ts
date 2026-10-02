@@ -219,13 +219,21 @@ export async function approveRequestAction(requestId: string, reviewNote: string
 
       // If a meter reading was supplied, write it as a formal MeterReading record
       if (request.meterReading !== null) {
+        const activeOutage = await tx.meterOutage.findFirst({
+          where: {
+            assetId: request.assetId,
+            endDate: null,
+            startDate: { lte: issueDate },
+          },
+        });
+
         const reading = await tx.meterReading.create({
           data: {
             assetId: request.assetId,
             value: request.meterReading,
             readingType: request.readingType!,
             readingDate: issueDate,
-            source: "FUEL_ISSUE",
+            source: activeOutage ? "GOOGLE_ESTIMATE" : "FUEL_ISSUE",
             recordedById: admin.id,
             linkedIssueId: issue.id,
           },
@@ -412,16 +420,25 @@ export async function recordDirectIssueAction(formData: FormData) {
       });
     }
 
+    // Check if asset has an active outage on issueDate
+    const activeOutage = await prisma.meterOutage.findFirst({
+      where: {
+        assetId: asset.id,
+        endDate: null,
+        startDate: { lte: issueDate },
+      },
+    });
+
     if (meterReading !== null) {
       if (isNaN(meterReading) || meterReading < 0) {
         return { error: "Meter reading must be positive" };
       }
 
-      // Cumulative integrity, against this machine's own FUEL readings only.
-      // Service meters are a different instrument and are excluded — see
-      // src/lib/fuel/meter-guard.ts for why that mattered on 132 machines.
-      const guard = await checkFuelMeter(prisma, asset.id, asset.meterType, meterReading, issueDate);
-      if (!guard.ok) return { error: guard.error! };
+      // If machine is not under an active outage, enforce cumulative integrity
+      if (!activeOutage) {
+        const guard = await checkFuelMeter(prisma, asset.id, asset.meterType, meterReading, issueDate);
+        if (!guard.ok) return { error: guard.error! };
+      }
     }
 
     // Site fuel discipline: block if this would exceed the vehicle's daily cap.
@@ -494,7 +511,7 @@ export async function recordDirectIssueAction(formData: FormData) {
             value: meterReading,
             readingType: asset.meterType,
             readingDate: issueDate,
-            source: "FUEL_ISSUE",
+            source: activeOutage ? "GOOGLE_ESTIMATE" : "FUEL_ISSUE",
             recordedById: admin.id,
             linkedIssueId: issue.id,
           },

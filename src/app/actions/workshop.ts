@@ -610,16 +610,24 @@ export async function workshopIssueFuelAction(formData: FormData) {
       }
     }
 
+    // Check if asset has an active outage on issueDate
+    const activeOutage = await prisma.meterOutage.findFirst({
+      where: {
+        assetId: asset.id,
+        endDate: null,
+        startDate: { lte: issueDate },
+      },
+    });
+
     if (meterReading !== null) {
       if (isNaN(meterReading) || meterReading < 0) {
         return { error: "Odometer/Hour reading must be a positive number." };
       }
 
-      // Cumulative integrity, against this machine's own FUEL readings only.
-      // Service meters are a different instrument and are excluded — see
-      // src/lib/fuel/meter-guard.ts for why that mattered on 132 machines.
-      const guard = await checkFuelMeter(prisma, asset.id, asset.meterType, meterReading, issueDate);
-      if (!guard.ok) return { error: guard.error! };
+      if (!activeOutage) {
+        const guard = await checkFuelMeter(prisma, asset.id, asset.meterType, meterReading, issueDate);
+        if (!guard.ok) return { error: guard.error! };
+      }
     }
 
     // Optional pump/meter photo proof.
@@ -669,7 +677,7 @@ export async function workshopIssueFuelAction(formData: FormData) {
             value: meterReading,
             readingType: asset.meterType,
             readingDate: issueDate,
-            source: "FUEL_ISSUE",
+            source: activeOutage ? "GOOGLE_ESTIMATE" : "FUEL_ISSUE",
             recordedById: user.id,
             linkedIssueId: issue.id,
           },
