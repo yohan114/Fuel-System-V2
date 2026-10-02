@@ -211,3 +211,106 @@ export async function deleteAssetAction(assetId: string) {
     return { error: errorMessage(err) || "Failed to dispose asset" };
   }
 }
+
+// Bulk import assets from parsed CSV rows
+export async function bulkImportAssetsAction(
+  rows: {
+    code: string;
+    brand?: string;
+    model?: string;
+    regNo?: string;
+    categoryCode?: string;
+    meterType?: string;
+    site?: string;
+    dailyCapLitres?: number;
+    billFuelOnly?: boolean;
+  }[]
+) {
+  let admin;
+  try {
+    admin = await assertCan("manage");
+  } catch {
+    return { error: "You are not authorized to import assets" };
+  }
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: "No asset rows provided for import" };
+  }
+
+  try {
+    const categories = await prisma.category.findMany();
+    const catMap = new Map(categories.map((c) => [c.code.toUpperCase(), c.id]));
+    const fallbackCat = categories.find((c) => c.code === "OTHER") || categories[0];
+
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    await prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        const code = row.code?.trim().toUpperCase();
+        if (!code) continue;
+
+        const categoryId =
+          (row.categoryCode && catMap.get(row.categoryCode.toUpperCase())) ||
+          fallbackCat?.id;
+        if (!categoryId) continue;
+
+        const meterType = row.meterType?.toUpperCase() === "HOURS" ? "HOURS" : "KM";
+
+        const existing = await tx.asset.findUnique({ where: { code } });
+        if (existing) {
+          await tx.asset.update({
+            where: { id: existing.id },
+            data: {
+              brand: row.brand?.trim() || existing.brand,
+              model: row.model?.trim() || existing.model,
+              regNo: row.regNo?.trim() || existing.regNo,
+              site: row.site?.trim() || existing.site,
+              dailyCapLitres: row.dailyCapLitres ?? existing.dailyCapLitres,
+              billFuelOnly: row.billFuelOnly ?? existing.billFuelOnly,
+              status: "ACTIVE",
+            },
+          });
+          updatedCount++;
+        } else {
+          await tx.asset.create({
+            data: {
+              code,
+              categoryId,
+              brand: row.brand?.trim() || null,
+              model: row.model?.trim() || null,
+              regNo: row.regNo?.trim() || null,
+              meterType,
+              site: row.site?.trim() || null,
+              dailyCapLitres: row.dailyCapLitres ?? null,
+              billFuelOnly: !!row.billFuelOnly,
+              status: "ACTIVE",
+            },
+          });
+          createdCount++;
+        }
+      }
+
+      await tx.auditLog.create({
+        data: {
+          actorId: admin.id,
+          action: "IMPORT",
+          entity: "Asset",
+          summary: `Bulk imported assets: ${createdCount} created, ${updatedCount} updated`,
+        },
+      });
+    });
+
+    revalidatePath("/fleet");
+    return {
+      success: true,
+      message: `Import complete: ${createdCount} new machines created, ${updatedCount} existing updated.`,
+      createdCount,
+      updatedCount,
+    };
+  } catch (err: unknown) {
+    console.error("Bulk import assets error:", err);
+    return { error: errorMessage(err) || "Failed to bulk import assets" };
+  }
+}
+

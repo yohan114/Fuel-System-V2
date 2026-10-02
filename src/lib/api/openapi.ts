@@ -1,0 +1,454 @@
+export function getOpenApiSpec() {
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "Fuel System V2 REST API",
+      version: "1.0.0",
+      description:
+        "Standardized JSON REST API for Fuel System V2 office, mobile attendant, and external integration operations.",
+      contact: {
+        name: "Engineering Support",
+      },
+    },
+    servers: [
+      {
+        url: "/api/v1",
+        description: "Current environment API v1",
+      },
+    ],
+    components: {
+      securitySchemes: {
+        BearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT or fs_live_* API Key",
+          description: "Supply either an issued API key (`fs_live_...`) or JWT session token.",
+        },
+        CookieAuth: {
+          type: "apiKey",
+          in: "cookie",
+          name: "session",
+          description: "Standard browser session cookie.",
+        },
+      },
+      schemas: {
+        StandardSuccess: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", example: true },
+            data: { type: "object" },
+            meta: { type: "object" },
+          },
+          required: ["ok", "data"],
+        },
+        StandardError: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean", example: false },
+            error: {
+              type: "object",
+              properties: {
+                code: { type: "string", example: "VALIDATION_ERROR" },
+                message: { type: "string", example: "Invalid input provided" },
+                details: { type: "object" },
+              },
+              required: ["code", "message"],
+            },
+          },
+          required: ["ok", "error"],
+        },
+      },
+    },
+    paths: {
+      "/auth/login": {
+        post: {
+          summary: "Authenticate using username and password",
+          tags: ["Auth"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["username", "password"],
+                  properties: {
+                    username: { type: "string" },
+                    password: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Logged in successfully, session JWT returned" },
+            401: { description: "Invalid credentials" },
+          },
+        },
+      },
+      "/auth/logout": {
+        post: {
+          summary: "Log out current session",
+          tags: ["Auth"],
+          responses: { 200: { description: "Logged out" } },
+        },
+      },
+      "/auth/me": {
+        get: {
+          summary: "Get currently authenticated user identity and role",
+          tags: ["Auth"],
+          responses: { 200: { description: "Current user profile" } },
+        },
+      },
+      "/assets": {
+        get: {
+          summary: "List fleet assets with pagination and search",
+          tags: ["Fleet"],
+          parameters: [
+            { name: "page", in: "query", schema: { type: "integer", default: 1 } },
+            { name: "per_page", in: "query", schema: { type: "integer", default: 50 } },
+            { name: "q", in: "query", schema: { type: "string" } },
+            { name: "site", in: "query", schema: { type: "string" } },
+            { name: "meterType", in: "query", schema: { type: "string", enum: ["KM", "HOURS"] } },
+          ],
+          responses: { 200: { description: "Paginated fleet assets" } },
+        },
+        post: {
+          summary: "Create a new fleet asset (Admin only)",
+          tags: ["Fleet"],
+          responses: { 201: { description: "Created asset" } },
+        },
+      },
+      "/assets/{code}": {
+        get: {
+          summary: "Get specific asset details",
+          tags: ["Fleet"],
+          parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Asset details" } },
+        },
+        patch: {
+          summary: "Update asset metadata (Admin only)",
+          tags: ["Fleet"],
+          parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Updated asset" } },
+        },
+        delete: {
+          summary: "Soft-delete asset (status DISPOSED)",
+          tags: ["Fleet"],
+          parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Disposed asset" } },
+        },
+      },
+      "/assets/{code}/fuel": {
+        get: {
+          summary: "Get fuel dispatches for asset",
+          tags: ["Fleet"],
+          parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Fuel issues for asset" } },
+        },
+      },
+      "/assets/{code}/services": {
+        get: {
+          summary: "Get service history records for asset",
+          tags: ["Fleet"],
+          parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Service records for asset" } },
+        },
+      },
+      "/assets/{code}/readings": {
+        get: {
+          summary: "Get meter readings for asset",
+          tags: ["Fleet"],
+          parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Meter readings for asset" } },
+        },
+      },
+      "/fuel/issues": {
+        get: {
+          summary: "List fuel issues across fleet",
+          tags: ["Fuel"],
+          parameters: [
+            { name: "page", in: "query", schema: { type: "integer" } },
+            { name: "per_page", in: "query", schema: { type: "integer" } },
+            { name: "from", in: "query", schema: { type: "string" } },
+            { name: "to", in: "query", schema: { type: "string" } },
+            { name: "tankId", in: "query", schema: { type: "string" } },
+          ],
+          responses: { 200: { description: "List of fuel issues" } },
+        },
+        post: {
+          summary: "Record fuel issue / dispatch",
+          tags: ["Fuel"],
+          responses: { 201: { description: "Created fuel issue" } },
+        },
+      },
+      "/fuel/issues/{id}/void": {
+        post: {
+          summary: "Void a fuel issue with audit explanation (Admin only)",
+          tags: ["Fuel"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Fuel issue voided" } },
+        },
+      },
+      "/fuel/requests": {
+        get: {
+          summary: "List fuel requests",
+          tags: ["Fuel"],
+          responses: { 200: { description: "List of requests" } },
+        },
+        post: {
+          summary: "Submit a new fuel request",
+          tags: ["Fuel"],
+          responses: { 201: { description: "Submitted request" } },
+        },
+      },
+      "/fuel/prices": {
+        get: {
+          summary: "Get national fuel price schedule",
+          tags: ["Fuel"],
+          responses: { 200: { description: "Fuel price schedule" } },
+        },
+        post: {
+          summary: "Create or override fuel price entry (Admin only)",
+          tags: ["Fuel"],
+          responses: { 201: { description: "Created fuel price" } },
+        },
+      },
+      "/tanks": {
+        get: {
+          summary: "List bulk storage tanks and reconciliation status",
+          tags: ["Tanks"],
+          responses: { 200: { description: "List of tanks" } },
+        },
+        post: {
+          summary: "Create a bulk tank (Admin only)",
+          tags: ["Tanks"],
+          responses: { 201: { description: "Created bulk tank" } },
+        },
+      },
+      "/tanks/{id}/dips": {
+        get: {
+          summary: "List physical dip measurements for tank",
+          tags: ["Tanks"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Dips for tank" } },
+        },
+        post: {
+          summary: "Record a physical dip for tank",
+          tags: ["Tanks"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 201: { description: "Recorded tank dip" } },
+        },
+      },
+      "/readings": {
+        get: {
+          summary: "List meter readings",
+          tags: ["Readings & Conditions"],
+          responses: { 200: { description: "Meter readings" } },
+        },
+        post: {
+          summary: "Log a new meter reading",
+          tags: ["Readings & Conditions"],
+          responses: { 201: { description: "Logged meter reading" } },
+        },
+      },
+      "/conditions": {
+        get: {
+          summary: "Get fleet daily working / breakdown condition",
+          tags: ["Readings & Conditions"],
+          parameters: [{ name: "day", in: "query", schema: { type: "string" } }],
+          responses: { 200: { description: "Conditions for day" } },
+        },
+        post: {
+          summary: "Record daily condition (WORKING / BREAKDOWN)",
+          tags: ["Readings & Conditions"],
+          responses: { 200: { description: "Saved condition" } },
+        },
+      },
+      "/services": {
+        get: {
+          summary: "List service records",
+          tags: ["Services"],
+          responses: { 200: { description: "Service records" } },
+        },
+        post: {
+          summary: "Log a new service record",
+          tags: ["Services"],
+          responses: { 201: { description: "Created service record" } },
+        },
+      },
+      "/bills": {
+        get: {
+          summary: "List billing invoices",
+          tags: ["Billing"],
+          parameters: [
+            { name: "ym", in: "query", schema: { type: "string" } },
+            { name: "status", in: "query", schema: { type: "string" } },
+          ],
+          responses: { 200: { description: "List of bills" } },
+        },
+      },
+      "/bills/{id}": {
+        get: {
+          summary: "Get single billing invoice details and line items",
+          tags: ["Billing"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Invoice details" } },
+        },
+      },
+      "/aging": {
+        get: {
+          summary: "Get receivables aging report",
+          tags: ["Billing"],
+          responses: { 200: { description: "Aging report buckets" } },
+        },
+      },
+      "/bills/generate": {
+        post: {
+          summary: "Generate or regenerate all bills for a month (Admin only)",
+          tags: ["Billing"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["year", "month"],
+                  properties: {
+                    year: { type: "integer", example: 2026 },
+                    month: { type: "integer", example: 8 },
+                    regenerate: { type: "boolean" },
+                    basis: { type: "string", enum: ["fw", "w", "d"] },
+                  },
+                },
+              },
+            },
+          },
+          responses: { 200: { description: "Generation outcome summary" } },
+        },
+      },
+      "/bills/{id}/issue": {
+        post: {
+          summary: "Issue a draft bill into a formal invoice (Admin only)",
+          tags: ["Billing"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Invoice issued" } },
+        },
+      },
+      "/bills/{id}/payments": {
+        get: {
+          summary: "List payments received against an invoice",
+          tags: ["Billing"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Payments list" } },
+        },
+        post: {
+          summary: "Record payment against an invoice (Admin only)",
+          tags: ["Billing"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Payment recorded" } },
+        },
+      },
+      "/bills/{id}/revisions": {
+        get: {
+          summary: "Get revision history for an invoice",
+          tags: ["Billing"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Revisions list" } },
+        },
+      },
+      "/bills/{id}/credit-notes": {
+        get: {
+          summary: "List credit notes for an invoice",
+          tags: ["Billing"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Credit notes list" } },
+        },
+        post: {
+          summary: "Draft a credit note against an invoice (Admin only)",
+          tags: ["Billing"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 201: { description: "Credit note drafted" } },
+        },
+      },
+      "/webhooks": {
+        get: {
+          summary: "List configured webhooks (Admin only)",
+          tags: ["Webhooks"],
+          responses: { 200: { description: "List of webhooks" } },
+        },
+        post: {
+          summary: "Register a webhook endpoint (Admin only)",
+          tags: ["Webhooks"],
+          responses: { 201: { description: "Webhook registered" } },
+        },
+      },
+      "/webhooks/{id}": {
+        delete: {
+          summary: "Delete a webhook endpoint (Admin only)",
+          tags: ["Webhooks"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "Webhook deleted" } },
+        },
+      },
+      "/webhooks/test": {
+        post: {
+          summary: "Trigger test webhook ping (Admin only)",
+          tags: ["Webhooks"],
+          responses: { 200: { description: "Test ping sent" } },
+        },
+      },
+      "/reports/fleet": {
+        get: {
+          summary: "Fleet utilization and consumption report",
+          tags: ["Reports"],
+          responses: { 200: { description: "Fleet report metrics" } },
+        },
+      },
+      "/reports/sites": {
+        get: {
+          summary: "Site-wise fuel and billing overview",
+          tags: ["Reports"],
+          responses: { 200: { description: "Site overview" } },
+        },
+      },
+      "/api-keys": {
+        get: {
+          summary: "List issued API keys (Admin only)",
+          tags: ["Admin / API Keys"],
+          responses: { 200: { description: "List of active API keys" } },
+        },
+        post: {
+          summary: "Issue a new API key (Admin only)",
+          tags: ["Admin / API Keys"],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["name"],
+                  properties: {
+                    name: { type: "string" },
+                    scopes: { type: "string", default: "*" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: "API key created. Raw secret returned once." },
+            403: { description: "Forbidden" },
+          },
+        },
+      },
+      "/api-keys/{id}": {
+        delete: {
+          summary: "Revoke an API key (Admin only)",
+          tags: ["Admin / API Keys"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: { 200: { description: "API key revoked" } },
+        },
+      },
+    },
+  };
+}

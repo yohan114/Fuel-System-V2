@@ -29,6 +29,9 @@ import {
   Wrench
 } from "lucide-react";
 
+import { AssetDedicatedEdit } from "./components/AssetDedicatedEdit";
+import { AssetHistoryTimeline, type TimelineEvent } from "./components/AssetHistoryTimeline";
+
 interface PageProps {
   // Catch-all, not a single segment. Some machine codes contain a forward
   // slash — "VR-14/VR-65", "ASP /GE06", "General / Cleaning" — and the ~28
@@ -48,8 +51,23 @@ export default async function AssetDetailPage(props: PageProps) {
   const params = await props.params;
   const searchParams = await props.searchParams;
 
+  const rawSegments = Array.isArray(params.code) ? params.code : [params.code];
+  let subAction: "detail" | "edit" | "history" = "detail";
+  let codeSegments = rawSegments;
+
+  if (rawSegments.length > 1) {
+    const last = rawSegments[rawSegments.length - 1].toLowerCase();
+    if (last === "edit") {
+      subAction = "edit";
+      codeSegments = rawSegments.slice(0, -1);
+    } else if (last === "history") {
+      subAction = "history";
+      codeSegments = rawSegments.slice(0, -1);
+    }
+  }
+
   // Next.js already percent-decodes each segment, so no decodeURIComponent here.
-  const code = (Array.isArray(params.code) ? params.code : [params.code]).join("/");
+  const code = codeSegments.join("/");
   const activeTab = searchParams.tab || "issues";
   const isAdmin = session.role === "ADMIN";
 
@@ -85,6 +103,16 @@ export default async function AssetDetailPage(props: PageProps) {
   // Check project user scope
   if (isSiteUser(session.role) && session.projectId && asset.projectId !== session.projectId) {
     notFound();
+  }
+
+  // Handle dedicated edit view
+  if (subAction === "edit") {
+    if (!isAdmin) notFound();
+    const categories = await prisma.category.findMany({
+      select: { id: true, name: true, code: true },
+      orderBy: { name: "asc" },
+    });
+    return <AssetDedicatedEdit asset={asset} categories={categories} />;
   }
 
   // 2. Fetch logs
@@ -201,6 +229,47 @@ export default async function AssetDetailPage(props: PageProps) {
     }))
     .reverse();
 
+  // Handle dedicated history view
+  if (subAction === "history") {
+    const timelineEvents: TimelineEvent[] = [
+      ...issues.map((i) => ({
+        id: `fuel-${i.id}`,
+        type: "FUEL" as const,
+        date: new Date(i.issueDate),
+        title: `Fuel Issue (${i.litres} L ${i.fuelKind.replace("_", " ")})`,
+        detail: `Dispensed at meter ${i.meterReading ?? "—"} by ${i.issuedBy.name}${i.source ? ` from ${i.source}` : ""}`,
+        value: `Rs. ${(i.totalCost / 100).toLocaleString("en-LK")}`,
+        href: `/fuel/issues/${i.id}`,
+      })),
+      ...serviceRecords.map((s) => ({
+        id: `service-${s.id}`,
+        type: "SERVICE" as const,
+        date: new Date(s.serviceDate),
+        title: `Service (${s.serviceType || "Standard PM"})`,
+        detail: `Meter: ${s.meterAtService ?? "—"} ${s.meterType} · Job #${s.jobNo || "—"} · Recorded by ${s.recordedBy.name}`,
+        value: s.costCents ? `Rs. ${(s.costCents / 100).toLocaleString("en-LK")}` : undefined,
+        href: `/service/record/${s.id}`,
+      })),
+      ...readings.map((r) => ({
+        id: `reading-${r.id}`,
+        type: "READING" as const,
+        date: new Date(r.readingDate),
+        title: `Meter Reading (${r.value} ${r.readingType})`,
+        detail: `Recorded by ${r.recordedBy.name}`,
+        value: `${r.value} ${r.readingType}`,
+      })),
+      ...(breakdownLog?.episodes ?? []).map((b, idx) => ({
+        id: `breakdown-${idx}`,
+        type: "CONDITION" as const,
+        date: new Date(b.startDay),
+        title: `Breakdown Episode (${b.days} day(s))`,
+        detail: b.lastNote || "Reported breakdown on site",
+      })),
+    ].sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    return <AssetHistoryTimeline assetCode={asset.code} events={timelineEvents} />;
+  }
+
   return (
     <div className="space-y-8">
       {/* Breadcrumb & Top Controls */}
@@ -212,7 +281,23 @@ export default async function AssetDetailPage(props: PageProps) {
           <ArrowLeft className="w-4 h-4" />
           Back to Directory
         </Link>
-        {isAdmin && <AssetEditor asset={asset} />}
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/fleet/${asset.code}/history`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-semibold border border-white/10 transition-all"
+          >
+            <History className="w-3.5 h-3.5 text-indigo-400" /> History Timeline
+          </Link>
+          {isAdmin && (
+            <Link
+              href={`/fleet/${asset.code}/edit`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30 text-xs font-semibold border border-indigo-500/20 transition-all"
+            >
+              <Settings className="w-3.5 h-3.5" /> Edit Machine
+            </Link>
+          )}
+          {isAdmin && <AssetEditor asset={asset} />}
+        </div>
       </div>
 
       {/* Hero Specifications Card */}

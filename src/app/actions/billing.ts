@@ -277,7 +277,7 @@ export async function markBillPaidAction(billId: string, formData: FormData) {
     return { error: "You are not authorized to record payments" };
   }
 
-  const paidLkrStr = formData.get("paidLkr")?.toString() || "";
+  const paidLkrStr = formData.get("amount")?.toString() || formData.get("paidLkr")?.toString() || "";
   const paymentRef = formData.get("paymentRef")?.toString().trim() || null;
   const method = formData.get("method")?.toString().trim() || null;
   const paymentNote = formData.get("paymentNote")?.toString().trim() || null;
@@ -330,6 +330,7 @@ export async function markBillPaidAction(billId: string, formData: FormData) {
     });
 
     revalidatePath("/billing");
+    revalidatePath("/billing/payments");
     revalidatePath(`/billing/${billId}`);
     return { success: true, fullyPaid: result.fullyPaid };
   } catch (err: unknown) {
@@ -337,6 +338,14 @@ export async function markBillPaidAction(billId: string, formData: FormData) {
     return { error: errorMessage(err) || "Failed to record payment" };
   }
 }
+
+// Alias for recording a payment from forms containing billId in formData
+export async function recordPaymentAction(formData: FormData) {
+  const billId = formData.get("billId")?.toString();
+  if (!billId) return { error: "Bill ID is required" };
+  return markBillPaidAction(billId, formData);
+}
+
 
 // Bulk-finalize many DRAFT bills into ISSUED invoices in one pass. Skips any
 // that are not DRAFT. Returns per-bill outcomes for the UI.
