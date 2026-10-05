@@ -45,29 +45,29 @@ async function main() {
   console.log(`Target Tank:    ${tank.name} (ID: ${tank.id})`);
   console.log(`Admin User:     ${admin.name} (ID: ${admin.id})`);
 
-  // 2. Locate or create FuelPrice for AUTO_DIESEL @ 30300 cents (Rs. 303.00)
+  // 2. Locate or create FuelPrice for AUTO_DIESEL @ 38200 cents (Rs. 382.00 CEYPETCO)
   let fuelPrice = await prisma.fuelPrice.findFirst({
     where: {
       fuelKind: "AUTO_DIESEL",
-      pricePerLitre: 30300,
+      pricePerLitre: 38200,
     },
     orderBy: { effectiveFrom: "desc" },
   });
 
   if (!fuelPrice) {
-    console.log("Creating FuelPrice record for AUTO_DIESEL @ Rs. 303.00...");
+    console.log("Creating FuelPrice record for AUTO_DIESEL @ Rs. 382.00 (CEYPETCO)...");
     if (APPLY) {
       fuelPrice = await prisma.fuelPrice.create({
         data: {
           fuelKind: "AUTO_DIESEL",
-          pricePerLitre: 30300,
-          effectiveFrom: new Date("2026-09-01T00:00:00+05:30"),
-          source: "MANUAL",
+          pricePerLitre: 38200,
+          effectiveFrom: new Date("2026-08-31T00:00:00+05:30"),
+          source: "CEYPETCO",
           enteredById: admin.id,
         },
       });
     } else {
-      fuelPrice = { id: "mock-price-id", pricePerLitre: 30300, fuelKind: "AUTO_DIESEL", effectiveFrom: new Date() } as any;
+      fuelPrice = { id: "mock-price-id", pricePerLitre: 38200, fuelKind: "AUTO_DIESEL", effectiveFrom: new Date() } as any;
     }
   }
   console.log(`Fuel Price:     Rs. ${(fuelPrice!.pricePerLitre / 100).toFixed(2)}/L (ID: ${fuelPrice!.id})`);
@@ -277,8 +277,8 @@ async function main() {
         assetId: targetAssetId,
         day: ad.day,
         litres: ad.litres,
-        pricePerLitre: 30300,
-        totalCost: Math.round(ad.litres * 30300),
+        pricePerLitre: fuelPrice!.pricePerLitre,
+        totalCost: Math.round(ad.litres * fuelPrice!.pricePerLitre),
         meterReading: reading,
         readingType: inVehicle ? "KM" : "HOURS",
         source: "CEP-03 F (Galagedara) Tank",
@@ -306,8 +306,8 @@ async function main() {
         assetId: peAssetId,
         day: d,
         litres: 30,
-        pricePerLitre: 30300,
-        totalCost: Math.round(30 * 30300),
+        pricePerLitre: fuelPrice!.pricePerLitre,
+        totalCost: Math.round(30 * fuelPrice!.pricePerLitre),
         meterReading: null,
         readingType: "KM",
         source: "CEP-03 F (Galagedara) Tank",

@@ -5,8 +5,13 @@ async function main() {
   console.log("=== UPDATING CEP-03F GALAGEDARA SEPTEMBER FUEL ISSUES TO CEYPETCO ===");
   console.log("==================================================================\n");
 
-  const tank = await prisma.bulkTank.findUnique({
-    where: { id: "cc7612c1-b235-4670-8284-45657874fec6" },
+  const project = await prisma.project.findUnique({
+    where: { code: "CEP-03F" },
+  });
+  if (!project) throw new Error("Project CEP-03F not found!");
+
+  const tank = await prisma.bulkTank.findFirst({
+    where: { projectId: project.id, name: { contains: "Galagedara" } },
   });
   if (!tank) throw new Error("Tank not found!");
 

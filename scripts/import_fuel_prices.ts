@@ -50,7 +50,9 @@ const PRICES: { date: string; autoDiesel: number; superDiesel: number }[] = [
   { date: "2026-03-22", autoDiesel: 382, superDiesel: 443 },
   { date: "2026-04-01", autoDiesel: 382, superDiesel: 443 },
   { date: "2026-05-03", autoDiesel: 392, superDiesel: 458 },
-  { date: "2026-05-31", autoDiesel: 407, superDiesel: 478 }
+  { date: "2026-05-31", autoDiesel: 407, superDiesel: 478 },
+  { date: "2026-08-31", autoDiesel: 382, superDiesel: 478 },
+  { date: "2026-10-01", autoDiesel: 392, superDiesel: 528 }
 ];
 // ─────────────────────────────────────────────────────────────────────────────
 
