@@ -69,7 +69,12 @@ async function main() {
     }
   }
 
-  console.log(`Fuel Price:     Rs. ${(fuelPrice!.pricePerLitre / 100).toFixed(2)}/L (ID: ${fuelPrice!.id})`);
+  if (!fuelPrice) {
+    throw new Error("Unable to resolve or create fuel price for October 2026");
+  }
+  const activeFuelPrice = fuelPrice;
+
+  console.log(`Fuel Price:     Rs. ${(activeFuelPrice.pricePerLitre / 100).toFixed(2)}/L (ID: ${activeFuelPrice.id})`);
 
   // 3. Load DB assets for matching
   const allAssets = await prisma.asset.findMany({
@@ -197,14 +202,14 @@ async function main() {
       const litres = Number(litresVal);
       if (litres <= 0) continue;
 
-      const totalCost = Math.round(litres * fuelPrice.pricePerLitre);
+      const totalCost = Math.round(litres * activeFuelPrice.pricePerLitre);
       const closeMeter = item.closing_meter ? parseFloat(String(item.closing_meter).replace(/,/g, "")) : null;
 
       issuesToCreate.push({
         assetId: matched.id,
         day,
         litres,
-        pricePerLitre: fuelPrice.pricePerLitre,
+        pricePerLitre: activeFuelPrice.pricePerLitre,
         totalCost,
         meterReading: closeMeter && !isNaN(closeMeter) ? closeMeter : null,
         readingType: matched.meterType || "HOURS",
@@ -270,7 +275,7 @@ async function main() {
           issueDate: when,
           assetId: item.assetId,
           issuedById: admin.id,
-          fuelPriceId: fuelPrice.id,
+          fuelPriceId: activeFuelPrice.id,
           bulkTankId: tank.id,
           issuePerson: "CEP-03 F (Galagedara)",
           importKey: item.importKey,
