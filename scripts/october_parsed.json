@@ -1,0 +1,680 @@
+{
+  "month": "2026-10",
+  "total_volume": 4543.0,
+  "items": [
+    {
+      "row": 10,
+      "reg": "LI-3851",
+      "code": "",
+      "type": "3 Cube",
+      "total_tank": 20.0,
+      "days": {
+        "3": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": 0
+    },
+    {
+      "row": 15,
+      "reg": "LO-8349",
+      "code": "",
+      "type": "3.6Cube",
+      "total_tank": 40.0,
+      "days": {
+        "1": 20.0,
+        "3": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 18,
+      "reg": "LO-5981",
+      "code": "",
+      "type": "3.6 Cube",
+      "total_tank": 40.0,
+      "days": {
+        "2": 20.0,
+        "3": 20.0
+      },
+      "opening_meter": "N/W",
+      "closing_meter": "N/W",
+      "running_meter": 0
+    },
+    {
+      "row": 22,
+      "reg": "LO-4824",
+      "code": "",
+      "type": "3.6 Cube",
+      "total_tank": 20.0,
+      "days": {
+        "1": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 25,
+      "reg": "LO-7181",
+      "code": "",
+      "type": "3.6 Cube",
+      "total_tank": 60.0,
+      "days": {
+        "1": 20.0,
+        "2": 20.0,
+        "3": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 27,
+      "reg": "LO-7183",
+      "code": "",
+      "type": "3.6 Cube",
+      "total_tank": 30.0,
+      "days": {
+        "3": 30.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 34,
+      "reg": "LP-1574",
+      "code": "",
+      "type": "3.7 Cube",
+      "total_tank": 40.0,
+      "days": {
+        "1": 20.0,
+        "3": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 35,
+      "reg": "LP-1576",
+      "code": "",
+      "type": "3.7 Cube",
+      "total_tank": 30.0,
+      "days": {
+        "3": 30.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 37,
+      "reg": "LP-1713",
+      "code": "",
+      "type": "3.7 Cube",
+      "total_tank": 50.0,
+      "days": {
+        "2": 30.0,
+        "3": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 45,
+      "reg": "LK-5586",
+      "code": "",
+      "type": "5.0 Cube",
+      "total_tank": 30.0,
+      "days": {
+        "2": 30.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": 0
+    },
+    {
+      "row": 46,
+      "reg": "LO-4925",
+      "code": "",
+      "type": "5.0 Cube",
+      "total_tank": 115.0,
+      "days": {
+        "2": 40.0,
+        "3": 75.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": 0
+    },
+    {
+      "row": 50,
+      "reg": "41-1130",
+      "code": "",
+      "type": "Diesel Bowser",
+      "total_tank": 103.0,
+      "days": {
+        "1": 103.0
+      },
+      "opening_meter": null,
+      "closing_meter": 1,
+      "running_meter": 1
+    },
+    {
+      "row": 52,
+      "reg": "RG-5415",
+      "code": "",
+      "type": "Tractor",
+      "total_tank": 15.0,
+      "days": {
+        "1": 5.0,
+        "2": 5.0,
+        "3": 5.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 63,
+      "reg": "DAI-9770",
+      "code": "",
+      "type": "Mahindra cab",
+      "total_tank": 36.0,
+      "days": {
+        "1": 18.0,
+        "3": 18.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 64,
+      "reg": "DAI-9757",
+      "code": "",
+      "type": "Mahindra cab",
+      "total_tank": 30.0,
+      "days": {
+        "2": 30.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 66,
+      "reg": "325-1030",
+      "code": "",
+      "type": "Hire To Cab",
+      "total_tank": 30.0,
+      "days": {
+        "1": 20.0,
+        "3": 10.0
+      },
+      "opening_meter": "N/W",
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 67,
+      "reg": "PJ-6376",
+      "code": "",
+      "type": "Crew Cab",
+      "total_tank": 12.0,
+      "days": {
+        "1": 12.0
+      },
+      "opening_meter": "N/W",
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 68,
+      "reg": "DAI-9762",
+      "code": "",
+      "type": "Mahindra cab",
+      "total_tank": 24.0,
+      "days": {
+        "1": 24.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 72,
+      "reg": "LN-8277",
+      "code": "",
+      "type": "Boom Truck",
+      "total_tank": 70.0,
+      "days": {
+        "1": 70.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 82,
+      "reg": "ZA-8033",
+      "code": "",
+      "type": "Truck Mixer",
+      "total_tank": 60.0,
+      "days": {
+        "2": 60.0
+      },
+      "opening_meter": 0,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 83,
+      "reg": "ZB-0050",
+      "code": "",
+      "type": "Truck Mixer",
+      "total_tank": 50.0,
+      "days": {
+        "2": 50.0
+      },
+      "opening_meter": 0,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 92,
+      "reg": "41-7225",
+      "code": "",
+      "type": "TO Cab",
+      "total_tank": 26.0,
+      "days": {
+        "3": 26.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 94,
+      "reg": "51-8083",
+      "code": "",
+      "type": "Double Cab",
+      "total_tank": 20.0,
+      "days": {
+        "2": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 95,
+      "reg": "59-5421",
+      "code": "",
+      "type": "",
+      "total_tank": 16.0,
+      "days": {
+        "1": 16.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 96,
+      "reg": "PH-9072",
+      "code": "",
+      "type": "",
+      "total_tank": 109.0,
+      "days": {
+        "1": 74.0,
+        "3": 35.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 97,
+      "reg": "PE-3723 (MR Chinthaka surveyor officer)",
+      "code": "",
+      "type": "",
+      "total_tank": 30.0,
+      "days": {
+        "2": 30.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 99,
+      "reg": "DAG-4969",
+      "code": "",
+      "type": "Hire Bollarow Cab",
+      "total_tank": 20.0,
+      "days": {
+        "1": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 107,
+      "reg": "",
+      "code": "VR-59",
+      "type": "04 Ton Roller",
+      "total_tank": 39.0,
+      "days": {
+        "3": 39.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 108,
+      "reg": "",
+      "code": "SR-18",
+      "type": "10 Ton Roller",
+      "total_tank": 78.0,
+      "days": {
+        "2": 50.0,
+        "3": 28.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 109,
+      "reg": "",
+      "code": "SR-13",
+      "type": "10 Ton Roller",
+      "total_tank": 293.0,
+      "days": {
+        "1": 184.0,
+        "2": 62.0,
+        "3": 47.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 116,
+      "reg": "ZB-4606",
+      "code": "LB-25",
+      "type": "Loader Backho",
+      "total_tank": 90.0,
+      "days": {
+        "1": 30.0,
+        "2": 30.0,
+        "3": 30.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 118,
+      "reg": "ZB-1980",
+      "code": "LB-21",
+      "type": "Loader Backho",
+      "total_tank": 134.0,
+      "days": {
+        "1": 44.0,
+        "2": 41.0,
+        "3": 49.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 121,
+      "reg": "",
+      "code": "SL-24",
+      "type": "Bob Cat",
+      "total_tank": 47.0,
+      "days": {
+        "2": 47.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 124,
+      "reg": "",
+      "code": "WG-08",
+      "type": "Welding Generator",
+      "total_tank": 10.0,
+      "days": {
+        "1": 10.0
+      },
+      "opening_meter": 0,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 143,
+      "reg": "",
+      "code": "GE-117",
+      "type": "Generator",
+      "total_tank": 20.0,
+      "days": {
+        "3": 20.0
+      },
+      "opening_meter": null,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 152,
+      "reg": "N V M Construction",
+      "code": "",
+      "type": "Blating Sub Con",
+      "total_tank": 60.0,
+      "days": {
+        "3": 60.0
+      },
+      "opening_meter": 0,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 154,
+      "reg": "",
+      "code": "HEX-23",
+      "type": "Excavator",
+      "total_tank": 180.0,
+      "days": {
+        "1": 46.0,
+        "2": 59.0,
+        "3": 75.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 156,
+      "reg": "",
+      "code": "HEX-37",
+      "type": "Excavator",
+      "total_tank": 117.0,
+      "days": {
+        "1": 117.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 157,
+      "reg": "",
+      "code": "HEX-45",
+      "type": "Excavator",
+      "total_tank": 178.0,
+      "days": {
+        "1": 75.0,
+        "2": 92.0,
+        "3": 11.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 158,
+      "reg": "",
+      "code": "HEX-26",
+      "type": "Excavator",
+      "total_tank": 321.0,
+      "days": {
+        "1": 103.0,
+        "2": 102.0,
+        "3": 116.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 159,
+      "reg": "",
+      "code": "HEX-33",
+      "type": "Excavator",
+      "total_tank": 299.0,
+      "days": {
+        "1": 110.0,
+        "2": 87.0,
+        "3": 102.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 160,
+      "reg": "",
+      "code": "HEX-17",
+      "type": "Excavator",
+      "total_tank": 204.0,
+      "days": {
+        "1": 89.0,
+        "2": 29.0,
+        "3": 86.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 168,
+      "reg": "ZA-4344",
+      "code": "MG-07",
+      "type": "Motor Grader",
+      "total_tank": 97.0,
+      "days": {
+        "2": 57.0,
+        "3": 40.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 169,
+      "reg": "ZB-2561",
+      "code": "MG-18",
+      "type": "Motor Grader",
+      "total_tank": 50.0,
+      "days": {
+        "3": 50.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 178,
+      "reg": "D-4/D 2",
+      "code": "Hired",
+      "type": "Dozer",
+      "total_tank": 150.0,
+      "days": {
+        "1": 50.0,
+        "2": 50.0,
+        "3": 50.0
+      },
+      "opening_meter": 0,
+      "closing_meter": 0,
+      "running_meter": 0
+    },
+    {
+      "row": 181,
+      "reg": "Transfer to Ruhunu Consruction",
+      "code": "",
+      "type": "",
+      "total_tank": 750.0,
+      "days": {
+        "1": 285.0,
+        "2": 220.0,
+        "3": 245.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 182,
+      "reg": "Transfer to CEP-03 Wadakada",
+      "code": "",
+      "type": "",
+      "total_tank": 200.0,
+      "days": {
+        "2": 100.0,
+        "3": 100.0
+      },
+      "opening_meter": null,
+      "closing_meter": null,
+      "running_meter": null
+    },
+    {
+      "row": 183,
+      "reg": "Transfer Package E",
+      "code": "",
+      "type": "",
+      "total_tank": 100.0,
+      "days": {
+        "2": 100.0
+      },
+      "opening_meter": 0,
+      "closing_meter": 0,
+      "running_meter": 0
+    }
+  ],
+  "receipts": [
+    {
+      "day": 1,
+      "litres": 2000.0
+    },
+    {
+      "day": 2,
+      "litres": 200.0
+    },
+    {
+      "day": 3,
+      "litres": 2100.0
+    }
+  ],
+  "closing_balance": 603.0
+}
