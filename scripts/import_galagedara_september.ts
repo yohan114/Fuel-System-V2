@@ -383,11 +383,28 @@ async function main() {
       }
     }
 
-    // B. Bulk insert FuelIssues
+    // B. Bulk insert or update FuelIssues
     for (const item of issuesToCreate) {
       const when = colomboDate(item.day);
-      await tx.fuelIssue.create({
-        data: {
+      await tx.fuelIssue.upsert({
+        where: { importKey: item.importKey },
+        update: {
+          fuelKind: "AUTO_DIESEL",
+          litres: item.litres,
+          pricePerLitre: item.pricePerLitre,
+          totalCost: item.totalCost,
+          source: item.source,
+          issueDate: when,
+          assetId: item.assetId,
+          issuedById: admin.id,
+          fuelPriceId: activeFuelPrice.id,
+          bulkTankId: tank.id,
+          issuePerson: "CEP-03 F (Galagedara)",
+          meterReading: item.meterReading,
+          readingType: item.readingType,
+          voided: false,
+        },
+        create: {
           fuelKind: "AUTO_DIESEL",
           litres: item.litres,
           pricePerLitre: item.pricePerLitre,
@@ -407,23 +424,32 @@ async function main() {
       });
     }
 
-    // C. Bulk insert Tank Receipts (BulkRequest)
+    // C. Bulk insert Tank Receipts (BulkRequest) - idempotent check
     for (const r of receipts) {
       const when = colomboDate(r.day, 10);
-      await tx.bulkRequest.create({
-        data: {
-          fuelKind: "AUTO_DIESEL",
-          requestedLitres: r.litres,
-          status: "APPROVED",
-          sourceType: "OUTSIDE",
+      const existing = await tx.bulkRequest.findFirst({
+        where: {
           bulkTankId: tank.id,
-          requestedById: admin.id,
-          reviewedById: admin.id,
           createdAt: when,
-          reviewedAt: when,
-          reviewNote: `Fuel Received at Galagedara site tank (${r.litres} L) - September stock ledger`,
+          requestedLitres: r.litres,
         },
       });
+      if (!existing) {
+        await tx.bulkRequest.create({
+          data: {
+            fuelKind: "AUTO_DIESEL",
+            requestedLitres: r.litres,
+            status: "APPROVED",
+            sourceType: "OUTSIDE",
+            bulkTankId: tank.id,
+            requestedById: admin.id,
+            reviewedById: admin.id,
+            createdAt: when,
+            reviewedAt: when,
+            reviewNote: `Fuel Received at Galagedara site tank (${r.litres} L) - September stock ledger`,
+          },
+        });
+      }
     }
 
     // D. Update Tank closing balance to 815 L
