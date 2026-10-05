@@ -23,6 +23,8 @@ interface AdminLayoutProps {
   children: React.ReactNode;
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({ children }: AdminLayoutProps) {
   // Enforce ADMIN role check immediately at the layout level
   try {

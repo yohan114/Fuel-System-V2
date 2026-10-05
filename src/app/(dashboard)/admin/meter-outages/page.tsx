@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import MeterOutagesClient from "./MeterOutagesClient";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminMeterOutagesPage() {
   await requireAdmin();
 

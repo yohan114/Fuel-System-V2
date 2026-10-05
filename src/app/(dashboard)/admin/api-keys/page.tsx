@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import ApiKeyClient from "./ApiKeyClient";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminApiKeysPage() {
   await requireAdmin();
 
