@@ -131,13 +131,13 @@ export async function visibleAssetIdsForUser(
 
   const assigned = await getAssignedAssetIds(user.projectId, date);
 
-  // Legacy fallback: assets pinned to this project that carry no assignment yet.
-  const legacy = await prisma.asset.findMany({
-    where: { projectId: user.projectId, assignments: { none: {} } },
+  // Pinned assets: any vehicle currently assigned to this project via Asset.projectId
+  const pinned = await prisma.asset.findMany({
+    where: { projectId: user.projectId, status: { not: "DISPOSED" } },
     select: { id: true },
   });
 
-  return new Set<string>([...assigned, ...legacy.map((a) => a.id)]);
+  return new Set<string>([...assigned, ...pinned.map((a) => a.id)]);
 }
 
 // Whether a project-scoped user is allowed to log against a specific asset on

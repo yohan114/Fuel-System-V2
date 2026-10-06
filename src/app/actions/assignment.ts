@@ -193,6 +193,10 @@ export async function createAssignmentAction(formData: FormData) {
     revalidatePath("/allocator");
     revalidatePath("/fleet");
     revalidatePath("/readings");
+    revalidatePath("/site");
+    revalidatePath("/sites");
+    revalidatePath("/fuel/issues");
+    revalidatePath("/fuel/requests");
     revalidatePath("/");
     return { success: true };
   } catch (err: unknown) {
@@ -239,7 +243,13 @@ export async function endAssignmentAction(assignmentId: string, endDateStr: stri
     });
 
     revalidatePath("/admin/assignments");
+    revalidatePath("/allocator");
     revalidatePath("/fleet");
+    revalidatePath("/readings");
+    revalidatePath("/site");
+    revalidatePath("/sites");
+    revalidatePath("/fuel/issues");
+    revalidatePath("/fuel/requests");
     revalidatePath("/");
     return { success: true };
   } catch (err: unknown) {

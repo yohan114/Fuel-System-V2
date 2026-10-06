@@ -21,6 +21,8 @@ export default async function SitePumpPage() {
   let tank = null;
   if (session.bulkTankId) {
     tank = await prisma.bulkTank.findUnique({ where: { id: session.bulkTankId } });
+  } else if (session.projectId) {
+    tank = await prisma.bulkTank.findFirst({ where: { projectId: session.projectId } });
   } else if (session.role === "ADMIN") {
     tank = await prisma.bulkTank.findFirst();
   }

@@ -3,7 +3,9 @@
 import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { canUserAccessAsset } from "@/lib/assignments";
-import { isSiteUser } from "@/lib/roles";
+import { isSiteUser, isPumpOperator } from "@/lib/roles";
+import { requireUser } from "@/lib/auth";
+import { resolveIssueAuthority } from "@/lib/fuel/issue-authority";
 import { getPriceForDate } from "@/lib/pricing";
 import { checkDailyCap } from "@/lib/fuel-policy";
 import { extractFileField } from "@/lib/upload";
@@ -324,11 +326,14 @@ export async function rejectRequestAction(requestId: string, reviewNote: string 
   }
 }
 
-// 4. Record Direct Issue (Admin only)
+// 4. Record Direct Issue (Admin or Pump Operator)
 export async function recordDirectIssueAction(formData: FormData) {
-  let admin;
+  let user;
   try {
-    admin = await assertCan("approve"); // Direct issues require admin approval rights
+    user = await requireUser();
+    if (user.role !== "ADMIN" && !isPumpOperator(user.role)) {
+      return { error: "You are not authorized to perform this action" };
+    }
   } catch (err) {
     return { error: "You are not authorized to perform this action" };
   }
@@ -362,7 +367,7 @@ export async function recordDirectIssueAction(formData: FormData) {
   if (process.env.TEST_ENV !== "true") {
     const colomboToday = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
     const issueDay = colomboDayKey(issueDate);
-    const isAdmin = admin.role === "ADMIN";
+    const isAdmin = user.role === "ADMIN";
 
     if (issueDay > colomboToday) {
       return { error: "A fuel issue cannot be dated in the future." };
@@ -420,6 +425,14 @@ export async function recordDirectIssueAction(formData: FormData) {
       });
     }
 
+    // Site-scoped users (e.g. SITE_PUMP) may only issue fuel to vehicles allocated to their site
+    if (isSiteUser(user.role) && user.projectId) {
+      const ok = await canUserAccessAsset(user, asset.id, issueDate);
+      if (!ok) {
+        return { error: "This vehicle is not allocated to your site." };
+      }
+    }
+
     // Check if asset has an active outage on issueDate
     const activeOutage = await prisma.meterOutage.findFirst({
       where: {
@@ -445,14 +458,27 @@ export async function recordDirectIssueAction(formData: FormData) {
     const capError = await checkDailyCap(asset.id, asset.dailyCapLitres, issueDate, litres);
     if (capError) return { error: capError };
 
-    // The pump, where one was named. Litres out of a tank must come off its
-    // balance or the stock figure drifts from what was actually dispensed —
-    // which is how this database came to read 7,856 L at Badalgama against the
-    // site instance's 727 L.
+    // Resolve pump authority: admin can name any pump (or none for station),
+    // while pump operators issue from their own assigned pump.
+    let ownTankId = user.bulkTankId;
+    if (!ownTankId && user.projectId) {
+      const siteTank = await prisma.bulkTank.findFirst({ where: { projectId: user.projectId } });
+      if (siteTank) ownTankId = siteTank.id;
+    }
+    const authority = resolveIssueAuthority({
+      role: user.role,
+      ownTankId,
+      targetTankId: bulkTankId,
+    });
+    if (!authority.allowed) {
+      return { error: authority.error };
+    }
+
     let tank: { id: string; name: string; balance: number; fuelKind: string } | null = null;
-    if (bulkTankId) {
+    const effectiveTankId = authority.tankId;
+    if (effectiveTankId) {
       tank = await prisma.bulkTank.findUnique({
-        where: { id: bulkTankId },
+        where: { id: effectiveTankId },
         select: { id: true, name: true, balance: true, fuelKind: true },
       });
       if (!tank) return { error: "That pump was not found" };
@@ -488,8 +514,8 @@ export async function recordDirectIssueAction(formData: FormData) {
           totalCost,
           source,
           issueDate,
-          issuedById: admin.id,
-          issuePerson: admin.name,
+          issuedById: user.id,
+          issuePerson: user.name,
           fuelPriceId: resolvedPrice.id,
           bulkTankId: tank?.id ?? null,
           ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
@@ -512,7 +538,7 @@ export async function recordDirectIssueAction(formData: FormData) {
             readingType: asset.meterType,
             readingDate: issueDate,
             source: activeOutage ? "GOOGLE_ESTIMATE" : "FUEL_ISSUE",
-            recordedById: admin.id,
+            recordedById: user.id,
             linkedIssueId: issue.id,
           },
         });
@@ -526,7 +552,7 @@ export async function recordDirectIssueAction(formData: FormData) {
         });
       }
 
-      await logFuelIssueChange(tx, admin.id, asset.code, {
+      await logFuelIssueChange(tx, user.id, asset.code, {
         action: "CREATE",
         issueId: issue.id,
         // A creation has no "before", so the fields are recorded as arrivals
@@ -551,6 +577,7 @@ export async function recordDirectIssueAction(formData: FormData) {
 
     revalidatePath("/");
     revalidatePath("/fuel/issues");
+    revalidatePath("/m/issue");
     revalidatePath(`/fleet/${asset.code}`);
     // The pump consoles show a balance this has just moved.
     if (tank) {

@@ -483,9 +483,14 @@ export async function workshopIssueFuelAction(formData: FormData) {
   // to say. The admin's pump panel is the opposite and takes it from the form;
   // resolveIssueAuthority is where the two rules are stated together so they
   // cannot drift into disagreeing about who may move whose stock.
+  let ownTankId = user.bulkTankId;
+  if (!ownTankId && user.projectId) {
+    const siteTank = await prisma.bulkTank.findFirst({ where: { projectId: user.projectId } });
+    if (siteTank) ownTankId = siteTank.id;
+  }
   const authority = resolveIssueAuthority({
     role: user.role,
-    ownTankId: user.bulkTankId,
+    ownTankId,
     targetTankId: null,
   });
   if (!authority.allowed) return { error: authority.error };

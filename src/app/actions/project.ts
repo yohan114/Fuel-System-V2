@@ -142,6 +142,45 @@ export async function assignAssetToProjectAction(assetId: string, projectId: str
       data: { projectId },
     });
 
+    // Keep AssetAssignment in sync with the allocation
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const dayBefore = new Date(todayStart);
+    dayBefore.setDate(dayBefore.getDate() - 1);
+
+    // Close any previous open assignment to a different project
+    const openPriors = await prisma.assetAssignment.findMany({
+      where: { assetId, endDate: null },
+    });
+    for (const prior of openPriors) {
+      if (prior.projectId !== projectId) {
+        await prisma.assetAssignment.update({
+          where: { id: prior.id },
+          data: { endDate: prior.startDate <= dayBefore ? dayBefore : prior.startDate },
+        });
+      }
+    }
+
+    if (projectId) {
+      // Ensure an active ongoing assignment exists for this project
+      const existing = await prisma.assetAssignment.findFirst({
+        where: { assetId, projectId, endDate: null },
+      });
+      if (!existing) {
+        await prisma.assetAssignment.create({
+          data: {
+            assetId,
+            projectId,
+            startDate: todayStart,
+            endDate: null,
+            note: "Assigned via Allocator Console",
+            origin: "MANUAL",
+            createdById: actor.id,
+          },
+        });
+      }
+    }
+
     await prisma.auditLog.create({
       data: {
         actorId: actor.id,
@@ -155,6 +194,10 @@ export async function assignAssetToProjectAction(assetId: string, projectId: str
     revalidatePath("/allocator");
     revalidatePath("/fleet");
     revalidatePath(`/fleet/${asset.code}`);
+    revalidatePath("/site");
+    revalidatePath("/sites");
+    revalidatePath("/fuel/issues");
+    revalidatePath("/fuel/requests");
     revalidatePath("/");
     return { success: true };
   } catch (err: unknown) {
