@@ -35,6 +35,8 @@ export function setFuelWriteAuthorityForTesting(mode: FuelWriteAuthorityMode | n
   testOverrideAuthority = mode;
 }
 
+import { isMaintenanceModeActive, getMaintenanceState } from "@/lib/maintenance/gate";
+
 /**
  * Dispatches an IssueFuel mutation through the authoritative writer.
  *
@@ -46,6 +48,15 @@ export async function dispatchIssueFuel(
   cmd: IssueFuelCommand,
   ctx: CommandContext
 ): Promise<CommandResult<IssueFuelResult>> {
+  if (isMaintenanceModeActive()) {
+    const reason = getMaintenanceState().reason || "Scheduled database cutover in progress";
+    return {
+      success: false,
+      error: `System is in read-only maintenance mode: ${reason}`,
+      code: "MAINTENANCE_WINDOW_ACTIVE",
+    };
+  }
+
   const authority = getFuelWriteAuthority();
 
   if (authority === "REMOTE_API") {
@@ -62,6 +73,15 @@ export async function dispatchVoidFuelIssue(
   cmd: VoidFuelIssueCommand,
   ctx: CommandContext
 ): Promise<CommandResult<VoidFuelIssueResult>> {
+  if (isMaintenanceModeActive()) {
+    const reason = getMaintenanceState().reason || "Scheduled database cutover in progress";
+    return {
+      success: false,
+      error: `System is in read-only maintenance mode: ${reason}`,
+      code: "MAINTENANCE_WINDOW_ACTIVE",
+    };
+  }
+
   const authority = getFuelWriteAuthority();
 
   if (authority === "REMOTE_API") {
