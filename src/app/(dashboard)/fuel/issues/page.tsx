@@ -3,24 +3,25 @@ import React from "react";
 import { FUEL_KINDS } from "@/lib/fuel-kinds";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { indexAssignments, assignedSiteOn } from "@/lib/fuel/site-attribution";
-import { fuelDateTime } from "@/lib/colombo-date";
 import { fuelViewScope } from "@/lib/fuel/view-scope";
-import CorrectionButton from "./CorrectionButton";
-import IssueAdminActions from "./IssueAdminActions";
 import Link from "next/link";
-import { Search, MapPin } from "lucide-react";
+import { Search } from "lucide-react";
 import { assetSearchClause } from "@/lib/fleet/asset-search";
+import { getFuelIssuesPaginated } from "@/lib/fuel/query-issues";
+import FuelIssuesTableClient from "./FuelIssuesTableClient";
 
 interface PageProps {
-  searchParams: Promise<{ q?: string; fuelKind?: string; site?: string; issuedBy?: string; source?: string; tank?: string }>;
+  searchParams: Promise<{
+    q?: string;
+    fuelKind?: string;
+    site?: string;
+    issuedBy?: string;
+    source?: string;
+    tank?: string;
+    page?: string;
+    limit?: string;
+  }>;
 }
-
-const ISSUE_LIMIT = 1000;
-// One pump's whole history is a deliberate request — "show me everything this
-// tank ever issued" — and Marawila alone has over three thousand rows, so the
-// general cap would silently hide most of it.
-const PUMP_LIMIT = 20000;
 
 export default async function FuelIssuesPage(props: PageProps) {
   const session = await getSession();
@@ -106,130 +107,56 @@ export default async function FuelIssuesPage(props: PageProps) {
   }
   Object.assign(where, scopeWhere);
 
-  // 2. Query dispatches (most-recent first, capped)
-  const takeLimit = tankFilter || effectiveSite ? PUMP_LIMIT : ISSUE_LIMIT;
-  let issues = await prisma.fuelIssue.findMany({
-    where,
-    omit: { photoData: true },
-    include: { asset: { include: { project: true } }, issuedBy: true },
-    orderBy: { issueDate: "desc" },
-    take: takeLimit,
-  });
-
-  // The true number behind the cap, so a truncated list says so rather than
-  // looking like the whole story.
-  const rawCandidateCount = await prisma.fuelIssue.count({ where });
-  const isCapped = rawCandidateCount > takeLimit;
-  let matchingTotal = rawCandidateCount;
-  // ?tank= is scoped as well. The rows themselves already fail closed for another
-  // site's pump — the tank clause ANDs with the operator's — but the header reads
-  // the tank directly, so without this it would name a pump the operator has no
-  // rows from and print its stock beside an empty list.
-  const selectedTank =
-    tankFilter && (scope.kind === "all" || pumpSite)
-      ? await prisma.bulkTank.findFirst({
-          where: { id: tankFilter, ...(pumpSite ? { projectId: pumpSite } : {}) },
-          select: { name: true, balance: true, capacity: true, project: { select: { name: true, code: true } } },
-        })
-      : null;
-
-  // 3. Resolve each issue's assigned site (assignment covering the issue date;
-  // fall back to the vehicle's current project pointer).
-  const assetIds = [...new Set(issues.map((i) => i.assetId))];
-  const assignments = await prisma.assetAssignment.findMany({
-    where: { assetId: { in: assetIds } },
-    select: { assetId: true, projectId: true, startDate: true, endDate: true },
-  });
-  const idx = indexAssignments(assignments);
-  const projects = await prisma.project.findMany({ select: { id: true, name: true, code: true }, orderBy: { name: "asc" } });
-  const projById = new Map(projects.map((p) => [p.id, p]));
-  // Same cascade as the site-wise fuel report, so the two screens agree:
-  // the posting on the day, then the site that owns the pump the fuel came out
-  // of, then the vehicle's current site. Without the tank step 973 issues
-  // (133,533 L) showed no site at all and could not be found by site filter,
-  // even though the pump identifies every one of them.
-  const tanks = await prisma.bulkTank.findMany({ select: { id: true, projectId: true } });
-  const tankProject = new Map(tanks.map((t) => [t.id, t.projectId]));
-  const siteOfIssue = (i: (typeof issues)[number]) => {
-    const pid =
-      assignedSiteOn(idx, i.assetId, i.issueDate) ??
-      (i.bulkTankId ? tankProject.get(i.bulkTankId) ?? null : null) ??
-      i.asset.projectId;
-    return pid ? projById.get(pid) ?? (i.asset.project ? { id: pid, name: i.asset.project.name, code: i.asset.project.code } : null) : null;
-  };
-
-  // The allocated-site filter is for a privileged user who picked a site. It must
-  // NOT run for a pump operator: siteOfIssue resolves a visiting machine to the
-  // site it is posted to, so filtering on it would throw away the very rows the
-  // operator dispensed — already scoped correctly in SQL by their tank.
-  if (effectiveSite && !pumpSite) {
-    issues = issues.filter((i) => siteOfIssue(i)?.id === effectiveSite);
-    if (!isCapped) {
-      // When not capped by takeLimit, all candidates were processed so issues.length is exact
-      matchingTotal = issues.length;
-    }
-  }
-
-  // Dropdown option sources. The issuer list obeys the same scope as the log, so
-  // an operator's filter cannot name people at other sites.
-  const [issuerRows, sourceRows] = await Promise.all([
-    prisma.fuelIssue.findMany({ where: scopeWhere, select: { issuedById: true, issuedBy: { select: { name: true } } }, distinct: ["issuedById"], orderBy: { issuedBy: { name: "asc" } } }),
-    prisma.fuelIssue.findMany({ select: { source: true }, distinct: ["source"], orderBy: { source: "asc" } }),
-  ]);
-
-
-
-  // Mark issues that already have a pending correction request.
-  const pendingCorr = await prisma.fuelIssueCorrection.findMany({
-    where: { fuelIssueId: { in: issues.map((i) => i.id) }, status: "PENDING" },
-    select: { fuelIssueId: true },
-  });
-  const pendingSet = new Set(pendingCorr.map((c) => c.fuelIssueId));
-
-  // How many times each issue on screen has been touched, for the badge on the
-  // history button. The trail itself is fetched only when someone opens it.
-  //
-  // Scoped to the ids actually on screen, chunked so no single `in` ever gets
-  // close to SQLite's SQLITE_MAX_VARIABLE_NUMBER (999 on legacy builds, 32766
-  // on current ones — 500 is well under both). The previous "group every
-  // FuelIssue audit row ever written" avoided the parameter risk but grew with
-  // the audit log forever, so the page got slower every month even when the
-  // view was small.
-  const isAdmin = session.role === "ADMIN";
-  const historyCount = new Map<string, number>();
-  const tankName = new Map<string, string>();
-  if (isAdmin) {
-    const CHUNK = 500;
-    const issueIds = issues.map((i) => i.id);
-    const chunks: string[][] = [];
-    for (let k = 0; k < issueIds.length; k += CHUNK) chunks.push(issueIds.slice(k, k + CHUNK));
-
-    const [countChunks, tanks] = await Promise.all([
-      Promise.all(
-        chunks.map((ids) =>
-          prisma.auditLog.groupBy({
-            by: ["entityId"],
-            where: { entity: "FuelIssue", entityId: { in: ids } },
-            _count: { _all: true },
-          }),
-        ),
-      ),
-      prisma.bulkTank.findMany({ select: { id: true, name: true } }),
+  // 2. Query dispatches via Phase 1/2 optimized pagination and narrow projection
+  const [paginatedResult, summaryAggregate, selectedTank, issuerRows, sourceRows, projects] =
+    await Promise.all([
+      getFuelIssuesPaginated({
+        where,
+        page: searchParams.page,
+        limit: searchParams.limit,
+      }),
+      prisma.fuelIssue.aggregate({
+        where: { ...where, voided: false },
+        _sum: { litres: true, totalCost: true },
+      }),
+      tankFilter && (scope.kind === "all" || pumpSite)
+        ? prisma.bulkTank.findFirst({
+            where: { id: tankFilter, ...(pumpSite ? { projectId: pumpSite } : {}) },
+            select: {
+              name: true,
+              balance: true,
+              capacity: true,
+              project: { select: { name: true, code: true } },
+            },
+          })
+        : Promise.resolve(null),
+      isPrivileged
+        ? prisma.fuelIssue.findMany({
+            where: scopeWhere,
+            select: { issuedById: true, issuedBy: { select: { name: true } } },
+            distinct: ["issuedById"],
+            orderBy: { issuedBy: { name: "asc" } },
+          })
+        : Promise.resolve([]),
+      isPrivileged
+        ? prisma.fuelIssue.findMany({
+            select: { source: true },
+            distinct: ["source"],
+            orderBy: { source: "asc" },
+          })
+        : Promise.resolve([]),
+      isPrivileged
+        ? prisma.project.findMany({
+            select: { id: true, name: true, code: true },
+            orderBy: { name: "asc" },
+          })
+        : Promise.resolve([]),
     ]);
-    for (const counts of countChunks) {
-      for (const c of counts) if (c.entityId) historyCount.set(c.entityId, c._count._all);
-    }
-    for (const t of tanks) tankName.set(t.id, t.name);
-  }
 
-  // 3. Compute sums (voided issues don't count toward the filter totals)
-  let totalLitres = 0;
-  let totalCostCents = 0;
-  issues.forEach((issue) => {
-    if (issue.voided) return;
-    totalLitres += issue.litres;
-    totalCostCents += issue.totalCost;
-  });
+  const totalLitres = summaryAggregate._sum.litres || 0;
+  const totalCostCents = summaryAggregate._sum.totalCost || 0;
+  const isAdmin = session.role === "ADMIN";
+  const canCorrect = isPrivileged || session.role === "WORKSHOP" || session.role === "SITE_PUMP";
 
   return (
     <div className="space-y-6">
@@ -246,8 +173,10 @@ export default async function FuelIssuesPage(props: PageProps) {
         </p>
         {selectedTank && (
           <p className="text-[11px] text-gray-500 mt-2">
-            {issues.length.toLocaleString()} issue{issues.length === 1 ? "" : "s"} shown
-            {matchingTotal > issues.length && <> of {matchingTotal.toLocaleString()} — narrow the filters to see the rest</>}
+            {paginatedResult.data.length.toLocaleString()} issue{paginatedResult.data.length === 1 ? "" : "s"} shown
+            {paginatedResult.pagination.totalCount > paginatedResult.data.length && (
+              <> of {paginatedResult.pagination.totalCount.toLocaleString()} matching — use pagination to navigate</>
+            )}
             {" · "}
             <a href="/fuel/issues" className="text-indigo-400 hover:text-indigo-300">clear pump filter</a>
             {" · "}
@@ -357,198 +286,13 @@ export default async function FuelIssuesPage(props: PageProps) {
         </div>
       </div>
 
-      {/* Dispatches List */}
-      {issues.length === 0 ? (
-        <div className="bg-[#121420] border border-white/5 rounded-2xl py-16 text-center text-xs text-gray-500">
-          No dispatches found matching filters.
-        </div>
-      ) : (
-        <div className="bg-[#121420] border border-white/5 rounded-2xl overflow-hidden shadow-xl">
-          {/* The outer box keeps the rounded corners; this inner div is the
-              scroll container. The box used to be overflow-hidden around a
-              w-full table, which is why ten columns crushed into each other on
-              anything short of a very wide monitor — the site cell stacked into
-              four lines and the Action column was clipped off the right edge
-              with no way to reach it. A min-width plus a real scroll container
-              lets the columns keep their size and gives you a bar to get to
-              them. */}
-          <div className="overflow-x-auto overflow-y-auto max-h-[68vh] fuel-log-scroll">
-            <table className="w-full min-w-[1180px] border-collapse text-left text-xs">
-              {/* Fixed widths so the columns do not renegotiate their size on
-                  every page of results — a table whose columns jump as you
-                  scroll is far harder to read down. */}
-              <colgroup>
-                <col className="w-[150px]" />
-                <col className="w-[130px]" />
-                <col className="w-[200px]" />
-                <col className="w-[95px]" />
-                <col className="w-[85px]" />
-                <col className="w-[95px]" />
-                <col className="w-[130px]" />
-                <col className="w-[140px]" />
-                <col className="w-[130px]" />
-                <col className="w-[125px]" />
-              </colgroup>
-            <thead>
-              {/* Sticky, and opaque rather than bg-white/5 — a translucent
-                  header lets the rows scroll visibly through it. */}
-              <tr className="sticky top-0 z-10 bg-[#1b1e2e] text-gray-400 border-b border-white/10 shadow-sm">
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Date</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Asset Code</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Assigned Site</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Fuel Kind</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap text-right">Volume</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap text-right">Pump Price</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap text-right">Total Cost</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Issue Person</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap">Source</th>
-                <th className="px-4 py-3.5 font-semibold whitespace-nowrap text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {issues.map((issue) => (
-                <tr key={issue.id} className={`hover:bg-white/[0.02] transition-colors ${issue.voided ? "opacity-50" : ""}`}>
-                  <td className="px-4 py-3 text-gray-300 font-medium whitespace-nowrap">
-                    {fuelDateTime(issue.issueDate)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/fleet/${issue.asset.code}`}
-                      className={`font-bold tracking-wide transition-colors ${issue.voided ? "text-gray-500 line-through" : "text-white hover:text-indigo-400"}`}
-                    >
-                      {issue.asset.code}
-                    </Link>
-                    {issue.asset.regNo && (
-                      <span className="block text-[10px] text-gray-400 font-medium mt-0.5">{issue.asset.regNo}</span>
-                    )}
-                    {issue.voided && (
-                      <span className="ml-2 bg-red-500/10 text-red-300 border border-red-500/10 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">Voided</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    {(() => {
-                      const s = siteOfIssue(issue);
-                      const drawnElsewhere = s && issue.source && s.code && issue.source.toUpperCase() !== s.code.toUpperCase() && !issue.source.toUpperCase().includes(s.code.toUpperCase());
-                      // Two lines, each truncated, rather than one inline-flex.
-                      // "Badalgama Main Workshop Main pump" is long enough that
-                      // the old single run wrapped into a four-line stack and
-                      // set the height of every row on the page. The full text
-                      // stays available on hover.
-                      return s ? (
-                        <div className="min-w-0">
-                          <span className="flex items-center gap-1 text-gray-300 min-w-0" title={s.name}>
-                            <MapPin className="w-3 h-3 text-indigo-400 shrink-0" />
-                            <span className="truncate">{s.name}</span>
-                          </span>
-                          {drawnElsewhere && (
-                            <span
-                              title={`Fuel drawn at ${issue.source}`}
-                              className="block truncate text-[9px] text-amber-400/70 mt-0.5 pl-4"
-                            >
-                              ↩ {issue.source}
-                            </span>
-                          )}
-                        </div>
-                      ) : <span className="text-gray-600">Unassigned</span>;
-                    })()}
-                  </td>
-                  <td className="px-4 py-3 text-gray-400 capitalize">
-                    {issue.fuelKind.replace("_", " ").toLowerCase()}
-                  </td>
-                  {/* Figures right-aligned and tabular so the decimal points
-                      line up down the column — 100.0 L above 20.0 L above
-                      219.0 L is only scannable if the digits sit under each
-                      other. */}
-                  <td className="px-4 py-3 text-white font-bold whitespace-nowrap text-right tabular-nums">
-                    {issue.litres.toFixed(1)} L
-                  </td>
-                  <td className="px-4 py-3 text-gray-400 whitespace-nowrap text-right tabular-nums">
-                    Rs. {(issue.pricePerLitre / 100).toFixed(2)}
-                  </td>
-                  <td className="px-4 py-3 text-white font-bold whitespace-nowrap text-right tabular-nums">
-                    Rs. {(issue.totalCost / 100).toLocaleString("en-LK", { minimumFractionDigits: 2 })}
-                  </td>
-                  <td className="px-4 py-3 text-gray-300">
-                    <span className="block truncate" title={issue.issuePerson || issue.issuedBy.name}>
-                      {issue.issuePerson || issue.issuedBy.name}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 align-top">
-                    {/* A one-line badge that truncates, not a block that wraps.
-                        "BADALGAMA MAIN WORKSHOP MAIN PUMP" in a narrow column
-                        broke across four lines and stretched the whole row. */}
-                    <span
-                      title={issue.source}
-                      className="block max-w-full truncate bg-white/5 px-2 py-0.5 rounded text-[9px] uppercase font-bold text-gray-400 border border-white/5"
-                    >
-                      {issue.source}
-                    </span>
-                    {issue.photoName && (
-                      <a href={`/api/fuel-issues/${issue.id}/photo`} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-indigo-400 hover:text-indigo-300 text-[10px] font-semibold underline">
-                        photo
-                      </a>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {/* An admin acts directly and the act is recorded; everyone
-                        else asks, and the request is reviewed. Same data, two
-                        different responsibilities. */}
-                    {isAdmin ? (
-                      <IssueAdminActions
-                        issue={{
-                          id: issue.id,
-                          assetCode: issue.asset.code,
-                          litres: issue.litres,
-                          fuelKind: issue.fuelKind,
-                          meterReading: issue.meterReading,
-                          source: issue.source,
-                          issueDate: issue.issueDate.toISOString(),
-                          voided: issue.voided,
-                          bulkTankName: tankName.get(issue.bulkTankId ?? "") ?? null,
-                          tankLocked: !!issue.bulkTankId,
-                        }}
-                        historyCount={historyCount.get(issue.id) ?? 0}
-                      />
-                    ) : issue.voided ? (
-                      <span className="text-[10px] text-gray-600">—</span>
-                    ) : pendingSet.has(issue.id) ? (
-                      <span className="text-[10px] font-semibold text-amber-300/80 bg-amber-500/5 border border-amber-500/10 rounded-lg px-2.5 py-1.5">
-                        Correction pending
-                      </span>
-                    ) : (
-                      <CorrectionButton
-                        issue={{
-                          id: issue.id,
-                          assetCode: issue.asset.code,
-                          litres: issue.litres,
-                          meterReading: issue.meterReading,
-                          readingType: issue.readingType,
-                          fuelKind: issue.fuelKind,
-                          issueDateISO: issue.issueDate.toISOString(),
-                        }}
-                      />
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            </table>
-          </div>
-          {/* Says what you are looking at, and that the table scrolls — a
-              scroll container with no edge cue reads as a short list. */}
-          <div className="px-4 py-2.5 border-t border-white/5 text-[10px] text-gray-500 flex items-center justify-between gap-3">
-            <span>
-              Showing {issues.length.toLocaleString()}
-              {isCapped
-                ? ` of ${issues.length.toLocaleString()}+ issues (capped at latest ${takeLimit.toLocaleString()} records — narrow filters to see older)`
-                : matchingTotal > issues.length
-                ? ` of ${matchingTotal.toLocaleString()} issues`
-                : ` issue${issues.length === 1 ? "" : "s"}`}
-            </span>
-            <span className="hidden sm:inline text-gray-600">Scroll inside the table — the header stays put</span>
-          </div>
-        </div>
-      )}
+      {/* Phase 3: Virtualized & Paginated Dispatches Table */}
+      <FuelIssuesTableClient
+        data={paginatedResult.data}
+        pagination={paginatedResult.pagination}
+        isAdmin={isAdmin}
+        canCorrect={canCorrect}
+      />
     </div>
   );
 }
