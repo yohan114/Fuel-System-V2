@@ -10,6 +10,13 @@ import { getPriceForDate } from "@/lib/pricing";
 import { extractFileField } from "@/lib/upload";
 import { errorMessage } from "@/lib/errors";
 import { checkFuelMeter } from "@/lib/fuel/meter-guard";
+import {
+  deductTankStockAtomically,
+  creditTankStockAtomically,
+  transferTankStockAtomically,
+  formatIdempotencyKey,
+  findExistingIdempotentIssue,
+} from "@/lib/fuel/stock-guard";
 
 // 1. Create Bulk Tank (Admin only)
 export async function createBulkTankAction(formData: FormData) {
@@ -275,17 +282,11 @@ export async function recordBulkRefuelAction(formData: FormData) {
 
     await prisma.$transaction(async (tx) => {
       if (sourceType === "SITE" && sourceTankId) {
-        // Re-read inside the transaction: the source balance can move between
-        // the check above and here, and a transfer must not overdraw it.
-        const source = await tx.bulkTank.findUnique({ where: { id: sourceTankId } });
-        if (!source) throw new Error("The source site tank no longer exists.");
-        if (source.balance < litres) {
-          throw new Error(`${source.name} only has ${source.balance.toFixed(1)}L available.`);
-        }
-        await tx.bulkTank.update({ where: { id: source.id }, data: { balance: { decrement: litres } } });
+        // Atomic transfer: conditionally decrements source only if balance >= litres, then credits dest
+        await transferTankStockAtomically(tx, sourceTankId, tank.id, litres, sourceTank?.name, tank.name);
+      } else {
+        await creditTankStockAtomically(tx, tank.id, litres);
       }
-
-      await tx.bulkTank.update({ where: { id: tank.id }, data: { balance: { increment: litres } } });
 
       // Logged as an already-settled record: recorded and applied by the same
       // person, in the same moment, so the history reads as it happened.
@@ -361,38 +362,28 @@ export async function approveBulkRequestAction(requestId: string, reviewNote: st
       });
 
       if (req.sourceType === "SITE" && req.sourceTankId) {
-        // Inter-site transfer: draw the fuel from the chosen source site tank
-        // and add it to the target tank. Re-check the balance at approval time.
-        const source = req.sourceTank ?? (await tx.bulkTank.findUnique({ where: { id: req.sourceTankId } }));
-        if (!source) {
-          throw new Error("The source site tank no longer exists.");
-        }
-        if (source.balance < req.requestedLitres) {
-          throw new Error(`Insufficient fuel at source "${source.name}". Available: ${source.balance.toFixed(1)}L, requested: ${req.requestedLitres}L.`);
-        }
-        await tx.bulkTank.update({
-          where: { id: source.id },
-          data: { balance: { decrement: req.requestedLitres } },
-        });
-        await tx.bulkTank.update({
-          where: { id: req.bulkTankId },
-          data: { balance: { increment: req.requestedLitres } },
-        });
+        // Inter-site transfer: atomically draw the fuel from source tank with conditional check, then credit destination
+        const sourceName = req.sourceTank?.name;
+        await transferTankStockAtomically(
+          tx,
+          req.sourceTankId,
+          req.bulkTankId,
+          req.requestedLitres,
+          sourceName,
+          req.bulkTank.name
+        );
         await tx.auditLog.create({
           data: {
             actorId: admin.id,
             action: "APPROVE",
             entity: "BulkRequest",
             entityId: requestId,
-            summary: `Approved fuel transfer of ${req.requestedLitres}L from site "${source.name}" to "${req.bulkTank.name}"`,
+            summary: `Approved fuel transfer of ${req.requestedLitres}L from site "${sourceName || "source"}" to "${req.bulkTank.name}"`,
           },
         });
       } else {
-        // Outside purchase: a supplier delivery straight into the target tank.
-        await tx.bulkTank.update({
-          where: { id: req.bulkTankId },
-          data: { balance: { increment: req.requestedLitres } },
-        });
+        // Outside purchase: supplier delivery into target tank
+        await creditTankStockAtomically(tx, req.bulkTankId, req.requestedLitres);
         await tx.auditLog.create({
           data: {
             actorId: admin.id,
@@ -505,6 +496,8 @@ export async function workshopIssueFuelAction(formData: FormData) {
   const reason = formData.get("reason")?.toString() || null;
   const projectId = formData.get("projectId")?.toString() || null;
   const issueDateStr = formData.get("issueDate")?.toString() || null;
+
+  const idempotencyKey = formatIdempotencyKey(formData.get("idempotencyKey")?.toString());
 
   // Fuel issuing is allowed 24/7 — the after-hours reason gate was removed; any
   // reason may be used at any time. Date/time, user, site, vehicle and person
@@ -644,6 +637,17 @@ export async function workshopIssueFuelAction(formData: FormData) {
 
     // Write in transaction
     await prisma.$transaction(async (tx) => {
+      // Replay protection: check client idempotency key
+      if (idempotencyKey) {
+        const existing = await findExistingIdempotentIssue(tx, idempotencyKey);
+        if (existing) {
+          return;
+        }
+      }
+
+      // Deduct atomically with stock balance guard
+      await deductTankStockAtomically(tx, tank.id, litres, tank.name);
+
       // A. Create standard FuelIssue
       const issue = await tx.fuelIssue.create({
         data: {
@@ -660,17 +664,8 @@ export async function workshopIssueFuelAction(formData: FormData) {
           issuePerson: user.name,
           fuelPriceId: resolvedPrice.id,
           bulkTankId: tank.id,
+          importKey: idempotencyKey,
           ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
-        },
-      });
-
-      // B. Decrement tank balance
-      await tx.bulkTank.update({
-        where: { id: tank.id },
-        data: {
-          balance: {
-            decrement: litres,
-          },
         },
       });
 

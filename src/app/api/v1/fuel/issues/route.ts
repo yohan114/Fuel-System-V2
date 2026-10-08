@@ -4,6 +4,12 @@ import { ok, err } from "@/lib/api/respond";
 import { parsePagination, paginationMeta } from "@/lib/api/pagination";
 import { createFuelIssueSchema } from "@/lib/api/schemas";
 import type { Prisma } from "@prisma/client";
+import {
+  deductTankStockAtomically,
+  formatIdempotencyKey,
+  findExistingIdempotentIssue,
+  InsufficientStockError,
+} from "@/lib/fuel/stock-guard";
 
 export async function GET(req: Request) {
   const authResult = await requireApi(req, "read:fuel");
@@ -94,8 +100,24 @@ export async function POST(req: Request) {
       return err("FORBIDDEN", "No user available to record issue", 403);
     }
 
+    const rawKey = data.idempotencyKey || req.headers.get("Idempotency-Key") || req.headers.get("X-Idempotency-Key");
+    const idempotencyKey = formatIdempotencyKey(rawKey);
+
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Create Fuel Issue
+      // Replay protection: check idempotency key
+      if (idempotencyKey) {
+        const existing = await findExistingIdempotentIssue(tx, idempotencyKey);
+        if (existing) {
+          return tx.fuelIssue.findUnique({ where: { id: existing.id } });
+        }
+      }
+
+      // 1. Decrement bulk tank balance atomically if dispensed from a tank
+      if (data.bulkTankId) {
+        await deductTankStockAtomically(tx, data.bulkTankId, data.litres);
+      }
+
+      // 2. Create Fuel Issue
       const issue = await tx.fuelIssue.create({
         data: {
           assetId: data.assetId,
@@ -112,16 +134,9 @@ export async function POST(req: Request) {
           linkedRequestId: data.fuelRequestId ?? null,
           issuedById: actorId,
           fuelPriceId: priceRecord.id,
+          importKey: idempotencyKey,
         },
       });
-
-      // 2. Decrement bulk tank balance if dispensed from a tank
-      if (data.bulkTankId) {
-        await tx.bulkTank.update({
-          where: { id: data.bulkTankId },
-          data: { balance: { decrement: data.litres } },
-        });
-      }
 
       // 3. Record meter reading if provided
       if (data.meterReading !== undefined && data.meterReading !== null) {
@@ -158,6 +173,9 @@ export async function POST(req: Request) {
 
     return ok(result, undefined, 201);
   } catch (error) {
+    if (error instanceof InsufficientStockError) {
+      return err("CONFLICT", error.message, 409);
+    }
     console.error("[api/v1/fuel/issues POST] Error:", error);
     return err("INTERNAL_ERROR", "Failed to record fuel issue", 500);
   }

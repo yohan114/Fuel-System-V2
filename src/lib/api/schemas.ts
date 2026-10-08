@@ -58,6 +58,7 @@ export const createFuelIssueSchema = z.object({
   driverName: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   fuelRequestId: z.string().optional().nullable(),
+  idempotencyKey: z.string().optional().nullable(),
 });
 
 export const voidFuelIssueSchema = z.object({

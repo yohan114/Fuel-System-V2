@@ -14,6 +14,12 @@ import { errorMessage } from "@/lib/errors";
 import { logFuelIssueChange, diffSnapshots, periodKeyFor } from "@/lib/fuel/audit";
 import { colomboDayKey } from "@/lib/colombo-date";
 import { checkFuelMeter } from "@/lib/fuel/meter-guard";
+import {
+  deductTankStockAtomically,
+  adjustTankStockAtomically,
+  formatIdempotencyKey,
+  findExistingIdempotentIssue,
+} from "@/lib/fuel/stock-guard";
 
 // How far back an admin may date a fuel issue before having to say why. A week
 // covers the ordinary case — a site sends its sheets in on Monday — without
@@ -348,6 +354,7 @@ export async function recordDirectIssueAction(formData: FormData) {
   // purchase — real, and no tank to draw down.
   const bulkTankId = formData.get("bulkTankId")?.toString().trim() || null;
   const backdateReason = formData.get("backdateReason")?.toString().trim() || null;
+  const idempotencyKey = formatIdempotencyKey(formData.get("idempotencyKey")?.toString());
 
   if (!assetId || !fuelKind || !litresStr || !dateStr) {
     return { error: "Please fill in all required fields" };
@@ -502,6 +509,19 @@ export async function recordDirectIssueAction(formData: FormData) {
     const totalCost = Math.round(litres * resolvedPrice.pricePerLitre);
 
     await prisma.$transaction(async (tx) => {
+      // Replay protection: check client idempotency key
+      if (idempotencyKey) {
+        const existing = await findExistingIdempotentIssue(tx, idempotencyKey);
+        if (existing) {
+          return;
+        }
+      }
+
+      // Deduct atomically from tank if dispensed from bulk
+      if (tank) {
+        await deductTankStockAtomically(tx, tank.id, litres, tank.name);
+      }
+
       // Create issue
       const issue = await tx.fuelIssue.create({
         data: {
@@ -518,16 +538,10 @@ export async function recordDirectIssueAction(formData: FormData) {
           issuePerson: user.name,
           fuelPriceId: resolvedPrice.id,
           bulkTankId: tank?.id ?? null,
+          importKey: idempotencyKey,
           ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
         },
       });
-
-      if (tank) {
-        await tx.bulkTank.update({
-          where: { id: tank.id },
-          data: { balance: { decrement: litres } },
-        });
-      }
 
       // Log meter reading if provided
       if (meterReading !== null) {
@@ -718,16 +732,9 @@ export async function editFuelIssueAction(issueId: string, formData: FormData) {
 
     // 5. Update inside transaction
     await prisma.$transaction(async (tx) => {
-      // Update bulk tank balance if needed
+      // Update bulk tank balance atomically if needed
       if (bulkTankToUpdate && balanceChange !== 0) {
-        await tx.bulkTank.update({
-          where: { id: bulkTankToUpdate.id },
-          data: {
-            balance: {
-              increment: balanceChange
-            }
-          }
-        });
+        await adjustTankStockAtomically(tx, bulkTankToUpdate.id, balanceChange, bulkTankToUpdate.name);
       }
 
       // Update or create linked MeterReading record

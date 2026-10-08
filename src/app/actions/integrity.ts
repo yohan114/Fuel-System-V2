@@ -4,6 +4,10 @@ import { prisma } from "@/lib/db";
 import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { errorMessage } from "@/lib/errors";
+import {
+  transferTankStockAtomically,
+  creditTankStockAtomically,
+} from "@/lib/fuel/stock-guard";
 
 // Records a physical bulk-tank dip and snapshots the system balance so the
 // variance (shrinkage/overage) is captured at the moment of measurement.
@@ -160,19 +164,17 @@ export async function approveBulkRequestAction(requestId: string) {
       if (req.status !== "PENDING") throw new Error("Request already processed");
 
       if (req.sourceType === "SITE" && req.sourceTankId) {
-        if (!req.sourceTank || req.sourceTank.balance < req.requestedLitres) {
-          throw new Error(`Insufficient fuel in source tank (${req.sourceTank?.balance ?? 0} L available)`);
-        }
-        await tx.bulkTank.update({
-          where: { id: req.sourceTankId },
-          data: { balance: { decrement: req.requestedLitres } },
-        });
+        await transferTankStockAtomically(
+          tx,
+          req.sourceTankId,
+          req.bulkTankId,
+          req.requestedLitres,
+          req.sourceTank?.name,
+          req.bulkTank.name
+        );
+      } else {
+        await creditTankStockAtomically(tx, req.bulkTankId, req.requestedLitres);
       }
-
-      await tx.bulkTank.update({
-        where: { id: req.bulkTankId },
-        data: { balance: { increment: req.requestedLitres } },
-      });
 
       await tx.bulkRequest.update({
         where: { id: requestId },

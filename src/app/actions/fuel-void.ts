@@ -7,6 +7,7 @@ import { errorMessage } from "@/lib/errors";
 import { logFuelIssueChange, periodKeyFor } from "@/lib/fuel/audit";
 import { resolvePeriod } from "@/lib/billing/period";
 import { generateBillForAsset } from "@/lib/billing/generate";
+import { adjustTankStockAtomically } from "@/lib/fuel/stock-guard";
 
 // Taking a fuel issue out of the books, and putting it back.
 //
@@ -176,10 +177,7 @@ async function setVoided(issueId: string, voided: boolean, reason: string | null
       });
 
       if (issue.bulkTankId) {
-        await tx.bulkTank.update({
-          where: { id: issue.bulkTankId },
-          data: { balance: { increment: delta } },
-        });
+        await adjustTankStockAtomically(tx, issue.bulkTankId, delta, issue.bulkTank?.name);
       }
 
       await logFuelIssueChange(tx, admin.id, issue.asset.code, {

@@ -8,6 +8,10 @@ import { canUserAccessAsset, getActiveAssignment } from "@/lib/assignments";
 import { getPriceForDate } from "@/lib/pricing";
 import { revalidatePath } from "next/cache";
 import { errorMessage } from "@/lib/errors";
+import {
+  creditTankStockAtomically,
+  adjustTankStockAtomically,
+} from "@/lib/fuel/stock-guard";
 
 const ALLOWED_MIME = (m: string) => m.startsWith("image/") || m === "application/pdf";
 const MAX_DOC_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -192,10 +196,7 @@ export async function approveCorrectionAction(correctionId: string, reviewNote: 
         // Return the issued fuel to the bulk tank it was drawn from — issuing
         // decremented the tank balance, so voiding must add it back.
         if (issue.bulkTankId) {
-          await tx.bulkTank.update({
-            where: { id: issue.bulkTankId },
-            data: { balance: { increment: issue.litres } },
-          });
+          await creditTankStockAtomically(tx, issue.bulkTankId, issue.litres);
         }
         summary = `Voided ${corr.assetCode} fuel issue of ${issue.litres}L (${corr.projectCode ?? "—"})`;
       } else {
@@ -242,10 +243,7 @@ export async function approveCorrectionAction(correctionId: string, reviewNote: 
         if (issue.bulkTankId && corr.newLitres !== null) {
           const delta = issue.litres - finalLitres; // >0 returns fuel to the tank
           if (delta !== 0) {
-            await tx.bulkTank.update({
-              where: { id: issue.bulkTankId },
-              data: { balance: { increment: delta } },
-            });
+            await adjustTankStockAtomically(tx, issue.bulkTankId, delta);
           }
         }
 
