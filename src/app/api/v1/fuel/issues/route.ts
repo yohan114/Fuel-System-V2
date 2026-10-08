@@ -5,11 +5,10 @@ import { parsePagination, paginationMeta } from "@/lib/api/pagination";
 import { createFuelIssueSchema } from "@/lib/api/schemas";
 import type { Prisma } from "@prisma/client";
 import {
-  deductTankStockAtomically,
   formatIdempotencyKey,
-  findExistingIdempotentIssue,
   InsufficientStockError,
 } from "@/lib/fuel/stock-guard";
+import { executeIssueFuel } from "@/lib/commands";
 
 export async function GET(req: Request) {
   const authResult = await requireApi(req, "read:fuel");
@@ -71,107 +70,55 @@ export async function POST(req: Request) {
     const data = parsed.data;
     const issueDate = data.issueDate ? new Date(data.issueDate) : new Date();
 
-    const asset = await prisma.asset.findUnique({
-      where: { id: data.assetId },
-      include: { project: true },
-    });
-
-    if (!asset) {
-      return err("NOT_FOUND", "Asset not found", 404);
-    }
-
-    // Resolve price
-    const priceRecord = await prisma.fuelPrice.findFirst({
-      where: {
-        fuelKind: data.fuelKind,
-        effectiveFrom: { lte: issueDate },
-      },
-      orderBy: { effectiveFrom: "desc" },
-    });
-
-    if (!priceRecord) {
-      return err("BAD_REQUEST", `No effective price found for fuel kind '${data.fuelKind}'`, 400);
-    }
-
-    const totalCost = Math.round(data.litres * priceRecord.pricePerLitre);
-
     const actorId = auth.user?.id || (await prisma.user.findFirst({ select: { id: true } }))?.id;
     if (!actorId) {
       return err("FORBIDDEN", "No user available to record issue", 403);
     }
 
     const rawKey = data.idempotencyKey || req.headers.get("Idempotency-Key") || req.headers.get("X-Idempotency-Key");
-    const idempotencyKey = formatIdempotencyKey(rawKey);
 
-    const result = await prisma.$transaction(async (tx) => {
-      // Replay protection: check idempotency key
-      if (idempotencyKey) {
-        const existing = await findExistingIdempotentIssue(tx, idempotencyKey);
-        if (existing) {
-          return tx.fuelIssue.findUnique({ where: { id: existing.id } });
-        }
+    const cmdResult = await executeIssueFuel(
+      {
+        assetIdOrCode: data.assetId,
+        fuelKind: data.fuelKind,
+        litres: data.litres,
+        issueDate,
+        meterReading: data.meterReading ?? null,
+        readingType: data.readingType,
+        bulkTankId: data.bulkTankId ?? null,
+        driverName: data.driverName,
+        fuelRequestId: data.fuelRequestId,
+        source: data.source,
+        idempotencyKey: rawKey,
+      },
+      {
+        actorId,
+        actorName: auth.user?.name ?? null,
+        role: auth.role,
+        projectId: auth.user?.projectId ?? null,
+        bulkTankId: auth.user?.bulkTankId ?? null,
       }
+    );
 
-      // 1. Decrement bulk tank balance atomically if dispensed from a tank
-      if (data.bulkTankId) {
-        await deductTankStockAtomically(tx, data.bulkTankId, data.litres);
+    if (!cmdResult.success) {
+      if (cmdResult.code === "INSUFFICIENT_STOCK") {
+        return err("CONFLICT", cmdResult.error, 409);
       }
-
-      // 2. Create Fuel Issue
-      const issue = await tx.fuelIssue.create({
-        data: {
-          assetId: data.assetId,
-          litres: data.litres,
-          fuelKind: data.fuelKind,
-          pricePerLitre: priceRecord.pricePerLitre,
-          totalCost,
-          meterReading: data.meterReading ?? null,
-          readingType: data.readingType ?? asset.meterType,
-          source: data.source,
-          bulkTankId: data.bulkTankId ?? null,
-          issueDate,
-          issuePerson: data.driverName ?? auth.user?.name ?? null,
-          linkedRequestId: data.fuelRequestId ?? null,
-          issuedById: actorId,
-          fuelPriceId: priceRecord.id,
-          importKey: idempotencyKey,
-        },
-      });
-
-      // 3. Record meter reading if provided
-      if (data.meterReading !== undefined && data.meterReading !== null) {
-        const mr = await tx.meterReading.create({
-          data: {
-            assetId: data.assetId,
-            value: data.meterReading,
-            readingType: data.readingType ?? asset.meterType,
-            readingDate: issueDate,
-            source: "FUEL_ISSUE",
-            recordedById: actorId,
-            linkedIssueId: issue.id,
-          },
-        });
-        await tx.fuelIssue.update({
-          where: { id: issue.id },
-          data: { meterReadingRecordId: mr.id },
-        });
+      if (cmdResult.code === "FORBIDDEN" || cmdResult.code === "UNAUTHORIZED_PUMP") {
+        return err("FORBIDDEN", cmdResult.error, 403);
       }
+      return err(cmdResult.code || "BAD_REQUEST", cmdResult.error, 400);
+    }
 
-      // 4. Audit Log
-      await tx.auditLog.create({
-        data: {
-          actorId: auth.user?.id ?? null,
-          action: "CREATE_FUEL_ISSUE",
-          entity: "FuelIssue",
-          entityId: issue.id,
-          summary: `Dispensed ${data.litres}L of ${data.fuelKind} to ${asset.code} at Rs. ${(priceRecord.pricePerLitre / 100).toFixed(2)}/L`,
-        },
-      });
-
-      return issue;
+    const created = await prisma.fuelIssue.findUnique({
+      where: { id: cmdResult.data.issueId },
+      include: {
+        asset: { select: { id: true, code: true, regNo: true } },
+        bulkTank: { select: { id: true, name: true } },
+      },
     });
 
-    return ok(result, undefined, 201);
+    return ok(created, undefined, 201);
   } catch (error) {
     if (error instanceof InsufficientStockError) {
       return err("CONFLICT", error.message, 409);

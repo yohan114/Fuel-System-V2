@@ -164,10 +164,24 @@ export function formatIdempotencyKey(rawKey: string | null | undefined): string 
 export async function findExistingIdempotentIssue(
   tx: any,
   formattedKey: string | null
-): Promise<{ id: string; litres: number; assetId: string } | null> {
+): Promise<{
+  id: string;
+  litres: number;
+  assetId: string;
+  fuelKind?: string;
+  totalCost?: number;
+  pricePerLitre?: number;
+} | null> {
   if (!formattedKey) return null;
   return tx.fuelIssue.findUnique({
     where: { importKey: formattedKey },
-    select: { id: true, litres: true, assetId: true },
+    select: {
+      id: true,
+      litres: true,
+      assetId: true,
+      fuelKind: true,
+      totalCost: true,
+      pricePerLitre: true,
+    },
   });
 }

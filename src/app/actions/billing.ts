@@ -13,6 +13,7 @@ import {
   sweepOverdueBills,
 } from "@/lib/billing/generate";
 import { errorMessage } from "@/lib/errors";
+import { executeIssueInvoice } from "@/lib/commands";
 
 const MODES = ["hourly", "perkm", "perday"];
 const BASES = ["fw", "w", "d"];
@@ -193,63 +194,30 @@ export async function finalizeBillAction(billId: string, overrideReason?: string
   let admin;
   try {
     admin = await assertCan("manage");
+    if (admin.role !== "ADMIN") return { error: "You are not authorized to issue invoices" };
   } catch {
     return { error: "You are not authorized to issue invoices" };
   }
 
   try {
-    const cfg = await getBillingConfig();
+    const result = await executeIssueInvoice(
+      { billId, overrideReason },
+      {
+        actorId: admin.id,
+        actorName: admin.name,
+        role: admin.role,
+        projectId: admin.projectId,
+      }
+    );
 
-    // Gate: a bill that needs clarification (meter vs fuel, or unpriced fuel)
-    // cannot be issued unless the admin supplies an override reason, which is
-    // recorded on the invoice and in the audit log.
-    const draft = await prisma.bill.findUnique({ where: { id: billId } });
-    if (!draft) return { error: "Bill not found" };
-    if (draft.status !== "DRAFT") return { error: "Only draft bills can be issued" };
-    const reasons = billClarifyReasons(draft);
-    const reason = overrideReason?.trim();
-    if (reasons.length > 0 && !reason) {
-      return { blocked: true as const, reasons };
+    if (!result.success) {
+      if (result.blocked) {
+        return { blocked: true as const, reasons: result.reasons ?? [] };
+      }
+      return { error: result.error };
     }
 
-    const invoiceNumber = await prisma.$transaction(async (tx) => {
-      const bill = await tx.bill.findUnique({ where: { id: billId } });
-      if (!bill) throw new Error("Bill not found");
-      if (bill.status !== "DRAFT") throw new Error("Only draft bills can be issued");
-
-      const number = await nextInvoiceNumber(tx, cfg.invoicePrefix, bill.year);
-
-      const issuedDate = new Date();
-      const dueDate = new Date(issuedDate.getTime() + cfg.dueDays * 24 * 60 * 60 * 1000);
-
-      const overrideNote =
-        reasons.length > 0 && reason
-          ? `${bill.notes ? bill.notes + " · " : ""}Issued with override: ${reason}`
-          : bill.notes;
-
-      await tx.bill.update({
-        where: { id: billId },
-        data: { status: "ISSUED", invoiceNumber: number, issuedDate, dueDate, notes: overrideNote },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          actorId: admin.id,
-          action: "UPDATE",
-          entity: "Bill",
-          entityId: billId,
-          summary:
-            reasons.length > 0 && reason
-              ? `Issued invoice ${number} for ${bill.assetCode} (${bill.periodKey}) — OVERRIDE despite ${reasons.length} clarification flag(s): ${reason}`
-              : `Issued invoice ${number} for ${bill.assetCode} (${bill.periodKey})`,
-        },
-      });
-      return number;
-    });
-
-    // Optional: auto-email the freshly issued invoice to the site contact.
-    // Best-effort — a mail hiccup must never undo a successful issue, so we
-    // swallow anything the delivery reports and just surface who it reached.
+    const cfg = await getBillingConfig();
     let emailedTo: string | undefined;
     if (cfg.autoEmailOnIssue) {
       const mail = await deliverInvoiceEmail(billId, admin.id);
@@ -258,7 +226,7 @@ export async function finalizeBillAction(billId: string, overrideReason?: string
 
     revalidatePath("/billing");
     revalidatePath(`/billing/${billId}`);
-    return { success: true, invoiceNumber, emailedTo };
+    return { success: true, invoiceNumber: result.data.invoiceNumber, emailedTo };
   } catch (err: unknown) {
     console.error("Finalize bill error:", err);
     return { error: errorMessage(err) || "Failed to issue invoice" };

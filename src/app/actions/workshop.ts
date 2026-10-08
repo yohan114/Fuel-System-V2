@@ -17,6 +17,7 @@ import {
   formatIdempotencyKey,
   findExistingIdempotentIssue,
 } from "@/lib/fuel/stock-guard";
+import { executeApproveTransfer } from "@/lib/commands";
 
 // 1. Create Bulk Tank (Admin only)
 export async function createBulkTankAction(formData: FormData) {
@@ -331,82 +332,32 @@ export async function approveBulkRequestAction(requestId: string, reviewNote: st
   let admin;
   try {
     admin = await assertCan("approve");
+    if (admin.role !== "ADMIN") return { error: "Only an administrator can approve fuel transfers" };
   } catch (err) {
     return { error: "You are not authorized to perform this action" };
   }
 
-  try {
-    const req = await prisma.bulkRequest.findUnique({
-      where: { id: requestId },
-      include: { bulkTank: true, sourceTank: true },
-    });
-
-    if (!req) {
-      return { error: "Request not found" };
+  const result = await executeApproveTransfer(
+    { requestId, reviewNote },
+    {
+      actorId: admin.id,
+      actorName: admin.name,
+      role: admin.role,
+      projectId: admin.projectId,
     }
+  );
 
-    if (req.status !== "PENDING") {
-      return { error: "Request has already been processed" };
-    }
-
-    await prisma.$transaction(async (tx) => {
-      // 1. Set request status to APPROVED
-      await tx.bulkRequest.update({
-        where: { id: requestId },
-        data: {
-          status: "APPROVED",
-          reviewedById: admin.id,
-          reviewedAt: new Date(),
-          reviewNote,
-        },
-      });
-
-      if (req.sourceType === "SITE" && req.sourceTankId) {
-        // Inter-site transfer: atomically draw the fuel from source tank with conditional check, then credit destination
-        const sourceName = req.sourceTank?.name;
-        await transferTankStockAtomically(
-          tx,
-          req.sourceTankId,
-          req.bulkTankId,
-          req.requestedLitres,
-          sourceName,
-          req.bulkTank.name
-        );
-        await tx.auditLog.create({
-          data: {
-            actorId: admin.id,
-            action: "APPROVE",
-            entity: "BulkRequest",
-            entityId: requestId,
-            summary: `Approved fuel transfer of ${req.requestedLitres}L from site "${sourceName || "source"}" to "${req.bulkTank.name}"`,
-          },
-        });
-      } else {
-        // Outside purchase: supplier delivery into target tank
-        await creditTankStockAtomically(tx, req.bulkTankId, req.requestedLitres);
-        await tx.auditLog.create({
-          data: {
-            actorId: admin.id,
-            action: "APPROVE",
-            entity: "BulkRequest",
-            entityId: requestId,
-            summary: `Approved outside-purchase delivery of ${req.requestedLitres}L to "${req.bulkTank.name}"`,
-          },
-        });
-      }
-    });
-
-    try {
-      revalidatePath("/admin/projects");
-      revalidatePath("/workshop");
-    } catch (e) {
-      // Ignore Next.js runtime static generation store errors in CLI tests
-    }
-    return { success: true };
-  } catch (err: unknown) {
-    console.error("Approve bulk request error:", err);
-    return { error: errorMessage(err) || "Failed to approve request" };
+  if (!result.success) {
+    return { error: result.error };
   }
+
+  try {
+    revalidatePath("/admin/projects");
+    revalidatePath("/workshop");
+  } catch (e) {
+    // Ignore Next.js runtime static generation store errors in CLI tests
+  }
+  return { success: true };
 }
 
 // 4. Reject Bulk Replenishment Request (Admin only)

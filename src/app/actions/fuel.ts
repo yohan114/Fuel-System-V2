@@ -20,6 +20,7 @@ import {
   formatIdempotencyKey,
   findExistingIdempotentIssue,
 } from "@/lib/fuel/stock-guard";
+import { executeIssueFuel } from "@/lib/commands";
 
 // How far back an admin may date a fuel issue before having to say why. A week
 // covers the ordinary case — a site sends its sheets in on Monday — without
@@ -402,207 +403,53 @@ export async function recordDirectIssueAction(formData: FormData) {
   }
 
   try {
-    let asset = await prisma.asset.findFirst({
-      where: {
-        OR: [
-          { id: assetId },
-          { code: assetId.trim().toUpperCase() },
-          { regNo: assetId.trim().toUpperCase() }
-        ]
-      }
-    });
-
-    if (!asset) {
-      // Auto-create under fallback category
-      const otherCategory = await prisma.category.findFirst({
-        where: { code: "OTHER" },
-      });
-      if (!otherCategory) {
-        return { error: "Fallback asset category 'OTHER' is missing from the database" };
-      }
-      asset = await prisma.asset.create({
-        data: {
-          code: assetId.trim().toUpperCase(),
-          categoryId: otherCategory.id,
-          meterType: "KM",
-          status: "ACTIVE",
-          brand: "Quick Added",
-          typeLabel: "Other Asset",
-        }
-      });
-    }
-
-    // Site-scoped users (e.g. SITE_PUMP) may only issue fuel to vehicles allocated to their site
-    if (isSiteUser(user.role) && user.projectId) {
-      const ok = await canUserAccessAsset(user, asset.id, issueDate);
-      if (!ok) {
-        return { error: "This vehicle is not allocated to your site." };
-      }
-    }
-
-    // Check if asset has an active outage on issueDate
-    const activeOutage = await prisma.meterOutage.findFirst({
-      where: {
-        assetId: asset.id,
-        endDate: null,
-        startDate: { lte: issueDate },
-      },
-    });
-
-    if (meterReading !== null) {
-      if (isNaN(meterReading) || meterReading < 0) {
-        return { error: "Meter reading must be positive" };
-      }
-
-      // If machine is not under an active outage, enforce cumulative integrity
-      if (!activeOutage) {
-        const guard = await checkFuelMeter(prisma, asset.id, asset.meterType, meterReading, issueDate);
-        if (!guard.ok) return { error: guard.error! };
-      }
-    }
-
-    // Site fuel discipline: block if this would exceed the vehicle's daily cap.
-    const capError = await checkDailyCap(asset.id, asset.dailyCapLitres, issueDate, litres);
-    if (capError) return { error: capError };
-
-    // Resolve pump authority: admin can name any pump (or none for station),
-    // while pump operators issue from their own assigned pump.
-    let ownTankId = user.bulkTankId;
-    if (!ownTankId && user.projectId) {
-      const siteTank = await prisma.bulkTank.findFirst({ where: { projectId: user.projectId } });
-      if (siteTank) ownTankId = siteTank.id;
-    }
-    const authority = resolveIssueAuthority({
-      role: user.role,
-      ownTankId,
-      targetTankId: bulkTankId,
-    });
-    if (!authority.allowed) {
-      return { error: authority.error };
-    }
-
-    let tank: { id: string; name: string; balance: number; fuelKind: string } | null = null;
-    const effectiveTankId = authority.tankId;
-    if (effectiveTankId) {
-      tank = await prisma.bulkTank.findUnique({
-        where: { id: effectiveTankId },
-        select: { id: true, name: true, balance: true, fuelKind: true },
-      });
-      if (!tank) return { error: "That pump was not found" };
-      if (tank.fuelKind !== fuelKind) {
-        return { error: `${tank.name} holds ${tank.fuelKind.replace(/_/g, " ").toLowerCase()}, not ${fuelKind.replace(/_/g, " ").toLowerCase()}.` };
-      }
-      if (tank.balance < litres) {
-        return { error: `${tank.name} holds ${tank.balance.toFixed(1)} L — less than the ${litres} L being issued.` };
-      }
-      // Same convention as the operator consoles: the pump's name IS the source.
-      source = tank.name;
-    }
-
     const photo = await extractFileField(formData, "photo");
     if (!photo && (await photoRequired())) {
       return { error: "A pump/meter photo is required to record a fuel issue." };
     }
 
-    // Resolve price for the date of issue
-    const resolvedPrice = await getPriceForDate(fuelKind, issueDate);
-    const totalCost = Math.round(litres * resolvedPrice.pricePerLitre);
-
-    await prisma.$transaction(async (tx) => {
-      // Replay protection: check client idempotency key
-      if (idempotencyKey) {
-        const existing = await findExistingIdempotentIssue(tx, idempotencyKey);
-        if (existing) {
-          return;
-        }
+    const cmdResult = await executeIssueFuel(
+      {
+        assetIdOrCode: assetId,
+        fuelKind,
+        litres,
+        issueDate,
+        meterReading,
+        bulkTankId,
+        idempotencyKey,
+        driverName: formData.get("issuePerson")?.toString() || formData.get("driverName")?.toString() || null,
+        photo: photo ? { data: photo.data, name: photo.name, mime: photo.mime } : null,
+      },
+      {
+        actorId: user.id,
+        actorName: user.name,
+        role: user.role,
+        projectId: user.projectId,
+        bulkTankId: user.bulkTankId,
       }
+    );
 
-      // Deduct atomically from tank if dispensed from bulk
-      if (tank) {
-        await deductTankStockAtomically(tx, tank.id, litres, tank.name);
-      }
-
-      // Create issue
-      const issue = await tx.fuelIssue.create({
-        data: {
-          assetId: asset.id,
-          fuelKind,
-          litres,
-          meterReading,
-          readingType: asset.meterType,
-          pricePerLitre: resolvedPrice.pricePerLitre,
-          totalCost,
-          source,
-          issueDate,
-          issuedById: user.id,
-          issuePerson: user.name,
-          fuelPriceId: resolvedPrice.id,
-          bulkTankId: tank?.id ?? null,
-          importKey: idempotencyKey,
-          ...(photo ? { photoData: photo.data, photoName: photo.name, photoMime: photo.mime } : {}),
-        },
-      });
-
-      // Log meter reading if provided
-      if (meterReading !== null) {
-        const reading = await tx.meterReading.create({
-          data: {
-            assetId: asset.id,
-            value: meterReading,
-            readingType: asset.meterType,
-            readingDate: issueDate,
-            source: activeOutage ? "GOOGLE_ESTIMATE" : "FUEL_ISSUE",
-            recordedById: user.id,
-            linkedIssueId: issue.id,
-          },
-        });
-
-        // Update issue reference
-        await tx.fuelIssue.update({
-          where: { id: issue.id },
-          data: {
-            meterReadingRecordId: reading.id,
-          },
-        });
-      }
-
-      await logFuelIssueChange(tx, user.id, asset.code, {
-        action: "CREATE",
-        issueId: issue.id,
-        // A creation has no "before", so the fields are recorded as arrivals
-        // rather than as movements.
-        changes: [
-          { field: "litres", from: null, to: litres },
-          { field: "fuelKind", from: null, to: fuelKind },
-          { field: "pricePerLitre", from: null, to: resolvedPrice.pricePerLitre },
-          { field: "totalCost", from: null, to: totalCost },
-          { field: "source", from: null, to: source },
-          { field: "issueDate", from: null, to: issueDate.toISOString() },
-          ...(meterReading !== null ? [{ field: "meterReading", from: null, to: meterReading }] : []),
-        ],
-        tankDeltaLitres: tank ? -litres : undefined,
-        tankId: tank?.id ?? null,
-        tankName: tank?.name ?? null,
-        meterReading: meterReading !== null ? "created" : "unchanged",
-        periodKey: periodKeyFor(issueDate),
-        reason: backdateReason,
-      });
-    });
+    if (!cmdResult.success) {
+      return { error: cmdResult.error };
+    }
 
     revalidatePath("/");
     revalidatePath("/fuel/issues");
     revalidatePath("/m/issue");
-    revalidatePath(`/fleet/${asset.code}`);
-    // The pump consoles show a balance this has just moved.
-    if (tank) {
+    revalidatePath(`/fleet/${cmdResult.data.assetCode}`);
+    if (cmdResult.data.bulkTankName) {
       revalidatePath("/workshop");
       revalidatePath("/site");
     }
+
     return {
       success: true,
       message:
-        `Recorded ${litres} L for ${asset.code}` +
-        (tank ? ` from ${tank.name} — balance now ${(tank.balance - litres).toFixed(1)} L.` : " (station / external purchase)."),
+        `Recorded ${litres} L for ${cmdResult.data.assetCode}` +
+        (cmdResult.data.bulkTankName
+          ? ` from ${cmdResult.data.bulkTankName}.`
+          : " (station / external purchase)."),
+      issueId: cmdResult.data.issueId,
     };
   } catch (err: unknown) {
     console.error("Record direct issue error:", err);
