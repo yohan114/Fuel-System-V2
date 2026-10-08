@@ -91,6 +91,13 @@ export async function GET(
       return NextResponse.json({ success: true, ...data });
     }
 
+    if (pathStr.startsWith("billing/jobs/")) {
+      const jobId = route[2];
+      const billingService = await getDomainService<BillingService>(BillingService);
+      const data = await billingService.getBillingJobStatus(jobId);
+      return NextResponse.json({ success: true, data });
+    }
+
     // 4. Audit Routes
     if (pathStr === "audit/logs") {
       const auditService = await getDomainService<AuditService>(AuditService);
@@ -179,6 +186,19 @@ export async function POST(
     if (pathStr === "billing/basis") {
       const billingService = await getDomainService<BillingService>(BillingService);
       const data = await billingService.bulkSetBasis(body.billIds || [], body.basis);
+      return NextResponse.json({ success: true, data });
+    }
+
+    if (pathStr === "billing/jobs/monthly") {
+      const billingService = await getDomainService<BillingService>(BillingService);
+      const data = await billingService.enqueueMonthlyBilling({
+        year: Number(body.year),
+        month: Number(body.month),
+        assetIds: body.assetIds,
+        regenerate: Boolean(body.regenerate),
+        projectId: body.projectId || null,
+        basis: body.basis,
+      });
       return NextResponse.json({ success: true, data });
     }
 

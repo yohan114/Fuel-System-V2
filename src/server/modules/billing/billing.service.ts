@@ -7,6 +7,8 @@ import { Injectable, BadRequestException, NotFoundException } from "@nestjs/comm
 import { prisma } from "@/lib/db";
 import { bulkFinalizeBillsAction, bulkMarkPaidAction, bulkSetBillBasisAction } from "@/app/actions/billing";
 import { normalizePaginationParams, buildPaginationMeta } from "@/lib/pagination/paginate";
+import { getQueueManager, QUEUE_NAMES } from "@/lib/queue/queue-manager";
+import { enqueueMonthlyBillingJob, type MonthlyBillingJobData } from "@/lib/workers/billing-worker";
 
 @Injectable()
 export class BillingService {
@@ -70,5 +72,28 @@ export class BillingService {
     const result = await bulkSetBillBasisAction(billIds, basis);
     if (result.error) throw new BadRequestException(result.error);
     return result;
+  }
+
+  /**
+   * Enqueues an asynchronous monthly billing generation job onto BullMQ.
+   */
+  async enqueueMonthlyBilling(data: MonthlyBillingJobData) {
+    const jobHandle = await enqueueMonthlyBillingJob(data);
+    return {
+      success: true,
+      jobId: jobHandle.id,
+      name: jobHandle.name,
+      status: "enqueued",
+    };
+  }
+
+  /**
+   * Queries job execution status from BullMQ.
+   */
+  async getBillingJobStatus(jobId: string) {
+    const queueManager = getQueueManager();
+    const job = await queueManager.getJob(QUEUE_NAMES.BILLING, jobId);
+    if (!job) throw new NotFoundException(`Billing job '${jobId}' not found`);
+    return job;
   }
 }
