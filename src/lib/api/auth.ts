@@ -1,10 +1,11 @@
 import crypto from "crypto";
 import { prisma } from "../db";
 import { getSession, loadCurrentUser, verifyJwtToken } from "../auth";
+import { authenticateOidcToken } from "../iam/session-policy";
 import { err } from "./respond";
 
 export interface ApiAuthContext {
-  authType: "api_key" | "jwt" | "cookie";
+  authType: "api_key" | "jwt" | "cookie" | "oidc";
   role: string;
   user: {
     id: string;
@@ -205,7 +206,43 @@ export async function requireApi(
       };
     }
 
-    return { error: err("UNAUTHORIZED", "Invalid Bearer token", 401) };
+    // 3. OIDC Enterprise Bearer Token Authentication (Keycloak / Entra ID)
+    try {
+      const oidcIdentity = await authenticateOidcToken(token);
+      if (!roleAllowsScope(oidcIdentity.role, requiredScope)) {
+        return {
+          error: err(
+            "FORBIDDEN",
+            `Role '${oidcIdentity.role}' lacks permission for '${requiredScope}'`,
+            403
+          ),
+        };
+      }
+
+      return {
+        auth: {
+          authType: "oidc" as any,
+          role: oidcIdentity.role,
+          user: {
+            id: oidcIdentity.internalUserId,
+            username: oidcIdentity.username,
+            name: oidcIdentity.name,
+            role: oidcIdentity.role,
+            projectId: oidcIdentity.projectId,
+            bulkTankId: oidcIdentity.bulkTankId,
+          },
+        },
+      };
+    } catch (oidcErr: any) {
+      const msg = oidcErr instanceof Error ? oidcErr.message : "Invalid Bearer token";
+      if (msg.startsWith("ACCOUNT_DISABLED") || msg.startsWith("SESSION_REVOKED")) {
+        return { error: err("UNAUTHORIZED", msg, 401) };
+      }
+      if (msg.startsWith("CROSS_TENANT_ACCESS_DENIED")) {
+        return { error: err("FORBIDDEN", msg, 403) };
+      }
+      return { error: err("UNAUTHORIZED", "Invalid Bearer token", 401) };
+    }
   }
 
   // 3. Cookie Session Authentication fallback (for browser AJAX / dashboard client calls)

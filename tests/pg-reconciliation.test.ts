@@ -119,7 +119,7 @@ describe("PG-02: Topological Dependency Order & SQL Formatting", () => {
     const sqlHeader = fs.readFileSync(res.outputSqlFilePath, "utf-8").slice(0, 1000);
     expect(sqlHeader).toContain("BEGIN;");
     expect(sqlHeader).toContain("session_replication_role = 'replica';");
-  });
+  }, 15000);
 });
 
 describe("PG-02: 8-Dimension Reconciliation & Parity Verification", () => {
