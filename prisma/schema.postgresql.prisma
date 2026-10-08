@@ -1,0 +1,978 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id               String        @id @default(uuid()) @db.Uuid
+  username         String        @unique @db.VarChar(100)
+  email            String?       @unique @db.VarChar(255)
+  name             String        @db.VarChar(255)
+  passwordHash     String        @db.VarChar(255)
+  role             String        @db.VarChar(50) // "ADMIN" | "USER" | "ALLOCATOR" | "WORKSHOP" | "SITE_PUMP"
+  active           Boolean       @default(true)
+  createdAt        DateTime      @default(now()) @db.Timestamptz
+  updatedAt        DateTime      @updatedAt @db.Timestamptz
+
+  createdById      String?       @db.Uuid
+  createdBy        User?         @relation("CreatedByUser", fields: [createdById], references: [id])
+  createdUsers     User[]        @relation("CreatedByUser")
+
+  projectId        String?       @db.Uuid
+  project          Project?      @relation(fields: [projectId], references: [id])
+
+  bulkTankId       String?       @db.Uuid
+  bulkTank         BulkTank?     @relation(fields: [bulkTankId], references: [id])
+
+  enteredPrices    FuelPrice[]
+  fuelRequests     FuelRequest[] @relation("RequestedBy")
+  reviewedRequests FuelRequest[] @relation("ReviewedBy")
+  fuelIssues       FuelIssue[]   @relation("IssuedBy")
+  meterReadings    MeterReading[] @relation("RecordedBy")
+  dailyConditions  DailyCondition[] @relation("RecordedBy")
+  auditLogs        AuditLog[]    @relation("Actor")
+  billingOverrides BillingSiteOverride[]
+
+  bulkRequests     BulkRequest[] @relation("BulkRequestedBy")
+  reviewedBulk     BulkRequest[] @relation("BulkReviewedBy")
+
+  generatedBills   Bill[]        @relation("BillGeneratedBy")
+  createdAssignments AssetAssignment[] @relation("AssignmentCreatedBy")
+
+  fuelCorrections     FuelIssueCorrection[] @relation("CorrectionRequestedBy")
+  reviewedCorrections FuelIssueCorrection[] @relation("CorrectionReviewedBy")
+
+  tankDips         TankDip[]     @relation("TankDipRecordedBy")
+
+  serviceRecords   ServiceRecord[] @relation("ServiceRecordedBy")
+  apiKeys          ApiKey[]        @relation("ApiKeyCreatedBy")
+  openedOutages    MeterOutage[]   @relation("MeterOutageOpenedBy")
+  closedOutages    MeterOutage[]   @relation("MeterOutageClosedBy")
+
+  @@map("users")
+}
+
+model Category {
+  id               String        @id @default(uuid()) @db.Uuid
+  code             String        @unique @db.VarChar(50) // e.g. DT, HEX, VR
+  name             String        @db.VarChar(255)
+  defaultMeterType String        @db.VarChar(20) // "KM" | "HOURS"
+  fleetGroup       String        @db.VarChar(50) // "ROAD_VEHICLE" | "MACHINERY_GENSET"
+  assets           Asset[]
+  serviceInterval  ServiceInterval?
+  pmTasks          PMTask[]
+
+  @@map("categories")
+}
+
+model PMTask {
+  id            String   @id @default(uuid()) @db.Uuid
+
+  categoryId    String   @db.Uuid
+  category      Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  taskCode      String?  @db.VarChar(50)
+  intervalHours Float
+  intervalLabel String   @db.VarChar(100)
+  system        String?  @db.VarChar(100)
+  component     String?  @db.VarChar(100)
+  description   String   @db.Text
+  parts         String?  @db.Text
+  skill         String?  @db.VarChar(100)
+  laborHours    Float?
+  notes         String?  @db.Text
+  sortOrder     Int      @default(0)
+
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  updatedAt     DateTime @updatedAt @db.Timestamptz
+
+  @@index([categoryId, intervalHours, sortOrder])
+  @@map("pm_tasks")
+}
+
+model Asset {
+  id            String         @id @default(uuid()) @db.Uuid
+  code          String         @unique @db.VarChar(50)
+  brand         String?        @db.VarChar(100)
+  typeLabel     String?        @db.VarChar(100)
+  model         String?        @db.VarChar(100)
+  regNo         String?        @db.VarChar(50)
+  capacity      String?        @db.VarChar(50)
+  yom           Int?
+  chassisNo     String?        @db.VarChar(100)
+  engineNo      String?        @db.VarChar(100)
+  serialNo      String?        @db.VarChar(100)
+  site          String?        @db.VarChar(100)
+  status        String         @default("ACTIVE") @db.VarChar(20) // "ACTIVE" | "INACTIVE" | "DISPOSED"
+  meterType     String         @db.VarChar(20) // "KM" | "HOURS"
+  dailyCapLitres Int?
+
+  ownership     String         @default("OWNED") @db.VarChar(20) // "OWNED" | "HIRED"
+  hireSupplier  String?        @db.VarChar(255)
+  hireRateCents Int?
+  hireRateBasis String?        @db.VarChar(20)
+  hireStart     DateTime?      @db.Timestamptz
+  hireEnd       DateTime?      @db.Timestamptz
+  hireNote      String?        @db.Text
+
+  minBillHours  Int?
+  billFuelOnly  Boolean        @default(false)
+  billedDirect  Boolean        @default(false)
+
+  createdAt     DateTime       @default(now()) @db.Timestamptz
+  updatedAt     DateTime       @updatedAt @db.Timestamptz
+
+  categoryId    String         @db.Uuid
+  category      Category       @relation(fields: [categoryId], references: [id])
+
+  projectId     String?        @db.Uuid
+  project       Project?       @relation(fields: [projectId], references: [id])
+
+  fuelRequests  FuelRequest[]
+  fuelIssues    FuelIssue[]
+  meterReadings MeterReading[]
+  dailyConditions DailyCondition[]
+  assignments   AssetAssignment[]
+
+  rentalRate    RentalRate?
+  bills         Bill[]
+  serviceRecords ServiceRecord[]
+  serviceIntervalOverride ServiceInterval?
+  filters       AssetFilter[]
+  allocations   VehicleAllocation[]
+  billingOverrides BillingSiteOverride[]
+  meterOutages  MeterOutage[]
+
+  @@map("assets")
+}
+
+model AssetAssignment {
+  id          String    @id @default(uuid()) @db.Uuid
+
+  assetId     String    @db.Uuid
+  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  projectId   String    @db.Uuid
+  project     Project   @relation(fields: [projectId], references: [id])
+
+  startDate   DateTime  @db.Timestamptz
+  endDate     DateTime? @db.Timestamptz
+  note        String?   @db.Text
+  origin      String    @default("FUEL") @db.VarChar(20)
+  driverName  String?   @db.VarChar(255)
+  billingType String?   @db.VarChar(20)
+
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @db.Timestamptz
+
+  createdById String?   @db.Uuid
+  createdBy   User?     @relation("AssignmentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([assetId, startDate])
+  @@index([projectId, startDate])
+  @@index([projectId])
+  @@map("asset_assignments")
+}
+
+model VehicleAllocation {
+  id          String   @id @default(uuid()) @db.Uuid
+  dedupeKey   String   @unique @db.VarChar(255)
+
+  projectId   String?  @db.Uuid
+  project     Project? @relation(fields: [projectId], references: [id])
+  siteName    String   @db.VarChar(255)
+
+  month       String   @db.VarChar(20) // "YYYY-MM"
+
+  assetId     String?  @db.Uuid
+  asset       Asset?   @relation(fields: [assetId], references: [id])
+  vehicleNo   String   @db.VarChar(100)
+
+  machineType String?  @db.VarChar(100)
+  ownerCode   String?  @db.VarChar(100)
+  basis       String?  @db.VarChar(100)
+  active      Boolean  @default(true)
+
+  sourceFile  String?  @db.VarChar(255)
+  sourceSheet String?  @db.VarChar(255)
+
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  @@index([projectId, month])
+  @@index([assetId, month])
+  @@index([month])
+  @@map("vehicle_allocations")
+}
+
+model FuelPrice {
+  id             String      @id @default(uuid()) @db.Uuid
+  fuelKind       String      @db.VarChar(50) // "AUTO_DIESEL" | "SUPER_DIESEL"
+  pricePerLitre  Int         // in LKR cents
+  effectiveFrom  DateTime    @db.Timestamptz
+  source         String      @db.VarChar(50) // "CEYPETCO" | "MANUAL"
+  note           String?     @db.Text
+  createdAt      DateTime    @default(now()) @db.Timestamptz
+
+  enteredById    String      @db.Uuid
+  enteredBy      User        @relation(fields: [enteredById], references: [id])
+
+  fuelIssues     FuelIssue[]
+
+  @@unique([fuelKind, effectiveFrom])
+  @@index([fuelKind, effectiveFrom])
+  @@map("fuel_prices")
+}
+
+model FuelRequest {
+  id             String      @id @default(uuid()) @db.Uuid
+  fuelKind       String      @db.VarChar(50)
+  requestedLitres Float
+  meterReading   Float?
+  readingType    String?     @db.VarChar(20)
+  reason         String?     @db.Text
+  status         String      @default("PENDING") @db.VarChar(20)
+  createdAt      DateTime    @default(now()) @db.Timestamptz
+  updatedAt      DateTime    @updatedAt @db.Timestamptz
+
+  assetId        String      @db.Uuid
+  asset          Asset       @relation(fields: [assetId], references: [id])
+
+  requestedById  String      @db.Uuid
+  requestedBy    User        @relation("RequestedBy", fields: [requestedById], references: [id])
+
+  reviewedById   String?     @db.Uuid
+  reviewedBy     User?       @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt     DateTime?   @db.Timestamptz
+  reviewNote     String?     @db.Text
+
+  photoData      Bytes?      @db.ByteA
+  photoName      String?     @db.VarChar(255)
+  photoMime      String?     @db.VarChar(100)
+
+  issue          FuelIssue?
+
+  @@map("fuel_requests")
+}
+
+model FuelIssue {
+  id             String       @id @default(uuid()) @db.Uuid
+  fuelKind       String       @db.VarChar(50)
+  litres         Float
+  meterReading   Float?
+  readingType    String?      @db.VarChar(20)
+  pricePerLitre  Int          // in LKR cents
+  totalCost      Int          // in LKR cents
+  source         String       @db.VarChar(50)
+  issueDate      DateTime     @db.Timestamptz
+  createdAt      DateTime     @default(now()) @db.Timestamptz
+
+  assetId        String       @db.Uuid
+  asset          Asset        @relation(fields: [assetId], references: [id])
+
+  issuedById     String       @db.Uuid
+  issuedBy       User         @relation("IssuedBy", fields: [issuedById], references: [id])
+
+  fuelPriceId    String?      @db.Uuid
+  fuelPrice      FuelPrice?   @relation(fields: [fuelPriceId], references: [id])
+
+  linkedRequestId String?     @unique @db.Uuid
+  linkedRequest   FuelRequest? @relation(fields: [linkedRequestId], references: [id])
+
+  meterReadingRecordId String? @unique @db.Uuid
+  meterReadingRecord   MeterReading? @relation("LinkedIssueMeterReading")
+
+  bulkTankId      String?      @db.Uuid
+  bulkTank        BulkTank?    @relation("TankIssues", fields: [bulkTankId], references: [id])
+
+  voided          Boolean      @default(false)
+  voidedAt        DateTime?    @db.Timestamptz
+
+  photoData       Bytes?       @db.ByteA
+  photoName       String?      @db.VarChar(255)
+  photoMime       String?      @db.VarChar(100)
+
+  issuePerson     String?      @db.VarChar(255)
+  importKey       String?      @unique @db.VarChar(255)
+
+  corrections     FuelIssueCorrection[]
+
+  @@index([assetId, issueDate])
+  @@index([assetId, voided, issueDate])
+  @@index([issueDate])
+  @@index([bulkTankId])
+  @@map("fuel_issues")
+}
+
+model FuelIssueCorrection {
+  id            String    @id @default(uuid()) @db.Uuid
+
+  fuelIssueId   String    @db.Uuid
+  fuelIssue     FuelIssue @relation(fields: [fuelIssueId], references: [id], onDelete: Cascade)
+
+  type          String    @db.VarChar(20) // "EDIT" | "VOID"
+  status        String    @default("PENDING") @db.VarChar(20)
+  reason        String    @db.Text
+
+  newLitres        Float?
+  newMeterReading  Float?
+  newReadingType   String?   @db.VarChar(20)
+  newFuelKind      String?   @db.VarChar(50)
+  newIssueDate     DateTime? @db.Timestamptz
+
+  origLitres       Float
+  origMeterReading Float?
+  origFuelKind     String    @db.VarChar(50)
+  origIssueDate    DateTime  @db.Timestamptz
+  origSource       String    @db.VarChar(50)
+
+  assetId       String    @db.Uuid
+  assetCode     String    @db.VarChar(50)
+  projectId     String?   @db.Uuid
+  projectName   String?   @db.VarChar(255)
+  projectCode   String?   @db.VarChar(50)
+
+  docData       Bytes     @db.ByteA
+  docName       String    @db.VarChar(255)
+  docMime       String    @db.VarChar(100)
+
+  requestedById String    @db.Uuid
+  requestedBy   User      @relation("CorrectionRequestedBy", fields: [requestedById], references: [id])
+
+  reviewedById  String?   @db.Uuid
+  reviewedBy    User?     @relation("CorrectionReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime? @db.Timestamptz
+  reviewNote    String?   @db.Text
+
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @db.Timestamptz
+
+  @@index([status, projectCode])
+  @@index([projectCode, createdAt])
+  @@index([fuelIssueId])
+  @@map("fuel_issue_corrections")
+}
+
+model MeterReading {
+  id             String     @id @default(uuid()) @db.Uuid
+  value          Float
+  readingType    String     @db.VarChar(20) // "KM" | "HOURS"
+  readingDate    DateTime   @db.Timestamptz
+  source         String     @db.VarChar(50)
+  createdAt      DateTime   @default(now()) @db.Timestamptz
+
+  assetId        String     @db.Uuid
+  asset          Asset      @relation(fields: [assetId], references: [id])
+
+  recordedById   String     @db.Uuid
+  recordedBy     User       @relation("RecordedBy", fields: [recordedById], references: [id])
+
+  linkedIssueId  String?    @unique @db.Uuid
+  linkedIssue    FuelIssue? @relation("LinkedIssueMeterReading", fields: [linkedIssueId], references: [id])
+
+  @@index([assetId, readingDate])
+  @@index([assetId, value])
+  @@map("meter_readings")
+}
+
+model MeterOutage {
+  id                   String    @id @default(uuid()) @db.Uuid
+
+  assetId              String    @db.Uuid
+  asset                Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  startDate            DateTime  @db.Timestamptz
+  openedById           String    @db.Uuid
+  openedBy             User      @relation("MeterOutageOpenedBy", fields: [openedById], references: [id])
+  reason               String?   @db.Text
+
+  endDate              DateTime? @db.Timestamptz
+  endPhysicalMeter     Float?
+  instrumentContinuity String?   @db.VarChar(50)
+  closedById           String?   @db.Uuid
+  closedBy             User?     @relation("MeterOutageClosedBy", fields: [closedById], references: [id])
+  closeNote            String?   @db.Text
+
+  createdAt            DateTime  @default(now()) @db.Timestamptz
+  updatedAt            DateTime  @updatedAt @db.Timestamptz
+
+  @@index([assetId, startDate])
+  @@map("meter_outages")
+}
+
+model AuditLog {
+  id             String    @id @default(uuid()) @db.Uuid
+  action         String    @db.VarChar(50)
+  entity         String    @db.VarChar(100)
+  entityId       String?   @db.VarChar(255)
+  summary        String    @db.Text
+  metaJson       String?   @db.Text
+  createdAt      DateTime  @default(now()) @db.Timestamptz
+
+  actorId        String?   @db.Uuid
+  actor          User?     @relation("Actor", fields: [actorId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model Setting {
+  id             String    @id @default(uuid()) @db.Uuid
+  key            String    @unique @db.VarChar(100)
+  value          String    @db.Text
+  updatedAt      DateTime  @updatedAt @db.Timestamptz
+
+  @@map("settings")
+}
+
+model Project {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @unique @db.VarChar(255)
+  code         String   @unique @db.VarChar(50)
+  contactName  String?  @db.VarChar(255)
+  contactEmail String?  @db.VarChar(255)
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+
+  users       User[]
+  assets      Asset[]
+  bulkTanks   BulkTank[]
+  assignments AssetAssignment[]
+  budgets     Budget[]
+  allocations VehicleAllocation[]
+  billingOverrides BillingSiteOverride[]
+
+  @@map("projects")
+}
+
+model BillingSiteOverride {
+  id        String   @id @default(uuid()) @db.Uuid
+
+  projectId String   @db.Uuid
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  assetId   String   @db.Uuid
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  periodKey String   @db.VarChar(20)
+  action    String   @db.VarChar(20)
+  reason    String?  @db.Text
+  setFuelOnly Boolean @default(false)
+
+  createdById String?  @db.Uuid
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  @@unique([projectId, periodKey, assetId])
+  @@index([periodKey, projectId])
+  @@index([assetId, periodKey])
+  @@map("billing_site_overrides")
+}
+
+model DailyCondition {
+  id           String   @id @default(uuid()) @db.Uuid
+  status       String   @db.VarChar(20) // "WORKING" | "BREAKDOWN"
+  logDate      DateTime @db.Timestamptz
+  note         String?  @db.Text
+  createdAt    DateTime @default(now()) @db.Timestamptz
+
+  assetId      String   @db.Uuid
+  asset        Asset    @relation(fields: [assetId], references: [id])
+
+  recordedById String   @db.Uuid
+  recordedBy   User     @relation("RecordedBy", fields: [recordedById], references: [id])
+
+  @@unique([assetId, logDate])
+  @@index([assetId, logDate])
+  @@index([logDate])
+  @@map("daily_conditions")
+}
+
+model BulkTank {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique @db.VarChar(255)
+  fuelKind  String   @db.VarChar(50)
+  capacity  Float
+  balance   Float    @default(0.0)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  projectId String?  @db.Uuid
+  project   Project? @relation(fields: [projectId], references: [id])
+
+  users     User[]
+  requests  BulkRequest[] @relation("BulkRequestTarget")
+  sourceForRequests BulkRequest[] @relation("BulkRequestSource")
+  issues    FuelIssue[]   @relation("TankIssues")
+  dips      TankDip[]
+
+  @@map("bulk_tanks")
+}
+
+model TankDip {
+  id              String   @id @default(uuid()) @db.Uuid
+
+  bulkTankId      String   @db.Uuid
+  bulkTank        BulkTank @relation(fields: [bulkTankId], references: [id], onDelete: Cascade)
+
+  dipLitres       Float
+  computedBalance Float
+  variance        Float
+  dipDate         DateTime @db.Timestamptz
+  note            String?  @db.Text
+  createdAt       DateTime @default(now()) @db.Timestamptz
+
+  recordedById    String   @db.Uuid
+  recordedBy      User     @relation("TankDipRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([bulkTankId, dipDate])
+  @@map("tank_dips")
+}
+
+model BulkRequest {
+  id              String    @id @default(uuid()) @db.Uuid
+  fuelKind        String    @db.VarChar(50)
+  requestedLitres Float
+  status          String    @default("PENDING") @db.VarChar(20)
+  createdAt       DateTime  @default(now()) @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @db.Timestamptz
+
+  bulkTankId      String    @db.Uuid
+  bulkTank        BulkTank  @relation("BulkRequestTarget", fields: [bulkTankId], references: [id])
+
+  sourceType      String    @default("OUTSIDE") @db.VarChar(20)
+  sourceTankId    String?   @db.Uuid
+  sourceTank      BulkTank? @relation("BulkRequestSource", fields: [sourceTankId], references: [id])
+
+  requestedById   String    @db.Uuid
+  requestedBy     User      @relation("BulkRequestedBy", fields: [requestedById], references: [id])
+
+  reviewedById    String?   @db.Uuid
+  reviewedBy      User?     @relation("BulkReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime? @db.Timestamptz
+  reviewNote      String?   @db.Text
+
+  @@map("bulk_requests")
+}
+
+model RentalRate {
+  id            String   @id @default(uuid()) @db.Uuid
+
+  assetId       String   @unique @db.Uuid
+  asset         Asset    @relation(fields: [assetId], references: [id])
+
+  sourceLabel   String?  @db.VarChar(100)
+  category      String?  @db.VarChar(50)
+  equipType     String   @default("FLEET") @db.VarChar(20)
+
+  fuelQtyDefault Float?
+  opRate         Int?
+
+  hrFwCents     Int?
+  hrWCents      Int?
+  hrDCents      Int?
+  dyFwCents     Int?
+  dyWCents      Int?
+  dyDCents      Int?
+  kmFwCents     Int?
+  kmWCents      Int?
+  kmDCents      Int?
+
+  portDwCents   Int?
+  portDdCents   Int?
+
+  defaultBasis  String?  @db.VarChar(20)
+  fuelConsEcon  Float?
+  fuelConsTyp   Float?
+  fuelConsHeavy Float?
+  fuelConsBasis String?  @db.VarChar(20)
+
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  updatedAt     DateTime @updatedAt @db.Timestamptz
+
+  @@map("rental_rates")
+}
+
+model Bill {
+  id            String   @id @default(uuid()) @db.Uuid
+
+  year          Int
+  month         Int
+  periodKey     String   @db.VarChar(20)
+  periodStart   DateTime @db.Timestamptz
+  periodEnd     DateTime @db.Timestamptz
+
+  assetId       String   @db.Uuid
+  asset         Asset    @relation(fields: [assetId], references: [id])
+  assetCode     String   @db.VarChar(50)
+  assetRegNo    String?  @db.VarChar(50)
+  assetLabel    String?  @db.VarChar(100)
+  driverName    String?  @db.VarChar(255)
+  projectId     String?  @db.Uuid
+  projectName   String?  @db.VarChar(255)
+  projectCode   String?  @db.VarChar(50)
+
+  billingMode   String   @db.VarChar(20)
+  rateBasis     String   @db.VarChar(20)
+  rateCents     Int
+
+  openingMeter  Float?
+  closingMeter  Float?
+  actualUnits   Float
+  minimumUnits  Float
+  billableUnits Float
+
+  rentalAmountCents Int
+  fuelLitres        Float @default(0)
+  fuelCostCents     Int   @default(0)
+  subtotalCents     Int
+  ssclRate          Float
+  ssclCents         Int
+  vatRate           Float
+  vatCents          Int
+  grandTotalCents   Int
+
+  invoiceNumber String?  @unique @db.VarChar(50)
+  status        String   @default("DRAFT") @db.VarChar(20)
+  issuedDate    DateTime? @db.Timestamptz
+  dueDate       DateTime? @db.Timestamptz
+  paidDate      DateTime? @db.Timestamptz
+  paidAmountCents Int?
+  paymentRef    String?  @db.VarChar(100)
+  paymentNote   String?  @db.Text
+
+  notes         String?  @db.Text
+
+  derivedFromFuel Boolean @default(false)
+  estimatedMeterDays Int @default(0)
+  fuelConsMidRate Float?
+
+  actualMeterUnits     Float?
+  derivedStandardUnits Float?
+  derivedEconUnits     Float?
+  fuelConsEconSnapshot Float?
+  fuelConsTypSnapshot  Float?
+  fuelConsHeavySnapshot Float?
+
+  breakdownDays        Int @default(0)
+  breakdownDeductCents Int @default(0)
+
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  updatedAt     DateTime @updatedAt @db.Timestamptz
+
+  generatedById String?  @db.Uuid
+  generatedBy   User?    @relation("BillGeneratedBy", fields: [generatedById], references: [id])
+
+  emailedAt     DateTime? @db.Timestamptz
+  emailedTo     String?  @db.VarChar(255)
+
+  lineItems     BillLineItem[]
+  creditNotes   CreditNote[]
+  payments      Payment[]
+  revisions     BillRevision[]
+
+  @@unique([assetId, year, month])
+  @@index([periodKey, status])
+  @@index([projectId, periodKey])
+  @@map("bills")
+}
+
+model BillRevision {
+  id              String   @id @default(uuid()) @db.Uuid
+
+  billId          String   @db.Uuid
+  bill            Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  revision        Int
+  snapshotJson    String   @db.Text
+  subtotalCents   Int
+  grandTotalCents Int
+  reason          String?  @db.Text
+
+  createdById     String?  @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz
+
+  @@unique([billId, revision])
+  @@index([billId])
+  @@map("bill_revisions")
+}
+
+model InvoiceCounter {
+  id       Int @id @default(autoincrement())
+  year     Int @unique
+  lastSeq  Int @default(0)
+
+  @@map("invoice_counters")
+}
+
+model Payment {
+  id           String   @id @default(uuid()) @db.Uuid
+
+  billId       String   @db.Uuid
+  bill         Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  amountCents  Int
+  paidDate     DateTime @db.Timestamptz
+  method       String?  @db.VarChar(50)
+  reference    String?  @db.VarChar(100)
+  note         String?  @db.Text
+
+  createdById  String?  @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz
+
+  @@index([billId])
+  @@map("payments")
+}
+
+model BillLineItem {
+  id          String  @id @default(uuid()) @db.Uuid
+
+  billId      String  @db.Uuid
+  bill        Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  kind        String  @db.VarChar(20)
+  description String  @db.Text
+  quantity    Float
+  unit        String  @db.VarChar(20)
+  unitRateCents Int
+  amountCents Int
+
+  projectId   String? @db.Uuid
+  projectName String? @db.VarChar(255)
+
+  @@index([billId])
+  @@map("bill_line_items")
+}
+
+model Budget {
+  id                String   @id @default(uuid()) @db.Uuid
+
+  projectId         String   @db.Uuid
+  project           Project  @relation(fields: [projectId], references: [id])
+
+  year              Int
+  month             Int
+  budgetLitres      Float?
+  budgetAmountCents Int?
+  note              String?  @db.Text
+
+  createdById       String?  @db.Uuid
+  createdAt         DateTime @default(now()) @db.Timestamptz
+  updatedAt         DateTime @updatedAt @db.Timestamptz
+
+  @@unique([projectId, year, month])
+  @@index([year, month])
+  @@map("budgets")
+}
+
+model CreditNote {
+  id          String   @id @default(uuid()) @db.Uuid
+
+  billId      String   @db.Uuid
+  bill        Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  number      String?  @unique @db.VarChar(50)
+  reason      String   @db.Text
+  amountCents Int
+  status      String   @default("DRAFT") @db.VarChar(20)
+
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  issuedDate  DateTime? @db.Timestamptz
+
+  @@index([billId])
+  @@map("credit_notes")
+}
+
+model ServiceInterval {
+  id             String    @id @default(uuid()) @db.Uuid
+
+  categoryId     String?   @unique @db.Uuid
+  category       Category? @relation(fields: [categoryId], references: [id])
+
+  assetId        String?   @unique @db.Uuid
+  asset          Asset?    @relation(fields: [assetId], references: [id])
+
+  basis          String    @db.VarChar(20)
+  intervalValue  Float
+  intervalMonths Int?
+
+  createdAt      DateTime  @default(now()) @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @db.Timestamptz
+
+  @@map("service_intervals")
+}
+
+model ServiceRecord {
+  id             String   @id @default(uuid()) @db.Uuid
+
+  assetId        String   @db.Uuid
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  serviceDate    DateTime @db.Timestamptz
+  meterAtService Float?
+  meterType      String   @db.VarChar(20)
+  serviceType    String?  @db.VarChar(100)
+  costCents      Int?
+  note           String?  @db.Text
+
+  jobNo          String?  @db.VarChar(50)
+  partsCents     Int?
+  labourCents    Int?
+  sundryCents    Int?
+  manpowerCents  Int?
+  sourceRef      String?  @unique @db.VarChar(100)
+
+  location         String?  @db.VarChar(100)
+  nextServiceMeter Float?
+  condition        String?  @db.VarChar(10)
+
+  items          ServiceItem[]
+  attachments    ServiceAttachment[]
+
+  recordedById   String   @db.Uuid
+  recordedBy     User     @relation("ServiceRecordedBy", fields: [recordedById], references: [id])
+
+  createdAt      DateTime @default(now()) @db.Timestamptz
+
+  @@index([assetId, serviceDate])
+  @@map("service_records")
+}
+
+model ServiceItem {
+  id              String        @id @default(uuid()) @db.Uuid
+
+  serviceRecordId String        @db.Uuid
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  kind            String        @db.VarChar(50)
+  description     String        @db.Text
+  partNo          String?       @db.VarChar(100)
+  action          String?       @db.VarChar(100)
+  qty             Float         @default(1)
+  unitPriceCents  Int?
+  amountCents     Int?
+
+  @@index([serviceRecordId])
+  @@map("service_items")
+}
+
+model Lubricant {
+  id                String   @id @default(uuid()) @db.Uuid
+  name              String   @db.VarChar(255)
+  oilType           String?  @db.VarChar(100)
+  unit              String   @default("L") @db.VarChar(20)
+  pricePerUnitCents Int?
+  note              String?  @db.Text
+  active            Boolean  @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@index([active, oilType])
+  @@map("lubricants")
+}
+
+model ServiceAttachment {
+  id              String        @id @default(uuid()) @db.Uuid
+
+  serviceRecordId String        @db.Uuid
+  serviceRecord   ServiceRecord @relation(fields: [serviceRecordId], references: [id], onDelete: Cascade)
+
+  fileName        String        @db.VarChar(255)
+  mimeType        String        @db.VarChar(100)
+  data            Bytes         @db.ByteA
+  uploadedById    String?       @db.Uuid
+
+  createdAt       DateTime      @default(now()) @db.Timestamptz
+
+  @@index([serviceRecordId])
+  @@map("service_attachments")
+}
+
+model Filter {
+  id          String  @id @default(uuid()) @db.Uuid
+  category    String? @db.VarChar(100)
+  oemPartNo   String? @db.VarChar(100)
+  hifiPartNo  String? @db.VarChar(100)
+  description String? @db.Text
+  priceCents  Int?
+  priceNote   String? @db.Text
+
+  crossRefs   FilterCrossRef[]
+  assetLinks  AssetFilter[]
+
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  @@map("filters")
+}
+
+model FilterCrossRef {
+  id           String @id @default(uuid()) @db.Uuid
+
+  filterId     String @db.Uuid
+  filter       Filter @relation(fields: [filterId], references: [id], onDelete: Cascade)
+
+  brand        String? @db.VarChar(100)
+  partNumber   String  @db.VarChar(100)
+  normalizedPN String  @db.VarChar(100)
+  refType      String? @db.VarChar(50)
+
+  @@index([normalizedPN])
+  @@index([filterId])
+  @@map("filter_cross_refs")
+}
+
+model AssetFilter {
+  id         String  @id @default(uuid()) @db.Uuid
+
+  filterId   String  @db.Uuid
+  filter     Filter  @relation(fields: [filterId], references: [id], onDelete: Cascade)
+
+  assetId    String? @db.Uuid
+  asset      Asset?  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  vehicleRef String  @db.VarChar(100)
+
+  @@index([assetId])
+  @@index([filterId])
+  @@map("asset_filters")
+}
+
+model ApiKey {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(255)
+  keyPrefix   String    @db.VarChar(50)
+  keyHash     String    @unique @db.VarChar(128)
+  scopes      String    @default("*") @db.Text
+  active      Boolean   @default(true)
+  createdById String?   @db.Uuid
+  createdBy   User?     @relation("ApiKeyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+  revokedAt   DateTime? @db.Timestamptz
+  lastUsedAt  DateTime? @db.Timestamptz
+
+  @@index([keyPrefix])
+  @@index([active])
+  @@map("api_keys")
+}
+
+// Transactional Outbox Pattern for resilient domain events & async workers (Master Plan Section 3 & 8)
+model OutboxMessage {
+  id            String    @id @default(uuid()) @db.Uuid
+  eventType     String    @db.VarChar(100)
+  aggregateType String    @db.VarChar(100)
+  aggregateId   String    @db.VarChar(255)
+  payloadJson   String    @db.Text
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  processedAt   DateTime? @db.Timestamptz
+  retryCount    Int       @default(0)
+  lastError     String?   @db.Text
+
+  @@index([createdAt, processedAt])
+  @@map("outbox_messages")
+}
