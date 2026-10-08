@@ -57,6 +57,30 @@ export function getOpenApiSpec() {
           },
           required: ["ok", "error"],
         },
+        ProblemDetails: {
+          type: "object",
+          description: "RFC 7807 compliant Problem Details error payload",
+          properties: {
+            type: {
+              type: "string",
+              format: "uri",
+              example: "https://fuelsystem.erp/errors/INSUFFICIENT_STOCK",
+            },
+            title: { type: "string", example: "Insufficient Bulk Tank Stock" },
+            status: { type: "integer", example: 422 },
+            detail: {
+              type: "string",
+              example: "Tank balance is insufficient for requested fuel dispatch volume.",
+            },
+            instance: { type: "string", example: "/api/v1/fuel/issues" },
+            code: { type: "string", example: "INSUFFICIENT_STOCK" },
+            errors: {
+              type: "object",
+              additionalProperties: { type: "array", items: { type: "string" } },
+            },
+          },
+          required: ["type", "title", "status", "detail", "code"],
+        },
       },
     },
     paths: {
@@ -176,17 +200,86 @@ export function getOpenApiSpec() {
           responses: { 200: { description: "List of fuel issues" } },
         },
         post: {
-          summary: "Record fuel issue / dispatch",
+          summary: "Record fuel issue / dispatch (IssueFuelCommand)",
           tags: ["Fuel"],
-          responses: { 201: { description: "Created fuel issue" } },
+          parameters: [
+            {
+              name: "X-Idempotency-Key",
+              in: "header",
+              required: false,
+              schema: { type: "string" },
+              description: "Unique idempotency key for replay-safe mutation (TX-02)",
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["assetIdOrCode", "fuelKind", "litres"],
+                  properties: {
+                    assetIdOrCode: { type: "string", example: "CAB-1001" },
+                    fuelKind: { type: "string", example: "AUTO_DIESEL" },
+                    litres: { type: "number", example: 45.0 },
+                    bulkTankId: { type: "string", format: "uuid" },
+                    projectId: { type: "string", format: "uuid" },
+                    meterReading: { type: "number", example: 12450.5 },
+                    driverName: { type: "string", example: "K. Perera" },
+                    slipNumber: { type: "string", example: "SL-9941" },
+                    notes: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            201: { description: "Created fuel issue record" },
+            400: {
+              description: "Bad Request / Validation Error",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+            409: {
+              description: "Idempotency key payload conflict",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+            422: {
+              description: "Unprocessable Entity (Insufficient stock or non-positive volume)",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+          },
         },
       },
       "/fuel/issues/{id}/void": {
         post: {
-          summary: "Void a fuel issue with audit explanation (Admin only)",
+          summary: "Void a fuel issue with audit explanation (VoidFuelIssueCommand)",
           tags: ["Fuel"],
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-          responses: { 200: { description: "Fuel issue voided" } },
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["reason"],
+                  properties: {
+                    reason: { type: "string", example: "Incorrect vehicle code entered at pump" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Fuel issue successfully voided and stock restored" },
+            404: {
+              description: "Fuel issue not found",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+            422: {
+              description: "Cannot void issue (Already voided or closed billing period)",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+          },
         },
       },
       "/fuel/requests": {
@@ -237,6 +330,43 @@ export function getOpenApiSpec() {
           tags: ["Tanks"],
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
           responses: { 201: { description: "Recorded tank dip" } },
+        },
+      },
+      "/tanks/{id}/transfers/approve": {
+        post: {
+          summary: "Approve bulk fuel tank transfer request (ApproveTransferCommand)",
+          tags: ["Tanks"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["transferRequestId"],
+                  properties: {
+                    transferRequestId: { type: "string", format: "uuid" },
+                    notes: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Bulk transfer approved and stock updated" },
+            403: {
+              description: "Forbidden (Insufficient tank management authority)",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+            404: {
+              description: "Transfer request or target tank not found",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+            422: {
+              description: "Insufficient stock in source tank or invalid status",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+          },
         },
       },
       "/readings": {
@@ -328,10 +458,24 @@ export function getOpenApiSpec() {
       },
       "/bills/{id}/issue": {
         post: {
-          summary: "Issue a draft bill into a formal invoice (Admin only)",
+          summary: "Issue a draft bill into a formal invoice (IssueInvoiceCommand)",
           tags: ["Billing"],
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-          responses: { 200: { description: "Invoice issued" } },
+          responses: {
+            200: { description: "Invoice successfully issued and finalized" },
+            403: {
+              description: "Forbidden (Insufficient billing authority)",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+            404: {
+              description: "Bill draft not found",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+            409: {
+              description: "Bill is already in ISSUED or PAID status",
+              content: { "application/problem+json": { schema: { $ref: "#/components/schemas/ProblemDetails" } } },
+            },
+          },
         },
       },
       "/bills/{id}/payments": {

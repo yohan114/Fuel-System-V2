@@ -32,3 +32,45 @@ export function err(code: string, message: string, status = 400, details?: unkno
   };
   return NextResponse.json(body, { status });
 }
+
+export interface Rfc7807ProblemDetails {
+  type: string;
+  title: string;
+  status: number;
+  detail: string;
+  instance?: string;
+  code: string;
+  errors?: Record<string, string[]>;
+  [key: string]: unknown;
+}
+
+/**
+ * Returns a standardized RFC 7807 (application/problem+json) response.
+ * Standard across ASP.NET Core (.NET 10 LTS) and modern Enterprise ERP APIs.
+ */
+export function problem(
+  status: number,
+  title: string,
+  detail: string,
+  code: string,
+  instance?: string,
+  extensions?: Record<string, unknown>
+) {
+  const body: Rfc7807ProblemDetails = {
+    type: `https://fuelsystem.erp/errors/${code}`,
+    title,
+    status,
+    detail,
+    code,
+    ...(instance ? { instance } : {}),
+    ...(extensions || {}),
+  };
+
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Content-Type": "application/problem+json",
+    },
+  });
+}
+
