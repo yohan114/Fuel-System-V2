@@ -3,6 +3,8 @@ import { requireApi } from "@/lib/api/auth";
 import { ok, err } from "@/lib/api/respond";
 import { closeMeterOutageSchema } from "@/lib/api/schemas";
 import { colomboDayKey, colomboDayStart } from "@/lib/colombo-date";
+import { isSiteUser } from "@/lib/roles";
+import { canUserAccessAsset } from "@/lib/assignments";
 
 export async function PATCH(
   req: Request,
@@ -56,6 +58,14 @@ async function handleClose(
 
     if (endDate < outage.startDate) {
       return err("VALIDATION_ERROR", "End date cannot be earlier than start date", 400);
+    }
+
+    // Site-scoped users may only close outages for assets allocated to their site (Master Plan SEC-02)
+    if (auth.user && isSiteUser(auth.role) && auth.user.projectId) {
+      const allowed = await canUserAccessAsset(auth.user, outage.asset.id, endDate);
+      if (!allowed) {
+        return err("FORBIDDEN", "This vehicle is not allocated to your site", 403);
+      }
     }
 
     const actorId = auth.user?.id || (await prisma.user.findFirst({ select: { id: true } }))?.id;

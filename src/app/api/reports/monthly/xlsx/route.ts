@@ -24,12 +24,18 @@ export async function GET(request: NextRequest) {
       ? resolvePeriod(yearParam, monthParam)
       : currentMonthPeriod(now);
 
-  // A site PM (USER) only ever sees their own project; admins/allocators may
-  // optionally scope with ?projectId=.
-  const projectId =
-    isSiteUser(session.role)
-      ? session.projectId ?? undefined
-      : searchParams.get("projectId") ?? undefined;
+  // Enforce fail-closed resource scoping (Master Plan SEC-02)
+  let projectId: string | undefined = undefined;
+  if (session.role === "ADMIN" || session.role === "ALLOCATOR") {
+    projectId = searchParams.get("projectId") ?? undefined;
+  } else if (isSiteUser(session.role)) {
+    if (!session.projectId) {
+      return new NextResponse("Forbidden — no site assigned to your account", { status: 403 });
+    }
+    projectId = session.projectId;
+  } else {
+    return new NextResponse("Forbidden — monthly reports require site or administrator privileges", { status: 403 });
+  }
 
   const monthLabel = new Date(period.year, period.month - 1, 1).toLocaleString("en-US", {
     month: "long",

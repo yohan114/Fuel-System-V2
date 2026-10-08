@@ -1,9 +1,9 @@
 import { prisma } from "@/lib/db";
 import { requireApi } from "@/lib/api/auth";
-import { ok } from "@/lib/api/respond";
+import { ok, err } from "@/lib/api/respond";
 import { parsePagination, paginationMeta } from "@/lib/api/pagination";
 import { currentMonthPeriod } from "@/lib/billing/period";
-import { isSiteUser } from "@/lib/roles";
+import { billingScope } from "@/lib/roles";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(req: Request) {
@@ -16,9 +16,15 @@ export async function GET(req: Request) {
   let projectId = url.searchParams.get("projectId") || "";
   const status = url.searchParams.get("status") || "";
 
-  // Scoping for site users
-  if (auth.user && isSiteUser(auth.role) && auth.user.projectId) {
-    projectId = auth.user.projectId;
+  // Enforce billing allow-list scoping (Master Plan SEC-02)
+  if (auth.user) {
+    const scope = billingScope(auth.user);
+    if (scope.kind === "none") {
+      return err("FORBIDDEN", "You do not have access to billing records", 403);
+    }
+    if (scope.kind === "project") {
+      projectId = scope.projectId;
+    }
   }
 
   const { page, perPage, skip, take } = parsePagination(req);

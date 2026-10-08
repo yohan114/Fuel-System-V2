@@ -7,8 +7,11 @@ import { loadConsolidatedBilling } from "@/lib/billing/consolidated-data";
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
-  if (!session || session.role !== "ADMIN") {
+  if (!session) {
     return new NextResponse("Unauthorized", { status: 401 });
+  }
+  if (session.role !== "ADMIN") {
+    return new NextResponse("Forbidden — consolidated billing documents require administrator privileges", { status: 403 });
   }
 
   const { searchParams } = new URL(request.url);

@@ -4,6 +4,8 @@ import { ok, err } from "@/lib/api/respond";
 import { parsePagination, paginationMeta } from "@/lib/api/pagination";
 import { openMeterOutageSchema } from "@/lib/api/schemas";
 import { colomboDayKey, colomboDayStart } from "@/lib/colombo-date";
+import { isSiteUser } from "@/lib/roles";
+import { canUserAccessAsset } from "@/lib/assignments";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(req: Request) {
@@ -117,6 +119,14 @@ export async function POST(req: Request) {
     const startDate = startDateStr
       ? colomboDayStart(colomboDayKey(startDateStr))
       : colomboDayStart(colomboDayKey(new Date()));
+
+    // Site-scoped users may only open outages for assets allocated to their site (Master Plan SEC-02)
+    if (auth.user && isSiteUser(auth.role) && auth.user.projectId) {
+      const allowed = await canUserAccessAsset(auth.user, asset.id, startDate);
+      if (!allowed) {
+        return err("FORBIDDEN", "This vehicle is not allocated to your site", 403);
+      }
+    }
 
     const outage = await prisma.$transaction(async (tx) => {
       const created = await tx.meterOutage.create({

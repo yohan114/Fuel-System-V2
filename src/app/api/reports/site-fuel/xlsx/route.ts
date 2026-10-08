@@ -17,7 +17,18 @@ export async function GET(request: NextRequest) {
   const y = parseInt(searchParams.get("year") || "", 10);
   const m = parseInt(searchParams.get("month") || "", 10);
   const period = y && m >= 1 && m <= 12 ? resolvePeriod(y, m) : currentMonthPeriod(new Date());
-  const projectId = isSiteUser(session.role) ? session.projectId ?? undefined : undefined;
+  // Enforce fail-closed resource scoping (Master Plan SEC-02)
+  let projectId: string | undefined = undefined;
+  if (session.role === "ADMIN" || session.role === "ALLOCATOR") {
+    projectId = searchParams.get("projectId") ?? undefined;
+  } else if (isSiteUser(session.role)) {
+    if (!session.projectId) {
+      return new NextResponse("Forbidden — no site assigned to your account", { status: 403 });
+    }
+    projectId = session.projectId;
+  } else {
+    return new NextResponse("Forbidden — site fuel reports require site or administrator privileges", { status: 403 });
+  }
   // Same default as the screen: a site sheet is read by the site, and the site
   // counts its own pump.
   const basis: ReportBasis = searchParams.get("basis") === "billed" ? "billed" : "pump";

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { requireApi } from "@/lib/api/auth";
 import { ok, err } from "@/lib/api/respond";
 import { parsePagination, paginationMeta } from "@/lib/api/pagination";
+import { billingScope } from "@/lib/roles";
 
 export async function GET(
   req: Request,
@@ -9,6 +10,18 @@ export async function GET(
 ) {
   const authResult = await requireApi(req, "read:billing");
   if ("error" in authResult) return authResult.error;
+
+  const { auth } = authResult;
+  let scopedProjectId: string | undefined = undefined;
+  if (auth.user) {
+    const scope = billingScope(auth.user);
+    if (scope.kind === "none") {
+      return err("FORBIDDEN", "You do not have access to view billing records", 403);
+    }
+    if (scope.kind === "project") {
+      scopedProjectId = scope.projectId;
+    }
+  }
 
   const { code } = await props.params;
   const asset = await prisma.asset.findUnique({
@@ -21,7 +34,10 @@ export async function GET(
   }
 
   const { page, perPage, skip, take } = parsePagination(req);
-  const where = { assetId: asset.id };
+  const where: any = { assetId: asset.id };
+  if (scopedProjectId) {
+    where.projectId = scopedProjectId;
+  }
 
   const [total, bills] = await Promise.all([
     prisma.bill.count({ where }),

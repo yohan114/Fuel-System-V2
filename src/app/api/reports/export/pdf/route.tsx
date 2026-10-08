@@ -109,10 +109,13 @@ function ReportDocument({ data, fromStr, toStr }: { data: any; fromStr: string; 
 }
 
 export async function GET(request: NextRequest) {
-  // 1. Verify credentials
+  // 1. Verify credentials and cross-site reporting privileges (Master Plan SEC-02)
   const session = await getSession();
   if (!session) {
     return new NextResponse("Unauthorized", { status: 401 });
+  }
+  if (session.role !== "ADMIN" && session.role !== "ALLOCATOR") {
+    return new NextResponse("Forbidden — cross-site fleet audit reports require administrator or allocator privileges", { status: 403 });
   }
 
   // 2. Extract and parse parameters

@@ -5,6 +5,8 @@ import { assertCan } from "@/lib/rbac";
 import { revalidatePath } from "next/cache";
 import { errorMessage } from "@/lib/errors";
 import { colomboDayKey, colomboDayStart } from "@/lib/colombo-date";
+import { isSiteUser } from "@/lib/roles";
+import { canUserAccessAsset } from "@/lib/assignments";
 
 export async function openMeterOutageAction(formData: FormData) {
   let user;
@@ -52,6 +54,14 @@ export async function openMeterOutageAction(formData: FormData) {
     }
 
     const startDate = colomboDayStart(colomboDayKey(startDateStr));
+
+    // Site-scoped users may only open outages for assets allocated to their site (Master Plan SEC-02)
+    if (isSiteUser(user.role) && user.projectId) {
+      const allowed = await canUserAccessAsset(user, asset.id, startDate);
+      if (!allowed) {
+        return { error: "This vehicle is not allocated to your site." };
+      }
+    }
 
     const outage = await prisma.$transaction(async (tx) => {
       const created = await tx.meterOutage.create({
@@ -133,6 +143,14 @@ export async function closeMeterOutageAction(formData: FormData) {
     const endDate = colomboDayStart(colomboDayKey(endDateStr));
     if (endDate < outage.startDate) {
       return { error: "End date cannot be earlier than start date" };
+    }
+
+    // Site-scoped users may only close outages for assets allocated to their site (Master Plan SEC-02)
+    if (isSiteUser(user.role) && user.projectId) {
+      const allowed = await canUserAccessAsset(user, outage.asset.id, endDate);
+      if (!allowed) {
+        return { error: "This vehicle is not allocated to your site." };
+      }
     }
 
     await prisma.$transaction(async (tx) => {

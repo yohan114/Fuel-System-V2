@@ -55,6 +55,10 @@ export function roleAllowsScope(role: string, requiredScope?: string): boolean {
     return requiredScope.startsWith("read:") || requiredScope === "write:assignments";
   }
   if (role === "WORKSHOP") {
+    // Workshop operator scope is distinct from commercial billing and rates (Master Plan SEC-02)
+    if (requiredScope === "read:billing" || requiredScope === "read:rates" || requiredScope === "read:budgets") {
+      return false;
+    }
     return (
       requiredScope.startsWith("read:") ||
       requiredScope === "write:fuel" ||
@@ -64,6 +68,10 @@ export function roleAllowsScope(role: string, requiredScope?: string): boolean {
     );
   }
   if (role === "SITE_PUMP") {
+    // Site pump scope operates local fuel pumping and logs; commercial billing and rates are restricted
+    if (requiredScope === "read:billing" || requiredScope === "read:rates" || requiredScope === "read:budgets") {
+      return false;
+    }
     return (
       requiredScope.startsWith("read:") ||
       requiredScope === "write:fuel" ||
@@ -73,6 +81,10 @@ export function roleAllowsScope(role: string, requiredScope?: string): boolean {
     );
   }
   if (role === "USER") {
+    // Site user / PM: reads fleet, fuel, own billing (further guarded by billingScope); rates are restricted
+    if (requiredScope === "read:rates") {
+      return false;
+    }
     return (
       requiredScope.startsWith("read:") ||
       requiredScope === "write:conditions" ||

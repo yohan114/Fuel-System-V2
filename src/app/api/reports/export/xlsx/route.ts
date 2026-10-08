@@ -10,6 +10,9 @@ export async function GET(request: NextRequest) {
   if (!session) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
+  if (session.role !== "ADMIN" && session.role !== "ALLOCATOR") {
+    return new NextResponse("Forbidden — cross-site fleet audit reports require administrator or allocator privileges", { status: 403 });
+  }
 
   const { searchParams } = request.nextUrl;
   const fromStr = searchParams.get("from");
