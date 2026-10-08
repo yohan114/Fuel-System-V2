@@ -111,3 +111,8 @@ data/app.db.pre-rotate-*
 # Scratch space for one-off audits — holds page images and throwaway probes.
 .audit_tmp/
 tmp-*.cjs
+
+# Rehearsal data snapshots & generated SQL imports (reproducible via scripts/rehearsal/)
+data/rehearsal/
+scripts/migrations/pg/002_rehearsal_data_import.sql
+
