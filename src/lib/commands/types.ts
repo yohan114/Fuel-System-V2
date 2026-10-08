@@ -15,5 +15,5 @@ export interface CommandContext {
 }
 
 export type CommandResult<T> =
-  | { success: true; data: T; message?: string }
-  | { success: false; error: string; code?: string; blocked?: boolean; reasons?: string[] };
+  | { success: true; data: T; message?: string; error?: undefined; code?: undefined; blocked?: undefined; reasons?: undefined }
+  | { success: false; error: string; code?: string; blocked?: boolean; reasons?: string[]; data?: undefined };
