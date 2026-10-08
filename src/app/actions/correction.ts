@@ -12,6 +12,7 @@ import {
   creditTankStockAtomically,
   adjustTankStockAtomically,
 } from "@/lib/fuel/stock-guard";
+import { periodKeyFor } from "@/lib/fuel/audit";
 
 const ALLOWED_MIME = (m: string) => m.startsWith("image/") || m === "application/pdf";
 const MAX_DOC_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -185,8 +186,42 @@ export async function approveCorrectionAction(correctionId: string, reviewNote: 
     });
     if (!corr) return { error: "Correction not found" };
     if (corr.status !== "PENDING") return { error: "This correction has already been reviewed" };
-
     const issue = corr.fuelIssue;
+
+    // Closed-period protection (Master Plan AUD-01): An invoice the client already holds does not quietly change.
+    const origPeriodKey = periodKeyFor(issue.issueDate);
+    const [origY, origM] = origPeriodKey.split("-").map(Number);
+    const origBill = await prisma.bill.findUnique({
+      where: { assetId_year_month: { assetId: issue.assetId, year: origY, month: origM } },
+      select: { status: true, invoiceNumber: true },
+    });
+    if (origBill && origBill.status !== "DRAFT") {
+      return {
+        error:
+          `${corr.assetCode}'s ${origPeriodKey} invoice is ${origBill.status}` +
+          `${origBill.invoiceNumber ? ` (${origBill.invoiceNumber})` : ""} and has gone to the client. ` +
+          `Cannot apply correction to a closed billing period; raise a credit note or revision instead.`,
+      };
+    }
+
+    if (corr.newIssueDate) {
+      const newPeriodKey = periodKeyFor(corr.newIssueDate);
+      if (newPeriodKey !== origPeriodKey) {
+        const [newY, newM] = newPeriodKey.split("-").map(Number);
+        const newBill = await prisma.bill.findUnique({
+          where: { assetId_year_month: { assetId: issue.assetId, year: newY, month: newM } },
+          select: { status: true, invoiceNumber: true },
+        });
+        if (newBill && newBill.status !== "DRAFT") {
+          return {
+            error:
+              `${corr.assetCode}'s ${newPeriodKey} invoice is ${newBill.status}` +
+              `${newBill.invoiceNumber ? ` (${newBill.invoiceNumber})` : ""} and has gone to the client. ` +
+              `Target billing period is closed.`,
+          };
+        }
+      }
+    }
 
     await prisma.$transaction(async (tx) => {
       let summary: string;

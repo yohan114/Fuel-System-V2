@@ -84,6 +84,17 @@ export async function POST(req: Request) {
       },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        actorId,
+        action: "CREATE",
+        entity: "MeterReading",
+        entityId: reading.id,
+        summary: `Recorded meter reading for ${asset.code} (${value} ${readingType}) via API`,
+        metaJson: JSON.stringify({ assetId, value, readingType, readingDate }),
+      },
+    });
+
     return ok(reading, undefined, 201);
   } catch (error) {
     console.error("[api/v1/readings POST] Error:", error);

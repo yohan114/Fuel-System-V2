@@ -88,6 +88,21 @@ export async function POST(req: Request) {
       },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        actorId,
+        action: "CREATE",
+        entity: "ServiceRecord",
+        entityId: service.id,
+        summary: `Created service record for ${asset.code} (${data.serviceType}) via API`,
+        metaJson: JSON.stringify({
+          serviceType: data.serviceType,
+          meterAtService: data.meterAtService,
+          costCents: data.costCents ?? 0,
+        }),
+      },
+    });
+
     return ok(service, undefined, 201);
   } catch (error) {
     console.error("[api/v1/services POST] Error:", error);

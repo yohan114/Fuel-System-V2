@@ -72,6 +72,17 @@ export async function POST(
       },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        actorId,
+        action: "CREATE",
+        entity: "BulkRequest",
+        entityId: request.id,
+        summary: `Created bulk fuel request for ${tank.name} (${requestedLitres}L) via API`,
+        metaJson: JSON.stringify({ bulkTankId: id, fuelKind: tank.fuelKind, requestedLitres }),
+      },
+    });
+
     return ok(request, undefined, 201);
   } catch (error) {
     console.error("[api/v1/tanks/[id]/bulk-requests POST] Error:", error);

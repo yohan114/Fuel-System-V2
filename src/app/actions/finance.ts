@@ -79,7 +79,19 @@ export async function createCreditNoteAction(formData: FormData) {
     const bill = await prisma.bill.findUnique({ where: { id: billId } });
     if (!bill) return { error: "Bill not found" };
     if (bill.status === "DRAFT") return { error: "Issue the invoice before crediting it" };
-    if (amountCents > bill.grandTotalCents) return { error: "Credit cannot exceed the invoice total" };
+
+    // Prevent repeated reversal beyond permitted value (Master Plan AUD-01)
+    const existingNotes = await prisma.creditNote.findMany({
+      where: { billId, status: { in: ["DRAFT", "ISSUED"] } },
+      select: { amountCents: true },
+    });
+    const totalExistingCredits = existingNotes.reduce((acc, n) => acc + n.amountCents, 0);
+    if (totalExistingCredits + amountCents > bill.grandTotalCents) {
+      const remainingAllowed = Math.max(0, bill.grandTotalCents - totalExistingCredits);
+      return {
+        error: `Credit exceeds invoice creditable balance. Maximum creditable amount is Rs. ${(remainingAllowed / 100).toLocaleString("en-LK")}`,
+      };
+    }
 
     const cn = await prisma.creditNote.create({
       data: { billId, reason, amountCents, status: "DRAFT", createdById: admin.id },
@@ -115,6 +127,16 @@ export async function issueCreditNoteAction(creditNoteId: string) {
       const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId }, include: { bill: true } });
       if (!cn) throw new Error("Credit note not found");
       if (cn.status !== "DRAFT") throw new Error("Credit note already issued");
+
+      // Prevent repeated reversal beyond permitted value (Master Plan AUD-01)
+      const existingIssuedNotes = await tx.creditNote.findMany({
+        where: { billId: cn.billId, id: { not: creditNoteId }, status: "ISSUED" },
+        select: { amountCents: true },
+      });
+      const totalIssuedCredits = existingIssuedNotes.reduce((acc, n) => acc + n.amountCents, 0);
+      if (totalIssuedCredits + cn.amountCents > cn.bill.grandTotalCents) {
+        throw new Error("Cannot issue credit note: cumulative issued credits exceed the invoice total");
+      }
 
       const issuedCount = await tx.creditNote.count({
         where: { status: "ISSUED", bill: { year: cn.bill.year, month: cn.bill.month } },

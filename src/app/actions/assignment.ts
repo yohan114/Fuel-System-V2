@@ -274,6 +274,36 @@ export async function deleteAssignmentAction(assignmentId: string) {
     });
     if (!assignment) return { error: "Assignment not found" };
 
+    // Historical invoice protection (Master Plan AUD-01):
+    // If an invoice is already finalized (non-DRAFT) for this asset in any month covered by the assignment,
+    // do not allow silent deletion of the assignment history.
+    const startYear = assignment.startDate.getFullYear();
+    const startMonth = assignment.startDate.getMonth() + 1;
+    const end = assignment.endDate ?? new Date();
+    const endYear = end.getFullYear();
+    const endMonth = end.getMonth() + 1;
+
+    const finalizedBills = await prisma.bill.findMany({
+      where: {
+        assetId: assignment.assetId,
+        status: { not: "DRAFT" },
+      },
+      select: { year: true, month: true, invoiceNumber: true, periodKey: true, status: true },
+    });
+
+    const conflictingBill = finalizedBills.find((b) => {
+      const bVal = b.year * 12 + b.month;
+      const sVal = startYear * 12 + startMonth;
+      const eVal = endYear * 12 + endMonth;
+      return bVal >= sVal && bVal <= eVal;
+    });
+
+    if (conflictingBill) {
+      return {
+        error: `Cannot delete assignment: ${assignment.asset.code} has a finalized ${conflictingBill.status} invoice (${conflictingBill.invoiceNumber || conflictingBill.periodKey}) during this period. Preserve allocation history or issue an invoice amendment.`,
+      };
+    }
+
     await prisma.assetAssignment.delete({ where: { id: assignmentId } });
     await syncAssetCurrentProject(assignment.assetId);
 

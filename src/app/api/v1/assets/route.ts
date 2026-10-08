@@ -108,6 +108,17 @@ export async function POST(req: Request) {
       },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        actorId: auth.user?.id ?? null,
+        action: "CREATE",
+        entity: "Asset",
+        entityId: asset.id,
+        summary: `Created asset ${asset.code} (${asset.regNo || asset.brand || "—"}) via API`,
+        metaJson: JSON.stringify({ code: asset.code, regNo: asset.regNo, categoryId: data.categoryId, projectId: data.projectId }),
+      },
+    });
+
     return ok(asset, undefined, 201);
   } catch (error) {
     console.error("[api/v1/assets POST] Error:", error);

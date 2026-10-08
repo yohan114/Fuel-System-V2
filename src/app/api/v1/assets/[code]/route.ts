@@ -68,6 +68,17 @@ export async function PATCH(
       },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        actorId: auth.user?.id ?? null,
+        action: "UPDATE",
+        entity: "Asset",
+        entityId: existing.id,
+        summary: `Updated asset ${existing.code} via API`,
+        metaJson: JSON.stringify(parsed.data),
+      },
+    });
+
     return ok(updated);
   } catch (error) {
     console.error(`[api/v1/assets/${code} PATCH] Error:`, error);
@@ -99,6 +110,17 @@ export async function DELETE(
   const disposed = await prisma.asset.update({
     where: { id: existing.id },
     data: { status: "DISPOSED" },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      actorId: auth.user?.id ?? null,
+      action: "UPDATE",
+      entity: "Asset",
+      entityId: existing.id,
+      summary: `Disposed asset ${existing.code} via API`,
+      metaJson: JSON.stringify({ previousStatus: existing.status, newStatus: "DISPOSED" }),
+    },
   });
 
   return ok({ message: "Asset marked as DISPOSED", asset: disposed });

@@ -76,6 +76,17 @@ export async function POST(
       },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        actorId,
+        action: "CREATE",
+        entity: "TankDip",
+        entityId: dip.id,
+        summary: `Recorded tank dip for ${tank.name}: ${measuredLitres}L (variance: ${variance > 0 ? "+" : ""}${variance.toFixed(1)}L) via API`,
+        metaJson: JSON.stringify({ bulkTankId: id, dipLitres: measuredLitres, computedBalance, variance }),
+      },
+    });
+
     return ok(dip, undefined, 201);
   } catch (error) {
     console.error("[api/v1/tanks/[id]/dips POST] Error:", error);

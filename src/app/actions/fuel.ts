@@ -658,6 +658,43 @@ export async function editFuelIssueAction(issueId: string, formData: FormData) {
       return { error: "Fuel issue not found" };
     }
 
+    if (oldIssue.voided) {
+      return { error: "Cannot edit a voided fuel issue. Restore it first if necessary." };
+    }
+
+    // Closed-period protection (Master Plan AUD-01): An invoice the client already holds does not quietly change.
+    const oldPeriodKey = periodKeyFor(oldIssue.issueDate);
+    const [oldY, oldM] = oldPeriodKey.split("-").map(Number);
+    const oldBill = await prisma.bill.findUnique({
+      where: { assetId_year_month: { assetId: oldIssue.assetId, year: oldY, month: oldM } },
+      select: { status: true, invoiceNumber: true },
+    });
+    if (oldBill && oldBill.status !== "DRAFT") {
+      return {
+        error:
+          `${oldIssue.asset.code}'s ${oldPeriodKey} invoice is ${oldBill.status}` +
+          `${oldBill.invoiceNumber ? ` (${oldBill.invoiceNumber})` : ""} and has gone to the client. ` +
+          `Raise a credit note rather than editing the fuel behind it.`,
+      };
+    }
+
+    const newPeriodKey = periodKeyFor(issueDate);
+    if (newPeriodKey !== oldPeriodKey) {
+      const [newY, newM] = newPeriodKey.split("-").map(Number);
+      const newBill = await prisma.bill.findUnique({
+        where: { assetId_year_month: { assetId: oldIssue.assetId, year: newY, month: newM } },
+        select: { status: true, invoiceNumber: true },
+      });
+      if (newBill && newBill.status !== "DRAFT") {
+        return {
+          error:
+            `${oldIssue.asset.code}'s ${newPeriodKey} invoice is ${newBill.status}` +
+            `${newBill.invoiceNumber ? ` (${newBill.invoiceNumber})` : ""} and has gone to the client. ` +
+            `Target billing period is closed.`,
+        };
+      }
+    }
+
     if (!fuelKind) {
       fuelKind = oldIssue.fuelKind;
     }

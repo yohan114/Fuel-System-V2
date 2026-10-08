@@ -41,6 +41,7 @@ export async function PATCH(
 ) {
   const authResult = await requireApi(req, "write:services");
   if ("error" in authResult) return authResult.error;
+  const { auth } = authResult;
 
   const { id } = await props.params;
 
@@ -64,6 +65,17 @@ export async function PATCH(
       data,
       include: {
         asset: { select: { id: true, code: true, regNo: true } },
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: auth.user?.id || (await prisma.user.findFirst({ select: { id: true } }))?.id || null,
+        action: "UPDATE",
+        entity: "ServiceRecord",
+        entityId: id,
+        summary: `Updated service record for ${updated.asset?.code || existing.assetId} via API`,
+        metaJson: JSON.stringify(parsed.data),
       },
     });
 
@@ -93,5 +105,16 @@ export async function DELETE(
   }
 
   await prisma.serviceRecord.delete({ where: { id } });
+
+  await prisma.auditLog.create({
+    data: {
+      actorId: auth.user?.id || (await prisma.user.findFirst({ select: { id: true } }))?.id || null,
+      action: "DELETE",
+      entity: "ServiceRecord",
+      entityId: id,
+      summary: `Deleted service record ${id} for asset ${existing.assetId} via API`,
+    },
+  });
+
   return ok({ message: "Service record deleted successfully", id });
 }

@@ -60,6 +60,17 @@ export async function POST(req: Request) {
       },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        actorId: auth.user?.id ?? null,
+        action: "CREATE",
+        entity: "Project",
+        entityId: project.id,
+        summary: `Created project ${name} (${code}) via API`,
+        metaJson: JSON.stringify({ name, code, contactName, contactEmail }),
+      },
+    });
+
     return ok(project, undefined, 201);
   } catch (error) {
     console.error("[api/v1/projects POST] Error:", error);
