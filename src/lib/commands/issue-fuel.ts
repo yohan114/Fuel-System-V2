@@ -12,6 +12,7 @@ import {
   InsufficientStockError,
 } from "@/lib/fuel/stock-guard";
 import type { CommandContext, CommandResult } from "./types";
+import { emitOutboxEvent } from "@/lib/fuel/outbox";
 
 export interface IssueFuelCommand {
   assetIdOrCode: string;
@@ -263,6 +264,25 @@ export async function executeIssueFuel(
             bulkTankId: effectiveTankId ?? null,
             totalCost,
           }),
+        },
+      });
+
+      // Emit transactional domain outbox message (Master Plan Section 8, Step 9)
+      await emitOutboxEvent(tx, {
+        eventType: "FuelIssued",
+        aggregateType: "FuelIssue",
+        aggregateId: issue.id,
+        idempotencyKey,
+        payload: {
+          issueId: issue.id,
+          assetCode: asset.code,
+          litres,
+          fuelKind: cmd.fuelKind,
+          totalCost,
+          unitPrice: resolvedPrice.pricePerLitre,
+          bulkTankId: effectiveTankId ?? null,
+          issuedById: ctx.actorId,
+          issueDate: issueDate.toISOString(),
         },
       });
 

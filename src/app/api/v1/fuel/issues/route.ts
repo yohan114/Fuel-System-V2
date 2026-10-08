@@ -8,7 +8,7 @@ import {
   formatIdempotencyKey,
   InsufficientStockError,
 } from "@/lib/fuel/stock-guard";
-import { executeIssueFuel } from "@/lib/commands";
+import { dispatchIssueFuel } from "@/lib/fuel/write-gateway";
 
 export async function GET(req: Request) {
   const authResult = await requireApi(req, "read:fuel");
@@ -77,7 +77,7 @@ export async function POST(req: Request) {
 
     const rawKey = data.idempotencyKey || req.headers.get("Idempotency-Key") || req.headers.get("X-Idempotency-Key");
 
-    const cmdResult = await executeIssueFuel(
+    const cmdResult = await dispatchIssueFuel(
       {
         assetIdOrCode: data.assetId,
         fuelKind: data.fuelKind,

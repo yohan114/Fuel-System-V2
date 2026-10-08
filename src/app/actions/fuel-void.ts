@@ -7,8 +7,7 @@ import { errorMessage } from "@/lib/errors";
 import { logFuelIssueChange, periodKeyFor } from "@/lib/fuel/audit";
 import { resolvePeriod } from "@/lib/billing/period";
 import { generateBillForAsset } from "@/lib/billing/generate";
-import { adjustTankStockAtomically } from "@/lib/fuel/stock-guard";
-import { executeVoidFuelIssue } from "@/lib/commands";
+import { dispatchVoidFuelIssue } from "@/lib/fuel/write-gateway";
 
 // Taking a fuel issue out of the books, and putting it back.
 //
@@ -126,7 +125,7 @@ async function setVoided(issueId: string, voided: boolean, reason: string | null
     return { error: "You are not authorized to change fuel issues" };
   }
 
-  const result = await executeVoidFuelIssue(
+  const result = await dispatchVoidFuelIssue(
     { issueId, reason: reason ?? "", voided },
     {
       actorId: admin.id,

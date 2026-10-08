@@ -4,6 +4,7 @@ import { resolvePeriod } from "@/lib/billing/period";
 import { generateBillForAsset } from "@/lib/billing/generate";
 import { adjustTankStockAtomically } from "@/lib/fuel/stock-guard";
 import type { CommandContext, CommandResult } from "./types";
+import { emitOutboxEvent } from "@/lib/fuel/outbox";
 
 export interface VoidFuelIssueCommand {
   issueId: string;
@@ -119,6 +120,23 @@ export async function executeVoidFuelIssue(
         meterReading: "unchanged",
         periodKey,
         reason: reason || null,
+      });
+
+      // Emit transactional domain outbox message (Master Plan Section 8, Step 9)
+      await emitOutboxEvent(tx, {
+        eventType: "FuelVoided",
+        aggregateType: "FuelIssue",
+        aggregateId: issue.id,
+        payload: {
+          issueId: issue.id,
+          assetCode: issue.asset.code,
+          litres: issue.litres,
+          voided,
+          tankId: issue.bulkTankId,
+          deltaLitres: issue.bulkTankId ? delta : 0,
+          reason,
+          actorId: ctx.actorId,
+        },
       });
     });
 

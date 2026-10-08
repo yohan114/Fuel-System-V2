@@ -20,7 +20,7 @@ import {
   formatIdempotencyKey,
   findExistingIdempotentIssue,
 } from "@/lib/fuel/stock-guard";
-import { executeIssueFuel } from "@/lib/commands";
+import { dispatchIssueFuel } from "@/lib/fuel/write-gateway";
 
 // How far back an admin may date a fuel issue before having to say why. A week
 // covers the ordinary case — a site sends its sheets in on Monday — without
@@ -408,7 +408,7 @@ export async function recordDirectIssueAction(formData: FormData) {
       return { error: "A pump/meter photo is required to record a fuel issue." };
     }
 
-    const cmdResult = await executeIssueFuel(
+    const cmdResult = await dispatchIssueFuel(
       {
         assetIdOrCode: assetId,
         fuelKind,
