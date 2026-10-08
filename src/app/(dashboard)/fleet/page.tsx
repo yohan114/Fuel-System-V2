@@ -1,13 +1,19 @@
 import { isSiteUser } from "@/lib/roles";
 import React from "react";
 import { prisma } from "@/lib/db";
-import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
-import { Search, Filter, Car, Gauge, Plus } from "lucide-react";
+import { Search, Plus } from "lucide-react";
+import { getFleetAssetsPaginated } from "@/lib/fleet/query-assets";
+import FleetTableClient from "./FleetTableClient";
 
 interface PageProps {
-  searchParams: Promise<{ q?: string; category?: string }>;
+  searchParams: Promise<{
+    q?: string;
+    category?: string;
+    page?: string;
+    limit?: string;
+  }>;
 }
 
 export default async function FleetPage(props: PageProps) {
@@ -17,54 +23,37 @@ export default async function FleetPage(props: PageProps) {
   const searchParams = await props.searchParams;
   const q = searchParams.q || "";
   const categoryCode = searchParams.category || "";
+  const page = searchParams.page;
+  const limit = searchParams.limit;
 
   // 1. Fetch categories for filters
   const categories = await prisma.category.findMany({
     orderBy: { code: "asc" },
   });
 
-  // 2. Build where clause
-  const where: Prisma.AssetWhereInput = {
-    status: {
-      in: ["ACTIVE", "INACTIVE"], // Excluding DISPOSED assets by default
-    },
-    ...(isSiteUser(session.role) && session.projectId ? {
-      projectId: session.projectId
-    } : {}),
-  };
+  // 2. Query paginated assets with narrow projections
+  const { data: assets, pagination } = await getFleetAssetsPaginated({
+    q,
+    categoryCode,
+    projectId: session.projectId,
+    role: session.role,
+    page,
+    limit,
+  });
 
-  if (categoryCode) {
-    where.category = {
-      code: categoryCode,
-    };
-  }
+  // Context for empty state
+  const scopedTo =
+    isSiteUser(session.role) && session.projectId
+      ? (
+          await prisma.project.findUnique({
+            where: { id: session.projectId },
+            select: { code: true },
+          })
+        )?.code ?? "its site"
+      : null;
 
-  if (q) {
-    where.OR = [
-      { code: { contains: q } },
-      { brand: { contains: q } },
-      { model: { contains: q } },
-      { regNo: { contains: q } },
-      { site: { contains: q } },
-    ];
-  }
-
-  // Context for the empty state: the site this login is pinned to, if any, and
-  // how many machines exist regardless of the filter.
-  const scopedTo = isSiteUser(session.role) && session.projectId
-    ? (await prisma.project.findUnique({ where: { id: session.projectId }, select: { code: true } }))?.code ?? "its site"
-    : null;
-  const fleetTotal = await prisma.asset.count({ where: { status: { in: ["ACTIVE", "INACTIVE"] } } });
-
-  // 3. Query matching assets
-  const assets = await prisma.asset.findMany({
-    where,
-    include: {
-      category: true,
-    },
-    orderBy: {
-      code: "asc",
-    },
+  const fleetTotal = await prisma.asset.count({
+    where: { status: { in: ["ACTIVE", "INACTIVE"] } },
   });
 
   return (
@@ -74,10 +63,11 @@ export default async function FleetPage(props: PageProps) {
         <div>
           <h1 className="text-xl font-bold text-white tracking-wide">Fleet Directory</h1>
           <p className="text-xs text-gray-400 mt-1">
-            Displaying {assets.length} assets. Manage, inspect specifications, and verify running efficiency logs.
+            Displaying {pagination.totalCount.toLocaleString()} assets (Page {pagination.page} of{" "}
+            {pagination.totalPages}). Manage, inspect specifications, and verify running efficiency logs.
           </p>
         </div>
-        
+
         {session.role === "ADMIN" && (
           <Link
             href="/fleet/new"
@@ -148,7 +138,7 @@ export default async function FleetPage(props: PageProps) {
               : "bg-white/5 text-gray-400 hover:text-white border border-transparent"
           }`}
         >
-          All ({assets.length})
+          All ({fleetTotal.toLocaleString()})
         </Link>
         {categories.map((cat) => {
           const isActive = categoryCode === cat.code;
@@ -169,13 +159,9 @@ export default async function FleetPage(props: PageProps) {
       </div>
 
       {/* Assets Grid / Table */}
-      {assets.length === 0 ? (
+      {pagination.totalCount === 0 ? (
         <div className="bg-[#121420] border border-white/5 rounded-2xl py-16 text-center text-sm text-gray-500 space-y-2">
           <p>No fleet assets matching your criteria were found.</p>
-          {/* An empty directory has three quite different causes and the reader
-              cannot tell them apart from a bare "none found". A site login is
-              scoped to its own site and will show nothing when that site holds no
-              machines — which looks identical to a bad search term. */}
           {scopedTo ? (
             <p className="text-xs text-gray-600">
               This login only sees machines posted to <span className="text-gray-400">{scopedTo}</span>
@@ -194,117 +180,11 @@ export default async function FleetPage(props: PageProps) {
           )}
         </div>
       ) : (
-        <>
-          {/* Desktop Table View */}
-          <div className="hidden lg:block bg-[#121420] border border-white/5 rounded-2xl overflow-hidden shadow-xl">
-            <table className="w-full border-collapse text-left text-xs">
-              <thead>
-                <tr className="bg-white/5 text-gray-400 border-b border-white/5">
-                  <th className="px-6 py-4 font-semibold">E&C Number</th>
-                  <th className="px-6 py-4 font-semibold">Category</th>
-                  <th className="px-6 py-4 font-semibold">Brand / Model</th>
-                  <th className="px-6 py-4 font-semibold">Registration No</th>
-                  <th className="px-6 py-4 font-semibold">Site Location</th>
-                  <th className="px-6 py-4 font-semibold">Meter Type</th>
-                  <th className="px-6 py-4 font-semibold text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {assets.map((asset) => (
-                  <tr
-                    key={asset.id}
-                    className="hover:bg-white/[0.02] transition-colors"
-                  >
-                    <td className="px-6 py-4">
-                      <Link
-                        href={`/fleet/${asset.code}`}
-                        className="font-bold text-white hover:text-indigo-400 tracking-wide transition-colors"
-                      >
-                        {asset.code}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-4 text-gray-400">
-                      <span className="bg-white/5 border border-white/5 px-2 py-1 rounded-md text-[10px] font-semibold text-gray-300">
-                        {asset.category.name}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="font-semibold text-white">{asset.brand || "—"}</span>
-                      <span className="text-gray-500 ml-1.5">{asset.model || ""}</span>
-                    </td>
-                    <td className="px-6 py-4 text-gray-300 font-mono">
-                      {asset.regNo || "—"}
-                    </td>
-                    <td className="px-6 py-4 text-gray-400">
-                      {asset.site || "—"}
-                    </td>
-                    <td className="px-6 py-4 text-gray-400 font-semibold">
-                      <span className="flex items-center gap-1.5">
-                        <Gauge className="w-3.5 h-3.5 text-gray-500" />
-                        {asset.meterType}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <Link
-                        href={`/fleet/${asset.code}`}
-                        className="text-indigo-400 hover:text-indigo-300 font-bold hover:underline"
-                      >
-                        Inspect Details &rarr;
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile Card View */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:hidden gap-4">
-            {assets.map((asset) => (
-              <div
-                key={asset.id}
-                className="bg-[#121420] border border-white/5 rounded-2xl p-5 shadow-lg flex flex-col justify-between gap-4"
-              >
-                <div>
-                  <div className="flex items-center justify-between">
-                    <Link
-                      href={`/fleet/${asset.code}`}
-                      className="text-base font-bold text-white hover:text-indigo-400 tracking-wide"
-                    >
-                      {asset.code}
-                    </Link>
-                    <span className="bg-indigo-500/10 border border-indigo-500/10 text-indigo-400 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
-                      {asset.category.code}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-white font-semibold mt-2">
-                    {asset.brand || "—"} {asset.model || ""}
-                  </p>
-                  <p className="text-xs text-gray-400 font-mono mt-1">
-                    Reg: {asset.regNo || "—"}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Site: {asset.site || "—"}
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between border-t border-white/5 pt-4 mt-1">
-                  <span className="text-xs text-gray-400 font-semibold flex items-center gap-1">
-                    <Gauge className="w-3.5 h-3.5 text-gray-500" />
-                    {asset.meterType}
-                  </span>
-                  <Link
-                    href={`/fleet/${asset.code}`}
-                    className="text-xs text-indigo-400 hover:text-indigo-300 font-bold"
-                  >
-                    View Details &rarr;
-                  </Link>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
+        <FleetTableClient
+          data={assets}
+          pagination={pagination}
+          isAdmin={session.role === "ADMIN"}
+        />
       )}
     </div>
   );
