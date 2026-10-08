@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireApi } from "@/lib/api/auth";
+import { checkRateLimit, formatRateLimitHeaders } from "@/lib/cache/rate-limiter";
 import {
   getDomainService,
   FuelService,
@@ -28,6 +29,15 @@ export async function GET(
   const user = authResult.auth.user;
   if (!user) {
     return NextResponse.json({ success: false, error: "Unauthorized user" }, { status: 401 });
+  }
+
+  // Rate limit protection: 300 requests per minute
+  const rl = await checkRateLimit(`get:${user.id}`, 300, 60);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { success: false, error: "Rate limit exceeded. Please wait before retrying." },
+      { status: 429, headers: formatRateLimitHeaders(rl) }
+    );
   }
 
   try {
@@ -116,6 +126,15 @@ export async function POST(
   const user = authResult.auth.user;
   if (!user) {
     return NextResponse.json({ success: false, error: "Unauthorized user" }, { status: 401 });
+  }
+
+  // Rate limit protection: 120 write requests per minute
+  const rl = await checkRateLimit(`post:${user.id}`, 120, 60);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { success: false, error: "Rate limit exceeded for write operations. Please wait before retrying." },
+      { status: 429, headers: formatRateLimitHeaders(rl) }
+    );
   }
 
   const body = await req.json().catch(() => ({}));
