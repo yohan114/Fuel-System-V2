@@ -18,9 +18,19 @@ import { computeSiteSplit, type SplitLineItem } from "@/lib/billing/site-split";
 import { apportionCents } from "@/lib/billing/site-explode";
 import { buildSiteRoster } from "@/lib/billing/site-roster";
 import SiteBillingAdvanced from "./components/SiteBillingAdvanced";
+import { normalizePaginationParams, buildPaginationMeta } from "@/lib/pagination/paginate";
+import { recordRouteLatency } from "@/lib/observability/timing";
 
 interface PageProps {
-  searchParams: Promise<{ month?: string; site?: string; status?: string; check?: string; q?: string }>;
+  searchParams: Promise<{
+    month?: string;
+    site?: string;
+    status?: string;
+    check?: string;
+    q?: string;
+    page?: string;
+    limit?: string;
+  }>;
 }
 
 // Fuel-implied units vs the running-chart units, from the bill's snapshots
@@ -45,6 +55,7 @@ function rs(cents: number) {
 }
 
 export default async function BillingPage(props: PageProps) {
+  const startPerf = performance.now();
   const session = await getSession();
   if (!session) return null;
 
@@ -169,6 +180,7 @@ export default async function BillingPage(props: PageProps) {
     if (siteFilter !== "all") p.set("site", siteFilter);
     if (statusFilter !== "all") p.set("status", statusFilter);
     if (checkFilter) p.set("check", "clarify");
+    if (searchParams.limit) p.set("limit", searchParams.limit);
     if (q) p.set("q", q);
     return `/billing?${p.toString()}`;
   };
@@ -373,33 +385,48 @@ export default async function BillingPage(props: PageProps) {
         <div className="text-center py-16 text-sm text-gray-500 bg-[#121420] border border-white/5 rounded-2xl">
           No bills for {monthLabel}.{isAdmin ? " Use Generate Monthly Bills above." : ""}
         </div>
-      ) : (
-        <BillsTable
-          isAdmin={isAdmin}
-          initialSearch={search}
-          searchBaseHref={keepFilters("")}
-          bills={bills.map((b) => {
-            const v = meterVsFuelVariance(b);
-            return {
-              id: b.id,
-              assetCode: b.assetCode,
-              assetRegNo: b.assetRegNo,
-              assetLabel: b.assetLabel,
-              projectName: b.projectName,
-              billingMode: b.billingMode,
-              rateBasis: b.rateBasis,
-              billableUnits: b.billableUnits,
-              rateCents: b.rateCents,
-              rentalAmountCents: b.rentalAmountCents,
-              fuelCostCents: b.fuelCostCents,
-              grandTotalCents: b.grandTotalCents,
-              status: b.status,
-              meterCheck: needsClarify(v) ? formatVariancePct(v) : null,
-              portion: b.portion ?? null,
-            };
-          })}
-        />
-      )}
+      ) : (() => {
+        const { page: currPage, limit: currLimit, skip } = normalizePaginationParams({
+          page: searchParams.page,
+          limit: searchParams.limit,
+        });
+
+        const allBillRows = bills.map((b) => {
+          const v = meterVsFuelVariance(b);
+          return {
+            id: b.id,
+            assetCode: b.assetCode,
+            assetRegNo: b.assetRegNo,
+            assetLabel: b.assetLabel,
+            projectName: b.projectName,
+            billingMode: b.billingMode,
+            rateBasis: b.rateBasis,
+            billableUnits: b.billableUnits,
+            rateCents: b.rateCents,
+            rentalAmountCents: b.rentalAmountCents,
+            fuelCostCents: b.fuelCostCents,
+            grandTotalCents: b.grandTotalCents,
+            status: b.status,
+            meterCheck: needsClarify(v) ? formatVariancePct(v) : null,
+            portion: b.portion ?? null,
+          };
+        });
+
+        const paginatedBills = allBillRows.slice(skip, skip + currLimit);
+        const pagination = buildPaginationMeta(allBillRows.length, currPage, currLimit);
+
+        recordRouteLatency("billing_page_load", performance.now() - startPerf);
+
+        return (
+          <BillsTable
+            isAdmin={isAdmin}
+            initialSearch={search}
+            searchBaseHref={keepFilters("")}
+            bills={paginatedBills}
+            pagination={pagination}
+          />
+        );
+      })()}
     </div>
   );
 }
