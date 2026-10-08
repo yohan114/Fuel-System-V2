@@ -11,6 +11,7 @@ import QuickActions from "./components/QuickActions";
 import DashboardCharts from "./components/DashboardCharts";
 import ConditionWidget from "./components/ConditionWidget";
 import { approveRequestAction, rejectRequestAction } from "@/app/actions/fuel";
+import { recordRouteLatency } from "@/lib/observability/timing";
 import { 
   Fuel, 
   TrendingUp, 
@@ -104,6 +105,7 @@ export default async function DashboardPage() {
   // eight of them and they used to be awaited in strict order. In parallel the
   // whole dashboard pays close to the cost of its single slowest query, not
   // their sum.
+  const startPerf = performance.now();
   const [
     recordableTanks,
     activeAssetsCount,
@@ -134,12 +136,23 @@ export default async function DashboardPage() {
       where: {
         issueDate: { gte: startOfMonth, lte: endOfMonth },
         ...assetIdIn(fuelAllowedIds),
+        voided: false,
       },
       orderBy: { issueDate: "asc" },
-      omit: { photoData: true },
-      include: { asset: { select: { projectId: true } } },
+      select: {
+        issueDate: true,
+        litres: true,
+        totalCost: true,
+        fuelKind: true,
+        assetId: true,
+        asset: { select: { projectId: true } },
+      },
     }),
-    prisma.fuelPrice.findMany({ orderBy: { effectiveFrom: "desc" } }),
+    prisma.fuelPrice.findMany({
+      orderBy: { effectiveFrom: "desc" },
+      take: 12,
+      select: { id: true, fuelKind: true, pricePerLitre: true, effectiveFrom: true },
+    }),
     prisma.asset.findMany({
       where: {
         status: { in: ["ACTIVE", "INACTIVE"] },
@@ -159,23 +172,53 @@ export default async function DashboardPage() {
       orderBy: { code: "asc" },
     }),
     prisma.fuelIssue.findMany({
-      where: { ...assetIdIn(fuelAllowedIds) },
+      where: { ...assetIdIn(fuelAllowedIds), voided: false },
       take: fuelAllowedIds ? 40 : 5,
       orderBy: { issueDate: "desc" },
-      omit: { photoData: true },
-      include: {
-        asset: true,
-        issuedBy: true,
+      select: {
+        id: true,
+        issueDate: true,
+        litres: true,
+        totalCost: true,
+        fuelKind: true,
+        source: true,
+        assetId: true,
+        asset: {
+          select: {
+            id: true,
+            code: true,
+            regNo: true,
+            projectId: true,
+          },
+        },
+        issuedBy: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     }),
     prisma.fuelRequest.findMany({
       where: { status: "PENDING", ...assetIdIn(currentFleetIds) },
       take: 5,
       orderBy: { createdAt: "desc" },
-      omit: { photoData: true },
-      include: {
-        asset: true,
-        requestedBy: true,
+      select: {
+        id: true,
+        requestedLitres: true,
+        createdAt: true,
+        asset: {
+          select: {
+            id: true,
+            code: true,
+          },
+        },
+        requestedBy: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     }),
     prisma.auditLog.findFirst({
@@ -183,9 +226,12 @@ export default async function DashboardPage() {
         action: "PRICE_REFRESH",
         summary: { contains: "failed" },
       },
+      select: { id: true, createdAt: true, summary: true },
       orderBy: { createdAt: "desc" },
     }),
   ]);
+
+  recordRouteLatency("dashboard_load", performance.now() - startPerf);
   const issuesThisMonth = isSite
     ? monthRaw.filter((i) => issueMatchesSite(i.assetId, i.issueDate, i.asset.projectId))
     : monthRaw;
