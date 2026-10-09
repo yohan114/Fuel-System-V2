@@ -13,6 +13,7 @@ import { ProcurementModule } from "./modules/procurement/procurement.module";
 import { InventoryModule } from "./modules/inventory/inventory.module";
 import { MaintenanceModule } from "./modules/maintenance/maintenance.module";
 import { FinanceModule } from "./modules/finance/finance.module";
+import { IntegrationModule } from "./modules/integration/integration.module";
 import { PrismaService } from "./common/prisma.service";
 
 @Module({
@@ -25,6 +26,7 @@ import { PrismaService } from "./common/prisma.service";
     InventoryModule,
     MaintenanceModule,
     FinanceModule,
+    IntegrationModule,
   ],
   providers: [PrismaService],
   exports: [PrismaService],
