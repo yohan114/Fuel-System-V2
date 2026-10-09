@@ -66,6 +66,15 @@ const ALLOWED_ORIGINS = [
 ];
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: [
+    "@nestjs/core",
+    "@nestjs/common",
+    "@nestjs/testing",
+    "ioredis",
+    "kafkajs",
+    "bullmq",
+    "better-sqlite3",
+  ],
   allowedDevOrigins: ALLOWED_ORIGINS,
   experimental: {
     serverActions: {
