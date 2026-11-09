@@ -24,7 +24,24 @@ import Database from "better-sqlite3";
 import { prisma } from "../db";
 import { checkServiceMeter } from "./meter-trust";
 
-export const DEFAULT_WORKSHOP_DB = "D:/Master system 1/data/workshopone.db";
+import fs from "fs";
+
+export function resolveWorkshopDb(): string {
+  if (process.env.WORKSHOP_DB_PATH) return process.env.WORKSHOP_DB_PATH;
+  const candidates = [
+    "/opt/workshopone/app/data/core.db",
+    "/var/lib/workshopone/core.db",
+    "/var/www/workshopone/data/core.db",
+    "D:/Master system 1/data/core.db",
+    "D:/Master system 1/data/workshopone.db"
+  ];
+  for (const cand of candidates) {
+    if (fs.existsSync(cand)) return cand;
+  }
+  return process.platform === "win32" ? "D:/Master system 1/data/core.db" : "/opt/workshopone/app/data/core.db";
+}
+
+export const DEFAULT_WORKSHOP_DB = resolveWorkshopDb();
 
 export interface SyncResult {
   ok: boolean;
